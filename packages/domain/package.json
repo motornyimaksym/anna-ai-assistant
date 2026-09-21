@@ -1,0 +1,7 @@
+{
+  "name": "@booking/domain", "version": "0.1.0", "private": true, "type": "module", "main": "./dist/index.js", "types": "./dist/index.d.ts",
+  "scripts": { "build": "tsc -p tsconfig.json", "lint": "eslint src test", "typecheck": "tsc --noEmit", "test": "vitest run", "test:unit": "vitest run" },
+  "dependencies": { "@booking/contracts": "workspace:*", "luxon": "^3.6.1" },
+  "devDependencies": { "@booking/eslint-config": "workspace:*", "@booking/typescript-config": "workspace:*", "@types/luxon": "^3.6.2", "eslint": "^9.27.0", "typescript": "^5.8.3", "vitest": "^3.1.4" }
+}
+

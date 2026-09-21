@@ -1,0 +1,5 @@
+{
+  "name": "@booking/config", "version": "0.1.0", "private": true, "type": "module", "main": "./dist/index.js", "types": "./dist/index.d.ts",
+  "scripts": { "build": "tsc -p tsconfig.json", "lint": "eslint src", "typecheck": "tsc --noEmit", "test": "vitest run --passWithNoTests", "test:unit": "vitest run --passWithNoTests" },
+  "dependencies": { "zod": "^3.24.3" }, "devDependencies": { "@booking/eslint-config": "workspace:*", "@booking/typescript-config": "workspace:*", "eslint": "^9.27.0", "typescript": "^5.8.3", "vitest": "^3.1.4" }
+}
