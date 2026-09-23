@@ -4,6 +4,7 @@ node_modules/
 .idea/
 dist/
 firebase/functions/
+firebase/public/
 coverage/
 .env
 .env.local

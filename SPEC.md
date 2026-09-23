@@ -196,7 +196,7 @@ Firebase CLI має отримувати самодостатній Node.js 22 �
 
 ### 5.2. Hosting
 
-Firebase Hosting обслуговує `apps/admin/dist`.
+Firebase Hosting обслуговує вміст `apps/admin/dist`, скопійований під час підготовки релізу до `firebase/public`. Каталог Hosting має залишатися всередині Firebase CLI project directory (`firebase/`).
 
 SPA routes мають працювати через fallback на `index.html`.
 
@@ -626,6 +626,8 @@ deleteBookingEvent(eventId)
 Google Calendar використовується як додаткове джерело зайнятості.
 
 Firestore залишається primary source of truth для booking.
+
+Якщо Calendar OAuth не налаштовано повністю (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `GOOGLE_CALENDAR_ID`), інтеграція вимкнена: доступність не враховує Google Calendar, а події не синхронізуються. Записи у Firestore продовжують працювати.
 
 Calendar event повинен містити:
 

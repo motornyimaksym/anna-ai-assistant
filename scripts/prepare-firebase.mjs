@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const destination = join(root, 'firebase', 'functions');
+const publicDirectory = join(root, 'firebase', 'public');
 const api = join(root, 'apps', 'api');
 const workspacePackages = ['config', 'contracts', 'domain'];
 
@@ -21,6 +22,8 @@ const productionManifest = (manifest, isFunction = false) => ({
   ])),
 });
 
+await rm(publicDirectory, { recursive: true, force: true });
+await cp(join(root, 'apps', 'admin', 'dist'), publicDirectory, { recursive: true });
 await rm(destination, { recursive: true, force: true });
 await mkdir(destination, { recursive: true });
 const apiManifest = await readManifest(join(api, 'package.json'));
