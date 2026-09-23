@@ -5,7 +5,6 @@ Production-oriented TypeScript monorepo for a Telegram Business massage-booking 
 ## Quick start
 
 ```bash
-cp .env.example .env
 pnpm install
 pnpm dev
 ```

@@ -87,7 +87,6 @@
 ├── package.json
 ├── pnpm-workspace.yaml
 ├── turbo.json
-├── .env.example
 ├── .firebaserc.example
 ├── .gitignore
 └── README.md
