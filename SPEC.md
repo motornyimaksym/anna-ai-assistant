@@ -192,6 +192,8 @@ Production API через Hosting rewrite:
 /api/**
 ```
 
+Firebase CLI має отримувати самодостатній Node.js 22 пакет функції `api` з усіма production-залежностями монорепозиторію. Збірка пакета не повинна включати локальні `.env` файли або секрети. Hosting передає `/api/**` у функцію, а NestJS обробляє маршрут після видалення префікса `/api`; прямі локальні маршрути (`/health`, `/admin/**`, `/telegram/webhook`) залишаються доступними.
+
 ### 5.2. Hosting
 
 Firebase Hosting обслуговує `apps/admin/dist`.
@@ -273,6 +275,10 @@ VITE_FIREBASE_APP_ID
 
 Конфігурація має валідуватися через Zod.
 
+У Firebase Functions ідентифікатор проєкту визначається SDK з середовища виконання; `FIREBASE_PROJECT_ID` є необов'язковим явним перевизначенням. Production-збірка admin потребує чотири публічні `VITE_FIREBASE_*` значення. Backend secrets передаються лише через Secret Manager і не повинні з'являтися у build logs.
+
+Порт `PORT` валідується для самостійного локального HTTP-сервера. Firebase Functions керує власним портом; службова конфігурація функції не залежить від значення `PORT` у її середовищі.
+
 ---
 
 ## 7. Telegram Business
@@ -329,6 +335,8 @@ telegramUpdates/{updateId}
 ---
 
 ## 8. Firestore data model
+
+Використовується `(default)` база Cloud Firestore Standard у регіоні, узгодженому з функцією. Backend працює через Admin SDK; frontend не читає Firestore напряму.
 
 Основні колекції:
 
@@ -527,6 +535,8 @@ bufferMinutes
 ```
 
 У MVP buffer застосовується **після запису**.
+
+Створений booking зберігає застосований `bufferMinutes` як внутрішнє поле, щоб подальша зміна налаштувань послуги не скорочувала зайнятий інтервал вже існуючого запису.
 
 Приклад:
 

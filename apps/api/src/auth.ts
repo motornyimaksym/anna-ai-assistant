@@ -1,9 +1,9 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
-import { loadBackendEnv } from '@booking/config';
+import { loadBackendRuntimeEnv } from '@booking/config';
 import { FirebaseAdminService } from './firebase-admin.js';
 @Injectable()
 export class AdminAuthService {
-  private readonly allowed = new Set(loadBackendEnv(process.env).ADMIN_UIDS.split(',').map((uid) => uid.trim()).filter(Boolean));
+  private readonly allowed = new Set(loadBackendRuntimeEnv(process.env).ADMIN_UIDS.split(',').map((uid) => uid.trim()).filter(Boolean));
   constructor(_firebase: FirebaseAdminService) {}
   async verify(token: string | undefined): Promise<string> {
     if (!token?.startsWith('Bearer ')) throw new UnauthorizedException();

@@ -1,32 +1,151 @@
 import { Injectable } from '@nestjs/common';
-import type { AvailabilityRuleDto, BookingDto, ConversationDto, ScheduleExceptionDto, ServiceDto } from '@booking/contracts';
+import { getFirestore, type DocumentData, type Firestore } from 'firebase-admin/firestore';
+import {
+  availabilityRuleSchema, bookingSchema, conversationSchema, scheduleExceptionSchema, serviceSchema,
+  type AvailabilityRuleDto, type BookingDto, type ConversationDto, type ScheduleExceptionDto, type ServiceDto,
+} from '@booking/contracts';
 import { BookingConflictError, BookingNotFoundError } from '@booking/domain';
+import { FirebaseAdminService } from './firebase-admin.js';
 
-export type CreateStoredBooking = Omit<BookingDto, 'id' | 'createdAt' | 'updatedAt'> & { lockedSlots: string[] };
+export type CreateStoredBooking = Omit<BookingDto, 'id' | 'createdAt' | 'updatedAt'> & { lockedSlots: string[]; bufferMinutes: number };
+type StoredBooking = BookingDto & { lockedSlots: string[]; bufferMinutes: number };
+const withoutUndefined = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+const storedBooking = (id: string, data: DocumentData | undefined): StoredBooking => ({
+  ...bookingSchema.parse({ ...data, id }),
+  lockedSlots: Array.isArray(data?.lockedSlots) ? data.lockedSlots as string[] : [],
+  bufferMinutes: typeof data?.bufferMinutes === 'number' ? data.bufferMinutes : 0,
+});
+
 @Injectable()
 export class BookingRepository {
-  private readonly bookings = new Map<string, BookingDto>(); private readonly locks = new Map<string, string>(); private readonly services = new Map<string, ServiceDto>(); private readonly conversations = new Map<string, ConversationDto>(); private readonly updateIds = new Set<number>();
-  private rules: AvailabilityRuleDto[] = []; private exceptions: ScheduleExceptionDto[] = [];
-  private sequence = 0;
-  private transaction<T>(operation: () => T): T { return operation(); }
-  listServices(): ServiceDto[] { return [...this.services.values()]; }
-  getService(id: string): ServiceDto | undefined { return this.services.get(id); }
-  saveService(service: ServiceDto): ServiceDto { this.services.set(service.id, service); return service; }
-  listBookings(): BookingDto[] { return [...this.bookings.values()].sort((a, b) => a.startAt.localeCompare(b.startAt)); }
-  getBooking(id: string): BookingDto | undefined { return this.bookings.get(id); }
-  createBooking(input: CreateStoredBooking): BookingDto { return this.transaction(() => { if (input.lockedSlots.some((slot) => this.locks.has(slot))) throw new BookingConflictError(); const now = new Date().toISOString(); const booking: BookingDto = { ...input, id: `booking_${++this.sequence}`, createdAt: now, updatedAt: now }; this.bookings.set(booking.id, booking); for (const slot of input.lockedSlots) this.locks.set(slot, booking.id); return booking; }); }
-  cancelBooking(id: string): BookingDto { return this.transaction(() => { const existing = this.bookings.get(id); if (!existing) throw new BookingNotFoundError(); if (existing.status === 'cancelled') return existing; for (const [slot, bookingId] of this.locks.entries()) if (bookingId === id) this.locks.delete(slot); const changed = { ...existing, status: 'cancelled' as const, updatedAt: new Date().toISOString() }; this.bookings.set(id, changed); return changed; }); }
-  updateBookingStatus(id: string, status: BookingDto['status']): BookingDto { const existing = this.bookings.get(id); if (!existing) throw new BookingNotFoundError(); if (status === 'cancelled') return this.cancelBooking(id); const changed = { ...existing, status, updatedAt: new Date().toISOString() }; this.bookings.set(id, changed); return changed; }
-  rescheduleBooking(id: string, startAt: string, endAt: string, slots: string[]): BookingDto { return this.transaction(() => { const existing = this.bookings.get(id); if (!existing) throw new BookingNotFoundError(); if (existing.status === 'cancelled') throw new BookingConflictError(); const ownSlots = new Set([...this.locks].filter(([, bookingId]) => bookingId === id).map(([slot]) => slot)); if (slots.some((slot) => this.locks.has(slot) && !ownSlots.has(slot))) throw new BookingConflictError(); for (const slot of ownSlots) this.locks.delete(slot); for (const slot of slots) this.locks.set(slot, id); const changed = { ...existing, startAt, endAt, updatedAt: new Date().toISOString(), calendarSyncStatus: 'pending' as const }; this.bookings.set(id, changed); return changed; }); }
-  setCalendarSync(id: string, status: BookingDto['calendarSyncStatus'], eventId?: string): void { const booking = this.bookings.get(id); if (booking) this.bookings.set(id, { ...booking, calendarSyncStatus: status, googleCalendarEventId: eventId ?? booking.googleCalendarEventId, updatedAt: new Date().toISOString() }); }
-  listLockedIntervals(): { start: string; end: string }[] { return this.listBookings().filter((booking) => booking.status !== 'cancelled').map((booking) => ({ start: booking.startAt, end: booking.endAt })); }
-  getRules(): AvailabilityRuleDto[] { return this.rules; }
-  setRules(rules: AvailabilityRuleDto[]): void { this.rules = rules; }
-  getExceptions(): ScheduleExceptionDto[] { return this.exceptions; }
-  saveException(item: ScheduleExceptionDto): ScheduleExceptionDto { this.exceptions = [...this.exceptions.filter((entry) => entry.id !== item.id), item]; return item; }
-  deleteException(id: string): void { this.exceptions = this.exceptions.filter((entry) => entry.id !== id); }
-  getConversation(chatId: string): ConversationDto | undefined { return this.conversations.get(chatId); }
-  saveConversation(conversation: ConversationDto): ConversationDto { this.conversations.set(conversation.telegramChatId, conversation); return conversation; }
-  listConversations(): ConversationDto[] { return [...this.conversations.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
-  claimTelegramUpdate(updateId: number): boolean { if (this.updateIds.has(updateId)) return false; this.updateIds.add(updateId); return true; }
+  private readonly db: Firestore;
+
+  constructor(_firebase: FirebaseAdminService) { this.db = getFirestore(); }
+
+  async listServices(): Promise<ServiceDto[]> {
+    const snapshot = await this.db.collection('services').get();
+    return snapshot.docs.map((doc) => serviceSchema.parse({ ...doc.data(), id: doc.id }));
+  }
+  async getService(id: string): Promise<ServiceDto | undefined> {
+    const doc = await this.db.collection('services').doc(id).get();
+    return doc.exists ? serviceSchema.parse({ ...doc.data(), id: doc.id }) : undefined;
+  }
+  async saveService(service: ServiceDto): Promise<ServiceDto> {
+    await this.db.collection('services').doc(service.id).set(withoutUndefined(service));
+    return service;
+  }
+  async listBookings(): Promise<BookingDto[]> {
+    const snapshot = await this.db.collection('bookings').get();
+    return snapshot.docs.map((doc) => bookingSchema.parse({ ...doc.data(), id: doc.id })).sort((a, b) => a.startAt.localeCompare(b.startAt));
+  }
+  async getBooking(id: string): Promise<BookingDto | undefined> {
+    const doc = await this.db.collection('bookings').doc(id).get();
+    return doc.exists ? bookingSchema.parse({ ...doc.data(), id: doc.id }) : undefined;
+  }
+  async createBooking(input: CreateStoredBooking): Promise<BookingDto> {
+    const bookingRef = this.db.collection('bookings').doc();
+    const slotRefs = input.lockedSlots.map((slot) => this.db.collection('bookingSlots').doc(slot));
+    const now = new Date().toISOString();
+    const booking: StoredBooking = { ...input, id: bookingRef.id, createdAt: now, updatedAt: now };
+    await this.db.runTransaction(async (transaction) => {
+      const snapshots = await Promise.all(slotRefs.map((ref) => transaction.get(ref)));
+      if (snapshots.some((snapshot) => snapshot.exists)) throw new BookingConflictError();
+      transaction.create(bookingRef, withoutUndefined(booking));
+      for (const ref of slotRefs) transaction.create(ref, { bookingId: bookingRef.id });
+    });
+    return bookingSchema.parse(booking);
+  }
+  async cancelBooking(id: string): Promise<BookingDto> {
+    const bookingRef = this.db.collection('bookings').doc(id);
+    return this.db.runTransaction(async (transaction) => {
+      const doc = await transaction.get(bookingRef);
+      if (!doc.exists) throw new BookingNotFoundError();
+      const booking = storedBooking(id, doc.data());
+      if (booking.status === 'cancelled') return bookingSchema.parse(booking);
+      const slotRefs = booking.lockedSlots.map((slot) => this.db.collection('bookingSlots').doc(slot));
+      const slots = await Promise.all(slotRefs.map((ref) => transaction.get(ref)));
+      const changed: StoredBooking = { ...booking, status: 'cancelled', updatedAt: new Date().toISOString() };
+      transaction.set(bookingRef, withoutUndefined(changed));
+      slots.forEach((slot, index) => { if (slot.data()?.bookingId === id) transaction.delete(slotRefs[index]!); });
+      return bookingSchema.parse(changed);
+    });
+  }
+  async updateBookingStatus(id: string, status: BookingDto['status']): Promise<BookingDto> {
+    if (status === 'cancelled') return this.cancelBooking(id);
+    const bookingRef = this.db.collection('bookings').doc(id);
+    return this.db.runTransaction(async (transaction) => {
+      const doc = await transaction.get(bookingRef);
+      if (!doc.exists) throw new BookingNotFoundError();
+      const changed = { ...storedBooking(id, doc.data()), status, updatedAt: new Date().toISOString() };
+      transaction.set(bookingRef, withoutUndefined(changed));
+      return bookingSchema.parse(changed);
+    });
+  }
+  async rescheduleBooking(id: string, startAt: string, endAt: string, slots: string[]): Promise<BookingDto> {
+    const bookingRef = this.db.collection('bookings').doc(id);
+    return this.db.runTransaction(async (transaction) => {
+      const doc = await transaction.get(bookingRef);
+      if (!doc.exists) throw new BookingNotFoundError();
+      const booking = storedBooking(id, doc.data());
+      if (booking.status === 'cancelled') throw new BookingConflictError();
+      const allKeys = [...new Set([...booking.lockedSlots, ...slots])];
+      const refs = allKeys.map((slot) => this.db.collection('bookingSlots').doc(slot));
+      const snapshots = await Promise.all(refs.map((ref) => transaction.get(ref)));
+      const current = new Map(allKeys.map((key, index) => [key, snapshots[index]?.data()?.bookingId as string | undefined]));
+      if (slots.some((slot) => current.get(slot) && current.get(slot) !== id)) throw new BookingConflictError();
+      const changed: StoredBooking = { ...booking, startAt, endAt, lockedSlots: slots, calendarSyncStatus: 'pending', updatedAt: new Date().toISOString() };
+      for (const key of booking.lockedSlots) if (!slots.includes(key) && current.get(key) === id) transaction.delete(this.db.collection('bookingSlots').doc(key));
+      for (const key of slots) if (!current.get(key)) transaction.create(this.db.collection('bookingSlots').doc(key), { bookingId: id });
+      transaction.set(bookingRef, withoutUndefined(changed));
+      return bookingSchema.parse(changed);
+    });
+  }
+  async setCalendarSync(id: string, status: BookingDto['calendarSyncStatus'], eventId?: string): Promise<void> {
+    await this.db.collection('bookings').doc(id).update(withoutUndefined({ calendarSyncStatus: status, googleCalendarEventId: eventId, updatedAt: new Date().toISOString() }));
+  }
+  async listLockedIntervals(): Promise<{ start: string; end: string }[]> {
+    const snapshot = await this.db.collection('bookings').get();
+    return snapshot.docs.map((doc) => storedBooking(doc.id, doc.data())).filter((booking) => booking.status !== 'cancelled').map((booking) => ({ start: booking.startAt, end: new Date(Date.parse(booking.endAt) + booking.bufferMinutes * 60_000).toISOString() }));
+  }
+  async getRules(): Promise<AvailabilityRuleDto[]> {
+    const snapshot = await this.db.collection('availabilityRules').get();
+    return snapshot.docs.map((doc) => availabilityRuleSchema.parse({ ...doc.data(), id: doc.id }));
+  }
+  async setRules(rules: AvailabilityRuleDto[]): Promise<void> {
+    const collection = this.db.collection('availabilityRules');
+    const existing = await collection.get();
+    const batch = this.db.batch();
+    for (const doc of existing.docs) if (!rules.some((rule) => rule.id === doc.id)) batch.delete(doc.ref);
+    for (const rule of rules) batch.set(collection.doc(rule.id), withoutUndefined(rule));
+    await batch.commit();
+  }
+  async getExceptions(): Promise<ScheduleExceptionDto[]> {
+    const snapshot = await this.db.collection('scheduleExceptions').get();
+    return snapshot.docs.map((doc) => scheduleExceptionSchema.parse({ ...doc.data(), id: doc.id }));
+  }
+  async saveException(item: ScheduleExceptionDto): Promise<ScheduleExceptionDto> {
+    await this.db.collection('scheduleExceptions').doc(item.id).set(withoutUndefined(item));
+    return item;
+  }
+  async deleteException(id: string): Promise<void> { await this.db.collection('scheduleExceptions').doc(id).delete(); }
+  async getConversation(chatId: string): Promise<ConversationDto | undefined> {
+    const doc = await this.db.collection('conversations').doc(chatId).get();
+    return doc.exists ? conversationSchema.parse({ ...doc.data(), telegramChatId: doc.id }) : undefined;
+  }
+  async saveConversation(conversation: ConversationDto): Promise<ConversationDto> {
+    await this.db.collection('conversations').doc(conversation.telegramChatId).set(withoutUndefined(conversation));
+    return conversation;
+  }
+  async listConversations(): Promise<ConversationDto[]> {
+    const snapshot = await this.db.collection('conversations').get();
+    return snapshot.docs.map((doc) => conversationSchema.parse({ ...doc.data(), telegramChatId: doc.id })).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+  async claimTelegramUpdate(updateId: number): Promise<boolean> {
+    const ref = this.db.collection('telegramUpdates').doc(String(updateId));
+    return this.db.runTransaction(async (transaction) => {
+      if ((await transaction.get(ref)).exists) return false;
+      transaction.create(ref, { receivedAt: new Date().toISOString() });
+      return true;
+    });
+  }
 }

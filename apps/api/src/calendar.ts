@@ -1,10 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import type { BookingDto } from '@booking/contracts';
-import { loadBackendEnv } from '@booking/config';
+import { loadBackendRuntimeEnv } from '@booking/config';
 export type BusyInterval = { start: string; end: string };
 @Injectable()
 export class CalendarService {
-  private readonly env = loadBackendEnv(process.env);
+  private readonly env = loadBackendRuntimeEnv(process.env);
   isConfigured(): boolean { return Boolean(this.env.GOOGLE_CLIENT_ID && this.env.GOOGLE_CLIENT_SECRET && this.env.GOOGLE_REFRESH_TOKEN && this.env.GOOGLE_CALENDAR_ID); }
   private async token(): Promise<string> { if (!this.isConfigured()) throw new Error('Google Calendar is not configured'); const response = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: this.env.GOOGLE_CLIENT_ID!, client_secret: this.env.GOOGLE_CLIENT_SECRET!, refresh_token: this.env.GOOGLE_REFRESH_TOKEN!, grant_type: 'refresh_token' }) }); const data = await response.json() as { access_token?: string }; if (!response.ok || !data.access_token) throw new Error('Google OAuth refresh failed'); return data.access_token; }
   private async request(path: string, init: RequestInit): Promise<Response> { const token = await this.token(); const response = await fetch(`https://www.googleapis.com/calendar/v3${path}`, { ...init, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...init.headers } }); if (!response.ok) throw new Error(`Google Calendar request failed (${response.status})`); return response; }

@@ -3,9 +3,12 @@ node_modules/
 .turbo/
 .idea/
 dist/
+firebase/functions/
 coverage/
 .env
 .env.local
+.env.*.local
 .firebase/
 firebase-debug.log
+firestore-debug.log
 *.tsbuildinfo
