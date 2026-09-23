@@ -4,7 +4,7 @@ This repository deploys the React/Vite admin to **Firebase Hosting** and the Nes
 
 The default Firestore Standard database for `anna-ai-assistant` is in `europe-west1`. `firebase/firebase.json` deploys deny-all client rules and the required indexes. The backend uses the Admin SDK and Firestore transactions for bookings, locks, and update claims. Production data is never seeded automatically.
 
-Register a Firebase Web app and enable Authentication with Google sign-in. Put its public `apiKey`, `authDomain`, `projectId`, and `appId` into `apps/admin/.env.production.local` as `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, and `VITE_FIREBASE_APP_ID`. This local file is ignored by Git. Retrieve the registered app's current values with:
+Register a Firebase Web app and deploy the Google sign-in configuration in `firebase/firebase.json` with `npx -y firebase-tools@latest deploy --only auth --config firebase/firebase.json --project anna-ai-assistant`. The Google OAuth support email is displayed to people using sign-in. After the intended administrator signs in once, look up that account's Firebase Authentication UID and set it as the `ADMIN_UIDS` secret; redeploy the `api` function to load the new secret version. Put the Web app's public `apiKey`, `authDomain`, `projectId`, and `appId` into `apps/admin/.env.production.local` as `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, and `VITE_FIREBASE_APP_ID`. This local file is ignored by Git. Retrieve the registered app's current values with:
 
 ```bash
 npx -y firebase-tools@latest apps:list WEB --project anna-ai-assistant

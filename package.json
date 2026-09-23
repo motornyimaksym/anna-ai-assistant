@@ -8,7 +8,7 @@
     "build": "turbo run build",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "test": "turbo run test && node --test scripts/hosting-layout.test.mjs",
+    "test": "turbo run test && node --test scripts/*.test.mjs",
     "test:unit": "turbo run test:unit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
