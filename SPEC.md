@@ -211,7 +211,7 @@ pnpm --filter api dev
 Бажаний URL:
 
 ```text
-http://localhost:3000
+http://localhost:2301
 ```
 
 Admin:
