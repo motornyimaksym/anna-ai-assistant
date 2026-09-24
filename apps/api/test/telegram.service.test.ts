@@ -14,12 +14,13 @@ const update = (username?: string) => ({
   },
 });
 
-const setup = () => {
+const setup = (settings = { maxReadDelayMs: 0, typingDelayPerSymbolMs: 600, updatedAt: '2026-09-24T10:00:00.000Z' }) => {
   const order: string[] = [];
   const repository = {
     appendMessage: vi.fn(),
     claimTelegramUpdate: vi.fn(async () => true),
     getConversation: vi.fn(async () => undefined),
+    getBotSettingsOverride: vi.fn(async () => settings),
     saveConversation: vi.fn(async (conversation: unknown) => conversation),
   };
   const send = vi.fn(async (url: string, _init?: RequestInit) => { order.push(url.split('/').at(-1)!); return { ok: true, json: async () => ({ ok: true }) }; });
@@ -32,6 +33,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe('Telegram private test restriction', () => {
@@ -155,4 +157,40 @@ it('does not pace non-OpenAI control responses', async () => {
   assistant.respond.mockResolvedValue({ text: 'Control response', fromOpenAI: false });
   await service.handle('webhook-secret', update('user61785'));
   expect(send.mock.calls.at(-1)![0]).toContain('/sendMessage');
+});
+
+it('waits a random inclusive delay before marking an eligible business message as read', async () => {
+  vi.useFakeTimers();
+  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+  vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
+  vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+  vi.spyOn(Math, 'random').mockReturnValue(0.999999);
+  const { service, send, assistant, order } = setup({ maxReadDelayMs: 1000, typingDelayPerSymbolMs: 0, updatedAt: '2026-09-24T10:00:00.000Z' });
+  assistant.respond.mockResolvedValue({ text: 'OK', fromOpenAI: false });
+
+  const handling = service.handle('webhook-secret', update('user61785'));
+  await vi.advanceTimersByTimeAsync(999);
+  expect(send).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  await handling;
+
+  expect(order[0]).toBe('readBusinessMessage');
+  expect(send.mock.calls[0]![0]).toContain('/readBusinessMessage');
+});
+
+it('uses the configured typing delay per symbol for OpenAI answers', async () => {
+  vi.useFakeTimers();
+  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+  vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
+  vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+  const { service, send, assistant } = setup({ maxReadDelayMs: 1000, typingDelayPerSymbolMs: 5, updatedAt: '2026-09-24T10:00:00.000Z' });
+  assistant.respond.mockResolvedValue({ text: 'Hey!', fromOpenAI: true });
+  const dm = { update_id: 303, message: { ...update('user61785').business_message, business_connection_id: undefined, chat: { id: 123, type: 'private' } } };
+
+  const handling = service.handle('webhook-secret', dm);
+  await vi.advanceTimersByTimeAsync(19);
+  expect(send.mock.calls.some(([url]) => url.includes('/sendMessage'))).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+  await handling;
+  expect(send.mock.calls.some(([url]) => url.includes('/sendMessage'))).toBe(true);
 });

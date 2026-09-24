@@ -26,6 +26,9 @@ export const conversationSchema = z.object({ telegramChatId: z.string().min(1), 
 export const patchConversationSchema = z.object({ assistantEnabled: z.boolean().optional(), humanTakeoverUntil: z.string().datetime().nullable().optional() }).refine((value) => Object.keys(value).length > 0, 'At least one field is required');
 export const assistantPromptResponseSchema = z.object({ prompt: z.string(), isCustom: z.boolean(), updatedAt: z.string().datetime().optional() });
 export const updateAssistantPromptSchema = z.object({ prompt: z.string().min(1).max(12_000).refine((prompt) => prompt.trim().length > 0, 'Prompt must not be blank') });
+export const botSettingsSchema = z.object({ maxReadDelayMs: z.number().int().min(0).max(10_000), typingDelayPerSymbolMs: z.number().int().min(0).max(800) });
+export const botSettingsResponseSchema = botSettingsSchema.extend({ isCustom: z.boolean(), updatedAt: z.string().datetime().optional() });
+export const updateBotSettingsSchema = botSettingsSchema;
 export const specResponseSchema = z.object({ content: z.string() });
 export const telegramToolArgsSchema = z.discriminatedUnion('name', [
   z.object({ name: z.literal('get_services'), arguments: z.object({}) }),
@@ -37,3 +40,4 @@ export const telegramToolArgsSchema = z.discriminatedUnion('name', [
 ]);
 export type ServiceDto = z.infer<typeof serviceSchema>; export type AvailabilityRuleDto = z.infer<typeof availabilityRuleSchema>; export type ScheduleExceptionDto = z.infer<typeof scheduleExceptionSchema>; export type BookingDto = z.infer<typeof bookingSchema>; export type ClientDto = z.infer<typeof clientSchema>; export type ConversationDto = z.infer<typeof conversationSchema>; export type CreateBookingRequest = z.infer<typeof createBookingRequestSchema>; export type UpdateBookingRequest = z.infer<typeof updateBookingRequestSchema>; export type RescheduleBookingRequest = z.infer<typeof rescheduleBookingRequestSchema>; export type AvailableSlotsRequest = z.infer<typeof availableSlotsRequestSchema>; export type AvailableSlotsResponse = z.infer<typeof availableSlotsResponseSchema>;
 export type AssistantPromptResponse = z.infer<typeof assistantPromptResponseSchema>; export type UpdateAssistantPromptRequest = z.infer<typeof updateAssistantPromptSchema>; export type SpecResponse = z.infer<typeof specResponseSchema>;
+export type BotSettings = z.infer<typeof botSettingsSchema>; export type BotSettingsResponse = z.infer<typeof botSettingsResponseSchema>; export type UpdateBotSettingsRequest = z.infer<typeof updateBotSettingsSchema>;

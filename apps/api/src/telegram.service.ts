@@ -1,10 +1,11 @@
-import { waitForResponsePacing } from './response-pacing.js';
+import { waitForRandomReadDelay, waitForResponsePacing } from './response-pacing.js';
 import { OpenAiService } from './openai.service.js';
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { z } from 'zod';
 import type { ConversationDto } from '@booking/contracts';
 import { loadBackendRuntimeEnv } from '@booking/config';
 import { BookingRepository } from './repository.js';
+import { DEFAULT_BOT_SETTINGS } from './bot-settings.js';
 const messageSchema = z.object({ message_id: z.number().int(), chat: z.object({ id: z.union([z.string(), z.number()]), type: z.string().optional() }), from: z.object({ id: z.union([z.string(), z.number()]), username: z.string().optional(), is_bot: z.boolean().optional() }).optional(), text: z.string().optional(), business_connection_id: z.string().optional() });
 const updateSchema = z.object({ update_id: z.number().int(), business_message: messageSchema.optional(), message: messageSchema.optional() });
 @Injectable()
@@ -22,12 +23,16 @@ export class TelegramService {
     const current = await this.repository.getConversation(chatId); const conversation: ConversationDto = current ?? { telegramChatId: chatId, clientId: message.from ? String(message.from.id) : undefined, businessConnectionId: message.business_connection_id, assistantEnabled: true, state: 'active', summary: '', createdAt: now, updatedAt: now };
     if (!conversation.assistantEnabled || (conversation.humanTakeoverUntil && conversation.humanTakeoverUntil > now)) { await this.repository.saveConversation({ ...conversation, updatedAt: now }); return; }
     await this.repository.saveConversation({ ...conversation, updatedAt: now });
-    if (update.business_message?.business_connection_id) await this.markBusinessMessageRead(update.business_message.business_connection_id, message.chat.id, message.message_id);
+    const settings = await this.repository.getBotSettingsOverride() ?? DEFAULT_BOT_SETTINGS;
+    if (update.business_message?.business_connection_id) {
+      await waitForRandomReadDelay(settings.maxReadDelayMs);
+      await this.markBusinessMessageRead(update.business_message.business_connection_id, message.chat.id, message.message_id);
+    }
     const stopTyping = await this.startTyping(chatId, message.business_connection_id);
     let reply: string;
     try {
       const answer = await this.assistant.respond(conversation, { clientId: String(message.from!.id), telegramChatId: chatId, businessConnectionId: message.business_connection_id }, message.text);
-      if (answer.fromOpenAI) await waitForResponsePacing(answer.text);
+      if (answer.fromOpenAI) await waitForResponsePacing(answer.text, settings.typingDelayPerSymbolMs);
       reply = answer.text;
     } finally {
       stopTyping();

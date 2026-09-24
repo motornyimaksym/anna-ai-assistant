@@ -360,6 +360,8 @@ assistantSettings
 
 Для system prompt використовується документ `assistantSettings/prompt` з полями `prompt` (string) та `updatedAt` (ISO timestamp). Документ існує лише для кастомного prompt. Якщо документа немає, backend використовує `ASSISTANT_SYSTEM_PROMPT` з коду. Reset видаляє документ і повертає default без migration.
 
+Налаштування поведінки бота зберігаються в `assistantSettings/behavior`: `maxReadDelayMs` (integer, 0–10,000), `typingDelayPerSymbolMs` (integer, 0–800) та `updatedAt` (ISO timestamp). Якщо документа немає, використовуються defaults `maxReadDelayMs: 2000` і `typingDelayPerSymbolMs: 600`. Backend перевіряє значення за спільною Zod-схемою.
+
 ---
 
 ## 9. Послуги
@@ -835,6 +837,7 @@ Routes:
 /conversations
 /specs
 /prompt
+/bot-settings
 ```
 
 ### 25.1. Dashboard
@@ -905,6 +908,10 @@ Actions:
 
 Захищена сторінка показує ефективний prompt у редагованому полі. Save зберігає кастомний prompt довжиною 1–12,000 символів та застосовує його до наступного запиту асистента. Reset видаляє кастомний prompt і повертає prompt з `assistant-prompt.ts`. Порожній prompt не приймається. UI показує, чи використовується default або кастомний prompt, та надає явні Save і Reset actions.
 
+### 25.8. Bot settings
+
+Захищена сторінка дозволяє змінити максимальну випадкову затримку перед Telegram Business read receipt (`maxReadDelayMs`, 0–10,000 ms) і затримку typing-відповіді на кожен Unicode символ (`typingDelayPerSymbolMs`, 0–800 ms). Початкові значення: 2,000 ms та 600 ms. Сторінка показує одиниці й допустимі межі, валідує цілі числа та має явну кнопку Save. Збережені значення застосовуються до наступного вхідного повідомлення без redeploy.
+
 ---
 
 ## 26. Admin API
@@ -939,11 +946,15 @@ GET    /admin/spec
 GET    /admin/assistant-prompt
 PUT    /admin/assistant-prompt
 DELETE /admin/assistant-prompt
+GET    /admin/bot-settings
+PUT    /admin/bot-settings
 
 GET    /health
 ```
 
 `GET /admin/spec` повертає `{ content: string }`. Prompt endpoints використовують спільні Zod contracts. `GET` повертає `{ prompt: string, isCustom: boolean, updatedAt?: string }`; `PUT` приймає `{ prompt: string }` і повертає ефективне значення; `DELETE` видаляє override та повертає default. Усі `/admin/**` endpoints вимагають allowlisted Firebase ID token.
+
+Bot settings endpoints використовують спільні Zod contracts. `GET /admin/bot-settings` повертає `{ maxReadDelayMs, typingDelayPerSymbolMs, isCustom, updatedAt? }`, включно з defaults коли override відсутній. `PUT` приймає `{ maxReadDelayMs, typingDelayPerSymbolMs }` і зберігає налаштування. `maxReadDelayMs` обмежений 0–10,000 ms, `typingDelayPerSymbolMs` — 0–800 ms. Збереження доступне лише авторизованому адміністратору.
 
 ---
 
@@ -1202,9 +1213,9 @@ Before the assistant calls OpenAI, send `sendChatAction` with `action: "typing"`
 
 ## 39. Assistant response pacing
 
-Wait 600 ms for each Unicode code point in each generated assistant reply before sending it to Telegram. Keep the typing indicator refreshed throughout this wait. Empty replies and non-LLM control messages do not incur this delay. Limit reply text to 4,000 characters; the resulting maximum artificial wait is 40 minutes. Set the HTTPS function timeout to 3,600 seconds so OpenAI processing and the maximum pacing interval fit within the invocation limit.
+Wait `typingDelayPerSymbolMs` for each Unicode code point in each generated assistant reply before sending it to Telegram. The default is 600 ms; admins can configure 0–800 ms per symbol. Keep the typing indicator refreshed throughout this wait. Empty replies and non-LLM control messages do not incur this delay. Limit reply text to 4,000 characters; the maximum configured artificial wait is 53 minutes 20 seconds. Set the HTTPS function timeout to 3,600 seconds so OpenAI processing and the maximum pacing interval fit within the invocation limit.
 
 
 ## 40. Telegram Business read receipt
 
-For an accepted `business_message`, mark the incoming message as read immediately before starting the typing indicator and assistant response. Call Telegram Bot API `readBusinessMessage` with its `business_connection_id`, `chat_id`, and `message_id`. This requires the connected bot's `can_read_messages` right. If that right is unavailable or the API call fails, log a credential-free warning and continue answering. Do not call the method for regular private bot DMs, rejected senders, duplicate updates, disabled conversations, or human takeover; the method only supports messages received through a Business connection.
+For an accepted `business_message`, wait a random integer number of milliseconds from 0 through `maxReadDelayMs` (inclusive; default 2,000 ms) before marking the incoming message as read, then begin the typing indicator and assistant response. Call Telegram Bot API `readBusinessMessage` with its `business_connection_id`, `chat_id`, and `message_id`. This requires the connected bot's `can_read_messages` right. If that right is unavailable or the API call fails, log a credential-free warning and continue answering. Do not call the method or add its delay for regular private bot DMs, rejected senders, duplicate updates, disabled conversations, or human takeover; the method only supports messages received through a Business connection.

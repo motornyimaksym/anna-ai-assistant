@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { getFirestore, type DocumentData, type Firestore } from 'firebase-admin/firestore';
 import {
-  availabilityRuleSchema, bookingSchema, conversationSchema, scheduleExceptionSchema, serviceSchema,
-  type AvailabilityRuleDto, type BookingDto, type ConversationDto, type ScheduleExceptionDto, type ServiceDto,
+  availabilityRuleSchema, bookingSchema, botSettingsSchema, conversationSchema, scheduleExceptionSchema, serviceSchema,
+  type AvailabilityRuleDto, type BookingDto, type BotSettings, type ConversationDto, type ScheduleExceptionDto, type ServiceDto,
 } from '@booking/contracts';
 import { BookingConflictError, BookingNotFoundError } from '@booking/domain';
 import { FirebaseAdminService } from './firebase-admin.js';
@@ -160,6 +160,18 @@ export class BookingRepository {
   }
   async deleteAssistantPromptOverride(): Promise<void> {
     await this.db.collection('assistantSettings').doc('prompt').delete();
+  }
+  async getBotSettingsOverride(): Promise<(BotSettings & { updatedAt: string }) | undefined> {
+    const doc = await this.db.collection('assistantSettings').doc('behavior').get();
+    if (!doc.exists) return undefined;
+    const data = doc.data();
+    if (typeof data?.updatedAt !== 'string') return undefined;
+    return { ...botSettingsSchema.parse(data), updatedAt: data.updatedAt };
+  }
+  async saveBotSettingsOverride(settings: BotSettings): Promise<BotSettings & { updatedAt: string }> {
+    const value = { ...botSettingsSchema.parse(settings), updatedAt: new Date().toISOString() };
+    await this.db.collection('assistantSettings').doc('behavior').set(withoutUndefined(value));
+    return value;
   }
   async claimTelegramUpdate(updateId: number): Promise<boolean> {
     const ref = this.db.collection('telegramUpdates').doc(String(updateId));

@@ -8,6 +8,8 @@ import type { SpecService } from '../src/spec.service.js';
 
 const setup = () => {
   const repository = {
+    getBotSettingsOverride: vi.fn(async () => undefined),
+    saveBotSettingsOverride: vi.fn(async (settings: { maxReadDelayMs: number; typingDelayPerSymbolMs: number }) => ({ ...settings, updatedAt: '2026-09-24T10:00:00.000Z' })),
     getAssistantPromptOverride: vi.fn(async () => undefined),
     saveAssistantPromptOverride: vi.fn(async (prompt: string) => ({ prompt, updatedAt: '2026-09-24T10:00:00.000Z' })),
     deleteAssistantPromptOverride: vi.fn(async () => undefined),
@@ -37,5 +39,19 @@ describe('admin content endpoints', () => {
     const { controller, repository } = setup();
     await expect(controller.updateAssistantPrompt({ prompt: '  ' })).rejects.toThrow();
     expect(repository.saveAssistantPromptOverride).not.toHaveBeenCalled();
+  });
+
+  it('returns default bot settings and saves valid overrides', async () => {
+    const { controller, repository } = setup();
+    expect(await controller.botSettings()).toEqual({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, isCustom: false });
+    expect(await controller.updateBotSettings({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400 })).toEqual({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z' });
+    expect(repository.saveBotSettingsOverride).toHaveBeenCalledWith({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400 });
+  });
+
+  it('rejects bot settings outside documented limits', async () => {
+    const { controller, repository } = setup();
+    await expect(controller.updateBotSettings({ maxReadDelayMs: 10_001, typingDelayPerSymbolMs: 600 })).rejects.toThrow();
+    await expect(controller.updateBotSettings({ maxReadDelayMs: 1000, typingDelayPerSymbolMs: 800.5 })).rejects.toThrow();
+    expect(repository.saveBotSettingsOverride).not.toHaveBeenCalled();
   });
 });

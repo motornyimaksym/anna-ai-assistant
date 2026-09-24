@@ -62,6 +62,13 @@ describe.skipIf(!withEmulator)('Firestore booking transactions', () => {
     await repository.deleteAssistantPromptOverride();
     expect(await repository.getAssistantPromptOverride()).toBeUndefined();
   });
+  it('persists bot timing settings in the shared assistant settings collection', async () => {
+    const repository = new BookingRepository(new FirebaseAdminService());
+    expect(await repository.getBotSettingsOverride()).toBeUndefined();
+    const saved = await repository.saveBotSettingsOverride({ maxReadDelayMs: 900, typingDelayPerSymbolMs: 350 });
+    expect(saved).toMatchObject({ maxReadDelayMs: 900, typingDelayPerSymbolMs: 350, updatedAt: expect.any(String) });
+    expect(await repository.getBotSettingsOverride()).toEqual(saved);
+  });
   it('persists pending actions and returns only the latest 20 conversation messages', async () => {
     const { repository } = await setup();
     const now = new Date().toISOString();
