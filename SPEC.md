@@ -239,6 +239,7 @@ DEFAULT_TIMEZONE=Europe/Kyiv
 
 TELEGRAM_BOT_TOKEN
 TELEGRAM_WEBHOOK_SECRET
+TELEGRAM_ALLOWED_USERNAME
 
 OPENAI_API_KEY
 OPENAI_MODEL
@@ -316,6 +317,8 @@ X-Telegram-Bot-Api-Secret-Token
 ```text
 TELEGRAM_WEBHOOK_SECRET
 ```
+
+Для тестового розгортання `TELEGRAM_ALLOWED_USERNAME` задає єдине ім'я Telegram-користувача без `@`, якому бот може відповідати. Порівняння з `business_message.from.username` нечутливе до регістру. Якщо змінна відсутня, `from.username` відсутнє або ім'я не збігається, webhook повертає успішну відповідь без запису update/conversation у Firestore і без відправлення повідомлення. Перевірка виконується до idempotency claim. Пізніше обмеження можна замінити на стабільний числовий Telegram user ID, коли його буде підтверджено для цього акаунта.
 
 ### 7.3. Idempotency
 

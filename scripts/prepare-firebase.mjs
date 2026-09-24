@@ -39,7 +39,7 @@ for (const name of workspacePackages) {
   await writeFile(join(target, 'package.json'), `${JSON.stringify(productionManifest(manifest), null, 2)}\n`);
 }
 
-const publicRuntimeVariables = ['DEFAULT_TIMEZONE', 'OPENAI_MODEL', 'GOOGLE_CLIENT_ID', 'GOOGLE_CALENDAR_ID'];
+const publicRuntimeVariables = ['DEFAULT_TIMEZONE', 'OPENAI_MODEL', 'TELEGRAM_ALLOWED_USERNAME', 'GOOGLE_CLIENT_ID', 'GOOGLE_CALENDAR_ID'];
 const runtimeLines = publicRuntimeVariables.filter((name) => process.env[name]).map((name) => `${name}=${JSON.stringify(process.env[name])}`);
 if (runtimeLines.length) await writeFile(join(destination, '.env'), `${runtimeLines.join('\n')}\n`);
 

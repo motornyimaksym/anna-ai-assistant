@@ -11,4 +11,8 @@ describe('loadBackendEnv', () => {
   it('does not depend on the Firebase Functions port value', () => {
     expect(loadBackendRuntimeEnv({ PORT: 'managed-by-runtime' }).DEFAULT_TIMEZONE).toBe('Europe/Kyiv');
   });
+  it('validates the optional Telegram username restriction without an @ prefix', () => {
+    expect(loadBackendRuntimeEnv({ TELEGRAM_ALLOWED_USERNAME: 'user61785' }).TELEGRAM_ALLOWED_USERNAME).toBe('user61785');
+    expect(() => loadBackendRuntimeEnv({ TELEGRAM_ALLOWED_USERNAME: '@user61785' })).toThrow();
+  });
 });
