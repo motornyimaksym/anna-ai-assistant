@@ -15,16 +15,17 @@ const update = (username?: string) => ({
 });
 
 const setup = () => {
+  const order: string[] = [];
   const repository = {
     appendMessage: vi.fn(),
     claimTelegramUpdate: vi.fn(async () => true),
     getConversation: vi.fn(async () => undefined),
     saveConversation: vi.fn(async (conversation: unknown) => conversation),
   };
-  const send = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true }));
+  const send = vi.fn(async (url: string, _init?: RequestInit) => { order.push(url.split('/').at(-1)!); return { ok: true, json: async () => ({ ok: true }) }; });
   vi.stubGlobal('fetch', send);
-  const assistant = { respond: vi.fn(async () => ({ text: 'OK', fromOpenAI: true })) };
-  return { service: new TelegramService(repository as unknown as BookingRepository, assistant as unknown as OpenAiService), repository, send, assistant };
+  const assistant = { respond: vi.fn(async () => { order.push('assistant'); return { text: 'OK', fromOpenAI: true }; }) };
+  return { service: new TelegramService(repository as unknown as BookingRepository, assistant as unknown as OpenAiService), repository, send, assistant, order };
 };
 
 afterEach(() => {
@@ -64,7 +65,7 @@ describe('Telegram private test restriction', () => {
     vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
     vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-bot-token');
     vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
-    const { service, repository, send, assistant } = setup();
+    const { service, repository, send, assistant, order } = setup();
 
     vi.useFakeTimers();
     const handling = service.handle('webhook-secret', update('User61785'));
@@ -73,11 +74,12 @@ describe('Telegram private test restriction', () => {
 
     expect(repository.claimTelegramUpdate).toHaveBeenCalledWith(101);
     expect(repository.saveConversation).toHaveBeenCalledOnce();
-    expect(send).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenCalledTimes(3);
     expect(assistant.respond).toHaveBeenCalledOnce();
-    expect(send.mock.calls[0]![0]).toContain('/sendChatAction');
-    expect(JSON.parse(send.mock.calls[0]![1]!.body as string)).toMatchObject({ chat_id: '123', business_connection_id: 'connection-1', action: 'typing' });
-    expect(send.mock.calls[1]![0]).toContain('/sendMessage');
+    expect(order.slice(0, 3)).toEqual(['readBusinessMessage', 'sendChatAction', 'assistant']);
+    expect(JSON.parse(send.mock.calls[0]![1]!.body as string)).toEqual({ business_connection_id: 'connection-1', chat_id: 123, message_id: 9 });
+    expect(JSON.parse(send.mock.calls[1]![1]!.body as string)).toMatchObject({ chat_id: '123', business_connection_id: 'connection-1', action: 'typing' });
+    expect(send.mock.calls[2]![0]).toContain('/sendMessage');
   });
 });
 
@@ -85,7 +87,7 @@ it('supports allowed private DMs but ignores groups and duplicate updates', asyn
   vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
   vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
   vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
-  const { service, repository, assistant } = setup();
+  const { service, repository, assistant, send } = setup();
   const message = { ...update('user61785').business_message, chat: { id: 123, type: 'group' } };
   await service.handle('webhook-secret', { update_id: 1, message });
   expect(assistant.respond).not.toHaveBeenCalled();
@@ -95,8 +97,25 @@ it('supports allowed private DMs but ignores groups and duplicate updates', asyn
   await vi.advanceTimersByTimeAsync(2_000);
   await handling;
   expect(assistant.respond).toHaveBeenCalledOnce();
+  expect(send.mock.calls.some(([url]) => url.includes('/readBusinessMessage'))).toBe(false);
   repository.claimTelegramUpdate.mockResolvedValueOnce(false);
   await service.handle('webhook-secret', { update_id: 2, message });
+  expect(assistant.respond).toHaveBeenCalledOnce();
+});
+
+it('continues replying when Telegram rejects the business read receipt', async () => {
+  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+  vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
+  vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+  const { service, send, assistant } = setup();
+  send.mockImplementationOnce(async () => { throw new Error('Telegram unavailable'); });
+  assistant.respond.mockResolvedValue({ text: 'OK', fromOpenAI: false });
+
+  await service.handle('webhook-secret', update('user61785'));
+
+  expect(send).toHaveBeenCalledTimes(3);
+  expect(send.mock.calls[0]![0]).toContain('/readBusinessMessage');
+  expect(send.mock.calls[2]![0]).toContain('/sendMessage');
   expect(assistant.respond).toHaveBeenCalledOnce();
 });
 
@@ -114,16 +133,16 @@ it('refreshes typing while OpenAI is processing and stops when it finishes', asy
 
   const handling = service.handle('webhook-secret', update('user61785'));
   await called;
-  expect(send).toHaveBeenCalledTimes(1);
-  await vi.advanceTimersByTimeAsync(4_000);
   expect(send).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(4_000);
+  expect(send).toHaveBeenCalledTimes(3);
   finish({ text: 'OK', fromOpenAI: true });
   await vi.advanceTimersByTimeAsync(1_199);
-  expect(send).toHaveBeenCalledTimes(2);
+  expect(send).toHaveBeenCalledTimes(3);
   await vi.advanceTimersByTimeAsync(1);
   await handling;
-  expect(send).toHaveBeenCalledTimes(3);
-  expect(send.mock.calls[2]![0]).toContain('/sendMessage');
+  expect(send).toHaveBeenCalledTimes(4);
+  expect(send.mock.calls[3]![0]).toContain('/sendMessage');
   vi.useRealTimers();
 });
 

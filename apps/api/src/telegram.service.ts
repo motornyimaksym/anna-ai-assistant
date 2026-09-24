@@ -22,6 +22,7 @@ export class TelegramService {
     const current = await this.repository.getConversation(chatId); const conversation: ConversationDto = current ?? { telegramChatId: chatId, clientId: message.from ? String(message.from.id) : undefined, businessConnectionId: message.business_connection_id, assistantEnabled: true, state: 'active', summary: '', createdAt: now, updatedAt: now };
     if (!conversation.assistantEnabled || (conversation.humanTakeoverUntil && conversation.humanTakeoverUntil > now)) { await this.repository.saveConversation({ ...conversation, updatedAt: now }); return; }
     await this.repository.saveConversation({ ...conversation, updatedAt: now });
+    if (update.business_message?.business_connection_id) await this.markBusinessMessageRead(update.business_message.business_connection_id, message.chat.id, message.message_id);
     const stopTyping = await this.startTyping(chatId, message.business_connection_id);
     let reply: string;
     try {
@@ -56,6 +57,21 @@ export class TelegramService {
     await pulse();
     const timer = setInterval(() => { void pulse(); }, 4_000);
     return () => clearInterval(timer);
+  }
+  private async markBusinessMessageRead(businessConnectionId: string, chatId: string | number, messageId: number): Promise<void> {
+    const token = process.env.TELEGRAM_BOT_TOKEN;
+    const numericChatId = Number(chatId);
+    if (!token || !Number.isSafeInteger(numericChatId)) return;
+    try {
+      const response = await fetch(`https://api.telegram.org/bot${token}/readBusinessMessage`, {
+        method: 'POST', signal: AbortSignal.timeout(10_000), headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ business_connection_id: businessConnectionId, chat_id: numericChatId, message_id: messageId }),
+      });
+      const result = await response.json().catch(() => undefined) as { ok?: boolean } | undefined;
+      if (!response.ok || result?.ok === false) this.logger.warn('Telegram read receipt request failed');
+    } catch {
+      this.logger.warn('Telegram read receipt request failed');
+    }
   }
   private async reply(chatId: string, businessConnectionId: string | undefined, text: string): Promise<void> { const token = process.env.TELEGRAM_BOT_TOKEN; if (!token) throw new Error('Telegram token not configured'); const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', signal: AbortSignal.timeout(10_000), headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text, ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}) }) }); if (!response.ok) throw new Error('Telegram reply failed'); }
 }

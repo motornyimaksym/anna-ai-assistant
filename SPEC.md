@@ -1203,3 +1203,8 @@ Before the assistant calls OpenAI, send `sendChatAction` with `action: "typing"`
 ## 39. Assistant response pacing
 
 Wait 600 ms for each Unicode code point in each generated assistant reply before sending it to Telegram. Keep the typing indicator refreshed throughout this wait. Empty replies and non-LLM control messages do not incur this delay. Limit reply text to 4,000 characters; the resulting maximum artificial wait is 40 minutes. Set the HTTPS function timeout to 3,600 seconds so OpenAI processing and the maximum pacing interval fit within the invocation limit.
+
+
+## 40. Telegram Business read receipt
+
+For an accepted `business_message`, mark the incoming message as read immediately before starting the typing indicator and assistant response. Call Telegram Bot API `readBusinessMessage` with its `business_connection_id`, `chat_id`, and `message_id`. This requires the connected bot's `can_read_messages` right. If that right is unavailable or the API call fails, log a credential-free warning and continue answering. Do not call the method for regular private bot DMs, rejected senders, duplicate updates, disabled conversations, or human takeover; the method only supports messages received through a Business connection.
