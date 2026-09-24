@@ -53,4 +53,18 @@ describe.skipIf(!withEmulator)('Firestore booking transactions', () => {
     const outcomes = await Promise.all([left.claimTelegramUpdate(123), right.claimTelegramUpdate(123)]);
     expect(outcomes.sort()).toEqual([false, true]);
   });
+  it('persists pending actions and returns only the latest 20 conversation messages', async () => {
+    const { repository } = await setup();
+    const now = new Date().toISOString();
+    const conversation = { telegramChatId: 'history-test', clientId: 'test', assistantEnabled: true, state: 'active', summary: '', createdAt: now, updatedAt: now };
+    await repository.saveConversation({ ...conversation, pendingAction: { name: 'cancel_booking', arguments: { bookingId: 'test-booking' }, expiresAt: now } });
+    expect((await repository.getConversation('history-test'))?.pendingAction?.name).toBe('cancel_booking');
+    for (let index = 0; index < 22; index++) await repository.appendMessage('history-test', 'user', `message-${index}`);
+    const messages = await repository.listMessages('history-test');
+    expect(messages).toHaveLength(20);
+    expect(messages[19]?.content).toBe('message-21');
+    await repository.saveConversation(conversation);
+    expect((await repository.getConversation('history-test'))?.pendingAction).toBeUndefined();
+  });
+
 });

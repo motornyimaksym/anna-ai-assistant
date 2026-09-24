@@ -9,3 +9,10 @@ The application uses the default Firestore Standard database. The backend Admin 
 Each `bookingSlots` document stores its `bookingId`. Creation reads every required slot document before writing the booking and slot documents in one transaction. Cancellation and rescheduling read the booking and relevant slot documents, then update the booking and release/acquire slots in a single transaction. A duplicate Telegram update is rejected by atomically creating its marker document.
 
 No migration is needed for the initial schema. New persisted fields or collections require a prior specification and this document update.
+
+
+## Private assistant conversation state
+
+`conversations/{chatId}/messages/{autoId}` stores `role` (`user` or `assistant`), `text`, and ISO `createdAt`. Read the newest 20 by descending creation time, then reverse for model context. No raw OpenAI payloads or credentials are persisted.
+
+Conversation documents optionally contain `pendingAction`: `{name, arguments, expiresAt}`. Name is `create_booking`, `cancel_booking`, or `reschedule_booking`; arguments contain only service/time or booking/time fields. Expiry is an ISO timestamp. `/confirm` consumes this field before execution; identity is always supplied from the current Telegram message. Old documents without this field remain valid. Existing booking documents and slot transactions are unchanged.

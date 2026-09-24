@@ -318,7 +318,7 @@ X-Telegram-Bot-Api-Secret-Token
 TELEGRAM_WEBHOOK_SECRET
 ```
 
-Для тестового розгортання `TELEGRAM_ALLOWED_USERNAME` задає єдине ім'я Telegram-користувача без `@`, якому бот може відповідати. Порівняння з `business_message.from.username` нечутливе до регістру. Якщо змінна відсутня, `from.username` відсутнє або ім'я не збігається, webhook повертає успішну відповідь без запису update/conversation у Firestore і без відправлення повідомлення. Перевірка виконується до idempotency claim. Пізніше обмеження можна замінити на стабільний числовий Telegram user ID, коли його буде підтверджено для цього акаунта.
+Для тестового розгортання `TELEGRAM_ALLOWED_USERNAME` задає єдине ім'я Telegram-користувача без `@`, якому бот може відповідати. Порівняння з `business_message.from.username` або `message.from.username` для private DM нечутливе до регістру. Якщо змінна відсутня, `from.username` відсутнє або ім'я не збігається, webhook повертає успішну відповідь без запису update/conversation у Firestore і без відправлення повідомлення. Перевірка виконується до idempotency claim. Пізніше обмеження можна замінити на стабільний числовий Telegram user ID, коли його буде підтверджено для цього акаунта.
 
 ### 7.3. Idempotency
 
@@ -1159,3 +1159,14 @@ pnpm build
 - немає hardcoded Firebase project IDs;
 - contracts синхронізовані;
 - `SPEC.md` відповідає реалізації.
+
+
+## 37. Private OpenAI conversation test
+
+- The allowed test sender (`TELEGRAM_ALLOWED_USERNAME`, currently `user61785`) can use both Telegram Business messages and private direct bot messages. Group messages, missing senders, other usernames, and edited updates are ignored before persistence or OpenAI calls. Existing manual takeover remains authoritative.
+- Replace the fixed greeting with the OpenAI Responses API using `OPENAI_API_KEY` and `OPENAI_MODEL`. Use the separate system prompt, current UTC time and configured timezone, and at most the latest 20 stored messages. Store user/assistant text in Firestore; do not log message contents or credentials. Limit input to 4,000 characters, each API call to 15 seconds, total model time to 40 seconds, and each turn to four model requests. Failures produce a neutral retry message, never a false booking confirmation.
+- Expose service lookup, availability, own bookings, creation, cancellation and rescheduling tools. Validate arguments with Zod. Bind client/chat/business connection identity on the server, never from model arguments. Reject access to another client's or chat's booking. Recheck future availability before create/reschedule; existing slot transactions prevent collisions.
+- Mutating tools only prepare one pending action per conversation. Explain its details and require the user's exact `/confirm` command in a subsequent message. `/cancel` discards it. Pending actions expire after 15 minutes. Confirmation consumes the action before execution and revalidates identity and availability. A new request can replace the pending action. Only report success after persistence succeeds. An interrupted consumed action is not automatically retried; the user can inspect their bookings and start again.
+- Persist bookings in the existing application Firestore database, independently of Google Calendar. No browser-local or instance-local booking storage. Do not automatically seed production data. Empty catalogs/schedules must be explained honestly.
+- Admin Bookings shows service name (ID fallback), client ID, Kyiv date/time, status, booking ID and Calendar sync state, with loading/error/empty states, manual refresh and 15-second polling.
+- Update claims provide at-most-once processing. An upstream failure after claiming does not replay mutations; the user can send a fresh message. Telegram delivery failure is logged without credentials. Webhook delivery is configured with one connection for the private test.

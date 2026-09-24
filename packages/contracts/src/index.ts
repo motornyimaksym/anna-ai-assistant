@@ -21,7 +21,8 @@ export const updateBookingRequestSchema = z.object({ status: bookingStatusSchema
 export const rescheduleBookingRequestSchema = z.object({ startAt: z.string().datetime() });
 export const availableSlotsRequestSchema = z.object({ serviceId: z.string().min(1), date: z.string().date(), after: timeSchema.optional(), before: timeSchema.optional() });
 export const availableSlotsResponseSchema = z.object({ slots: z.array(z.string().datetime()) });
-export const conversationSchema = z.object({ telegramChatId: z.string().min(1), clientId: z.string().optional(), businessConnectionId: z.string().optional(), assistantEnabled: z.boolean(), state: z.string().default('active'), summary: z.string().default(''), humanTakeoverUntil: z.string().datetime().optional(), createdAt: z.string().datetime(), updatedAt: z.string().datetime() });
+export const pendingActionSchema = z.object({ name: z.enum(['create_booking', 'cancel_booking', 'reschedule_booking']), arguments: z.record(z.string()), expiresAt: z.string().datetime() });
+export const conversationSchema = z.object({ telegramChatId: z.string().min(1), clientId: z.string().optional(), businessConnectionId: z.string().optional(), assistantEnabled: z.boolean(), state: z.string().default('active'), summary: z.string().default(''), pendingAction: pendingActionSchema.optional(), humanTakeoverUntil: z.string().datetime().optional(), createdAt: z.string().datetime(), updatedAt: z.string().datetime() });
 export const patchConversationSchema = z.object({ assistantEnabled: z.boolean().optional(), humanTakeoverUntil: z.string().datetime().nullable().optional() }).refine((value) => Object.keys(value).length > 0, 'At least one field is required');
 export const telegramToolArgsSchema = z.discriminatedUnion('name', [
   z.object({ name: z.literal('get_services'), arguments: z.object({}) }),

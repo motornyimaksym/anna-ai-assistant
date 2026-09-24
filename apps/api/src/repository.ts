@@ -140,6 +140,13 @@ export class BookingRepository {
     const snapshot = await this.db.collection('conversations').get();
     return snapshot.docs.map((doc) => conversationSchema.parse({ ...doc.data(), telegramChatId: doc.id })).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
+  async listMessages(chatId: string): Promise<{ role: 'user' | 'assistant'; content: string }[]> {
+    const snapshot = await this.db.collection('conversations').doc(chatId).collection('messages').orderBy('createdAt', 'desc').limit(20).get();
+    return snapshot.docs.reverse().map((doc) => ({ role: doc.data().role as 'user' | 'assistant', content: String(doc.data().text) }));
+  }
+  async appendMessage(chatId: string, role: 'user' | 'assistant', text: string): Promise<void> {
+    await this.db.collection('conversations').doc(chatId).collection('messages').add({ role, text, createdAt: new Date().toISOString() });
+  }
   async claimTelegramUpdate(updateId: number): Promise<boolean> {
     const ref = this.db.collection('telegramUpdates').doc(String(updateId));
     return this.db.runTransaction(async (transaction) => {
