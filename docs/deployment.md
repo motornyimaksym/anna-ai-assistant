@@ -16,14 +16,13 @@ For the current private Telegram test, set nonsecret `TELEGRAM_ALLOWED_USERNAME=
 
 To deploy while Calendar authorization is pending, leave `GOOGLE_CLIENT_ID` and `GOOGLE_CALENDAR_ID` unset when running `firebase:prepare`. The API then uses Firestore booking data without Calendar busy intervals or event sync. An empty `ADMIN_UIDS` secret starts the API but denies all admin requests until an administrator UID is added.
 
-Prepare and deploy from the repository root:
+From the repository root, prepare artifacts with `pnpm firebase:prepare`. Only after you explicitly authorize a production deployment, run the code-only release command:
 
 ```bash
-pnpm firebase:prepare
-npx -y firebase-tools@latest deploy --config firebase/firebase.json --project anna-ai-assistant
+pnpm firebase:deploy:code
 ```
 
-`firebase:prepare` validates the public web config, builds all workspaces, generates an isolated Node.js 22 function package in ignored `firebase/functions`, and copies the admin build into ignored `firebase/public` for Hosting. Firebase CLI requires Hosting's public directory to be inside its project directory (`firebase/`). The deployment script `pnpm firebase:deploy --project anna-ai-assistant` runs both commands. The generated function directory contains production dependencies and no local secret files. pnpm 11 approves dependency install scripts for `@firebase/util`, `esbuild`, and `protobufjs`; review newly reported build scripts before approving them.
+`firebase:prepare` validates the public web config, builds all workspaces, generates an isolated Node.js 22 function package in ignored `firebase/functions`, and copies the admin build into ignored `firebase/public` for Hosting. Firebase CLI requires Hosting's public directory to be inside its project directory (`firebase/`). `pnpm firebase:deploy:code` prepares and deploys only Hosting and function `api` to `anna-ai-assistant`. The broader `pnpm firebase:deploy --project anna-ai-assistant` deploys all targets configured in `firebase/firebase.json`, including Functions, Hosting, Firestore rules/indexes, and Auth configuration. The generated function directory contains production dependencies and no local secret files. pnpm 11 approves dependency install scripts for `@firebase/util`, `esbuild`, and `protobufjs`; review newly reported build scripts before approving them.
 
 After deployment, check `https://anna-ai-assistant.web.app/api/health` and sign in to the admin UI. Configure Telegram's webhook only after `/api/telegram/webhook`, its secret, bot token, and sender restriction are ready. The webhook URL is `https://anna-ai-assistant.web.app/api/telegram/webhook`. When intentionally discarding queued test updates, call Telegram `setWebhook` with `drop_pending_updates=true` and the `secret_token` from Secret Manager; verify the URL and queue with `getWebhookInfo`.
 
@@ -35,3 +34,6 @@ Telegram chat shows a `typing` action while OpenAI processes an accepted message
 
 
 Assistant replies are paced at 600 ms per Unicode code point before sending; typing remains visible while waiting. The maximum Telegram reply is 4,000 characters (up to 40 minutes pacing), so the HTTPS function timeout is one hour. This long wait increases function execution time and cost in proportion to reply length.
+
+
+Production deployments require an explicit user request. Do not run `firebase:deploy`, `firebase:deploy:code`, or Firebase CLI deploy commands after coding, committing, or pushing unless the user explicitly asks to deploy. The code-only command is `pnpm firebase:deploy:code`; it builds, prepares, and deploys Hosting plus the `api` function only.

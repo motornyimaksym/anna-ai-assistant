@@ -34,3 +34,6 @@ Inspect the current specification before changing API or domain behavior, Firest
 
 A functional task is complete only when `SPEC.md`, implementation, and tests agree; and `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` pass.
 
+## Production deployment authorization
+
+Never deploy to any production environment or invoke a production deployment script unless the user explicitly asks for deployment. This rule applies even after implementation, tests, commits, pushes, or a reported production issue. A request to commit or push does not authorize deployment. Treat explicit deployment authorization as scoped to the target and changes in that request; ask if the target is unclear.
