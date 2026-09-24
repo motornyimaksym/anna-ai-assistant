@@ -1,3 +1,4 @@
+import { waitForResponsePacing } from './response-pacing.js';
 import { OpenAiService } from './openai.service.js';
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { z } from 'zod';
@@ -24,7 +25,9 @@ export class TelegramService {
     const stopTyping = await this.startTyping(chatId, message.business_connection_id);
     let reply: string;
     try {
-      reply = await this.assistant.respond(conversation, { clientId: String(message.from!.id), telegramChatId: chatId, businessConnectionId: message.business_connection_id }, message.text);
+      const answer = await this.assistant.respond(conversation, { clientId: String(message.from!.id), telegramChatId: chatId, businessConnectionId: message.business_connection_id }, message.text);
+      if (answer.fromOpenAI) await waitForResponsePacing(answer.text);
+      reply = answer.text;
     } finally {
       stopTyping();
     }

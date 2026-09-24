@@ -23,7 +23,7 @@ const setup = () => {
   };
   const send = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true }));
   vi.stubGlobal('fetch', send);
-  const assistant = { respond: vi.fn(async () => 'AI reply') };
+  const assistant = { respond: vi.fn(async () => ({ text: 'OK', fromOpenAI: true })) };
   return { service: new TelegramService(repository as unknown as BookingRepository, assistant as unknown as OpenAiService), repository, send, assistant };
 };
 
@@ -66,7 +66,10 @@ describe('Telegram private test restriction', () => {
     vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
     const { service, repository, send, assistant } = setup();
 
-    await service.handle('webhook-secret', update('User61785'));
+    vi.useFakeTimers();
+    const handling = service.handle('webhook-secret', update('User61785'));
+    await vi.advanceTimersByTimeAsync(2_000);
+    await handling;
 
     expect(repository.claimTelegramUpdate).toHaveBeenCalledWith(101);
     expect(repository.saveConversation).toHaveBeenCalledOnce();
@@ -87,7 +90,10 @@ it('supports allowed private DMs but ignores groups and duplicate updates', asyn
   await service.handle('webhook-secret', { update_id: 1, message });
   expect(assistant.respond).not.toHaveBeenCalled();
   message.chat.type = 'private';
-  await service.handle('webhook-secret', { update_id: 2, message });
+  vi.useFakeTimers();
+  const handling = service.handle('webhook-secret', { update_id: 2, message });
+  await vi.advanceTimersByTimeAsync(2_000);
+  await handling;
   expect(assistant.respond).toHaveBeenCalledOnce();
   repository.claimTelegramUpdate.mockResolvedValueOnce(false);
   await service.handle('webhook-secret', { update_id: 2, message });
@@ -100,9 +106,9 @@ it('refreshes typing while OpenAI is processing and stops when it finishes', asy
   vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
   vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
   const { service, send, assistant } = setup();
-  let finish!: (text: string) => void;
+  let finish!: (answer: { text: string; fromOpenAI: boolean }) => void;
   let started!: () => void;
-  const processing = new Promise<string>((resolve) => { finish = resolve; });
+  const processing = new Promise<{ text: string; fromOpenAI: boolean }>((resolve) => { finish = resolve; });
   const called = new Promise<void>((resolve) => { started = resolve; });
   assistant.respond.mockImplementation(() => { started(); return processing; });
 
@@ -111,9 +117,23 @@ it('refreshes typing while OpenAI is processing and stops when it finishes', asy
   expect(send).toHaveBeenCalledTimes(1);
   await vi.advanceTimersByTimeAsync(4_000);
   expect(send).toHaveBeenCalledTimes(2);
-  finish('AI reply');
+  finish({ text: 'OK', fromOpenAI: true });
+  await vi.advanceTimersByTimeAsync(1_199);
+  expect(send).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(1);
   await handling;
   expect(send).toHaveBeenCalledTimes(3);
   expect(send.mock.calls[2]![0]).toContain('/sendMessage');
   vi.useRealTimers();
+});
+
+it('does not pace non-OpenAI control responses', async () => {
+  vi.useFakeTimers();
+  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+  vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
+  vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+  const { service, send, assistant } = setup();
+  assistant.respond.mockResolvedValue({ text: 'Control response', fromOpenAI: false });
+  await service.handle('webhook-secret', update('user61785'));
+  expect(send.mock.calls.at(-1)![0]).toContain('/sendMessage');
 });

@@ -17,29 +17,31 @@ const tools = [
 ];
 const outputSchema = z.object({ output: z.array(z.object({ type: z.string(), name: z.string().optional(), arguments: z.string().optional(), call_id: z.string().optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()).optional() }).passthrough()) });
 const fallback = 'Зараз не вдалося завершити запит. Спробуйте ще раз. Якщо ви підтверджували запис, спочатку перевірте свої записи.';
+export type AssistantReply = { text: string; fromOpenAI: boolean };
+const localReply = (text: string): AssistantReply => ({ text, fromOpenAI: false });
 @Injectable()
 export class OpenAiService {
   private readonly logger = new Logger(OpenAiService.name);
   constructor(private readonly repository: BookingRepository, private readonly assistantTools: AssistantToolsService) {}
-  async respond(conversation: ConversationDto, context: AssistantContext, text: string): Promise<string> {
+  async respond(conversation: ConversationDto, context: AssistantContext, text: string): Promise<AssistantReply> {
     try {
       return await this.run(conversation, context, text);
     } catch {
       this.logger.warn('Assistant request failed; credentials and message contents omitted');
-      return fallback;
+      return localReply(fallback);
     }
   }
-  private async run(conversation: ConversationDto, context: AssistantContext, text: string): Promise<string> {
-    if (text.length > 4000) return 'Будь ласка, скоротіть повідомлення до 4000 символів.';
+  private async run(conversation: ConversationDto, context: AssistantContext, text: string): Promise<AssistantReply> {
+    if (text.length > 4000) return localReply('Будь ласка, скоротіть повідомлення до 4000 символів.');
     const command = text.trim().toLowerCase();
     if (command === '/cancel' || command === '/confirm') {
       const pending = conversation.pendingAction;
       await this.repository.saveConversation({ ...conversation, pendingAction: undefined });
-      if (command === '/cancel') return 'Запропоновану дію скасовано. Існуючі записи не змінено.';
-      if (!pending || pending.expiresAt <= new Date().toISOString()) return 'Немає актуальної дії для підтвердження. Уточніть бажаний запис.';
+      if (command === '/cancel') return localReply('Запропоновану дію скасовано. Існуючі записи не змінено.');
+      if (!pending || pending.expiresAt <= new Date().toISOString()) return localReply('Немає актуальної дії для підтвердження. Уточніть бажаний запис.');
       const result = await this.assistantTools.execute(pending, context);
       const booking = z.object({ id: z.string(), status: z.string(), startAt: z.string() }).parse(result);
-      return `Готово. Запис ${booking.id}: ${booking.status}. Час: ${new Date(booking.startAt).toLocaleString('uk-UA', { timeZone: process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv' })} (${process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv'}).`;
+      return localReply(`Готово. Запис ${booking.id}: ${booking.status}. Час: ${new Date(booking.startAt).toLocaleString('uk-UA', { timeZone: process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv' })} (${process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv'}).`);
     }
     const key = process.env.OPENAI_API_KEY;
     if (!key) throw new Error('OpenAI is not configured');
@@ -58,7 +60,7 @@ export class OpenAiService {
       if (!calls.length) {
         const reply = output.flatMap((item) => item.type === 'message' ? item.content ?? [] : []).filter((part) => part.type === 'output_text').map((part) => part.text ?? '').join('\n').trim();
         if (!reply) throw new Error('Empty model reply');
-        return reply.slice(0, 4000);
+        return { text: reply.slice(0, 4000), fromOpenAI: true };
       }
       for (const call of calls) {
         let result: unknown;
@@ -69,7 +71,7 @@ export class OpenAiService {
             await this.repository.saveConversation({ ...conversation, pendingAction });
             const action = parsed.name === 'create_booking' ? 'Новий запис' : parsed.name === 'cancel_booking' ? 'Скасування запису' : 'Перенесення запису';
             const details = Object.entries(parsed.arguments).map(([name, value]) => name === 'startAt' ? `Час: ${new Date(value).toLocaleString('uk-UA', { timeZone: process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv' })} (${process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv'})` : `${name === 'serviceId' ? 'Послуга' : 'Номер запису'}: ${value}`).join('\n');
-            return `${action}\n${details}\nНадішліть /confirm для підтвердження або /cancel для відмови. Пропозиція діє 15 хвилин.`;
+            return localReply(`${action}\n${details}\nНадішліть /confirm для підтвердження або /cancel для відмови. Пропозиція діє 15 хвилин.`);
           }
           result = await this.assistantTools.execute(parsed, context);
         } catch {
@@ -78,6 +80,6 @@ export class OpenAiService {
         input.push({ type: 'function_call_output', call_id: call.call_id, output: JSON.stringify(result) });
       }
     }
-    return fallback;
+    return localReply(fallback);
   }
 }

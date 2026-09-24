@@ -32,3 +32,6 @@ The private assistant uses OpenAI Responses function calls. Set a Responses-capa
 
 
 Telegram chat shows a `typing` action while OpenAI processes an accepted message. The worker refreshes it every four seconds for longer requests and stops when processing completes. It uses the existing Business connection ID where present; Telegram requires the connected bot to have reply rights.
+
+
+Assistant replies are paced at 600 ms per Unicode code point before sending; typing remains visible while waiting. The maximum Telegram reply is 4,000 characters (up to 40 minutes pacing), so the HTTPS function timeout is one hour. This long wait increases function execution time and cost in proportion to reply length.

@@ -12,7 +12,7 @@ const secrets = [
   defineSecret('ADMIN_UIDS'),
 ];
 let applicationPromise: ReturnType<typeof createApp> | undefined;
-export const api = onRequest({ region: 'europe-west1', secrets }, async (request, response) => {
+export const api = onRequest({ region: 'europe-west1', timeoutSeconds: 3600, secrets }, async (request, response) => {
   applicationPromise ??= createApp().then(async (app) => { await app.init(); return app; });
   const application = await applicationPromise;
   request.url = stripApiPrefix(request.url);

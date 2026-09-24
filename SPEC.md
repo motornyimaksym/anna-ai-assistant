@@ -1175,3 +1175,8 @@ pnpm build
 ## 38. Telegram typing indicator
 
 Before the assistant calls OpenAI, send `sendChatAction` with `action: "typing"`, carrying the current chat ID and `business_connection_id` when present. Refresh every four seconds during long requests because Telegram clears the status after five seconds or less. Stop refreshing as soon as the assistant returns or fails. Typing indicator failures are logged without credentials and must not block the assistant reply. Do not send typing to rejected users, duplicate updates, disabled conversations, or during human takeover.
+
+
+## 39. Assistant response pacing
+
+Wait 600 ms for each Unicode code point in each generated assistant reply before sending it to Telegram. Keep the typing indicator refreshed throughout this wait. Empty replies and non-LLM control messages do not incur this delay. Limit reply text to 4,000 characters; the resulting maximum artificial wait is 40 minutes. Set the HTTPS function timeout to 3,600 seconds so OpenAI processing and the maximum pacing interval fit within the invocation limit.
