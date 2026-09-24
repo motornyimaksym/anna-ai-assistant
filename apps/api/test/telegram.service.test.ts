@@ -28,6 +28,7 @@ const setup = () => {
 };
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -69,9 +70,11 @@ describe('Telegram private test restriction', () => {
 
     expect(repository.claimTelegramUpdate).toHaveBeenCalledWith(101);
     expect(repository.saveConversation).toHaveBeenCalledOnce();
-    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledTimes(2);
     expect(assistant.respond).toHaveBeenCalledOnce();
-    expect(JSON.parse(send.mock.calls[0]![1]!.body as string)).toMatchObject({ chat_id: '123', business_connection_id: 'connection-1' });
+    expect(send.mock.calls[0]![0]).toContain('/sendChatAction');
+    expect(JSON.parse(send.mock.calls[0]![1]!.body as string)).toMatchObject({ chat_id: '123', business_connection_id: 'connection-1', action: 'typing' });
+    expect(send.mock.calls[1]![0]).toContain('/sendMessage');
   });
 });
 
@@ -89,4 +92,28 @@ it('supports allowed private DMs but ignores groups and duplicate updates', asyn
   repository.claimTelegramUpdate.mockResolvedValueOnce(false);
   await service.handle('webhook-secret', { update_id: 2, message });
   expect(assistant.respond).toHaveBeenCalledOnce();
+});
+
+it('refreshes typing while OpenAI is processing and stops when it finishes', async () => {
+  vi.useFakeTimers();
+  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+  vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
+  vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+  const { service, send, assistant } = setup();
+  let finish!: (text: string) => void;
+  let started!: () => void;
+  const processing = new Promise<string>((resolve) => { finish = resolve; });
+  const called = new Promise<void>((resolve) => { started = resolve; });
+  assistant.respond.mockImplementation(() => { started(); return processing; });
+
+  const handling = service.handle('webhook-secret', update('user61785'));
+  await called;
+  expect(send).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(4_000);
+  expect(send).toHaveBeenCalledTimes(2);
+  finish('AI reply');
+  await handling;
+  expect(send).toHaveBeenCalledTimes(3);
+  expect(send.mock.calls[2]![0]).toContain('/sendMessage');
+  vi.useRealTimers();
 });

@@ -1170,3 +1170,8 @@ pnpm build
 - Persist bookings in the existing application Firestore database, independently of Google Calendar. No browser-local or instance-local booking storage. Do not automatically seed production data. Empty catalogs/schedules must be explained honestly.
 - Admin Bookings shows service name (ID fallback), client ID, Kyiv date/time, status, booking ID and Calendar sync state, with loading/error/empty states, manual refresh and 15-second polling.
 - Update claims provide at-most-once processing. An upstream failure after claiming does not replay mutations; the user can send a fresh message. Telegram delivery failure is logged without credentials. Webhook delivery is configured with one connection for the private test.
+
+
+## 38. Telegram typing indicator
+
+Before the assistant calls OpenAI, send `sendChatAction` with `action: "typing"`, carrying the current chat ID and `business_connection_id` when present. Refresh every four seconds during long requests because Telegram clears the status after five seconds or less. Stop refreshing as soon as the assistant returns or fails. Typing indicator failures are logged without credentials and must not block the assistant reply. Do not send typing to rejected users, duplicate updates, disabled conversations, or during human takeover.

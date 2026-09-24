@@ -29,3 +29,6 @@ After deployment, check `https://anna-ai-assistant.web.app/api/health` and sign 
 
 
 The private assistant uses OpenAI Responses function calls. Set a Responses-capable `OPENAI_MODEL` and a funded API key. Both Business messages and private bot DMs are supported; include `message` in Telegram webhook `allowed_updates` for DMs. Keep `max_connections=1` during this test. Use `/confirm` to execute a proposed booking change or `/cancel` to discard it. Bookings persist in Firestore and appear at `/bookings`; Calendar can remain disabled. No demo services or hours are added automatically.
+
+
+Telegram chat shows a `typing` action while OpenAI processes an accepted message. The worker refreshes it every four seconds for longer requests and stops when processing completes. It uses the existing Business connection ID where present; Telegram requires the connected bot to have reply rights.
