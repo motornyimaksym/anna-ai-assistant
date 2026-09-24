@@ -85,6 +85,20 @@ describe.skipIf(!withEmulator)('Firestore booking transactions', () => {
     expect((await getFirestore().collection('assistantSettings').doc('adminAccess').get()).data()?.emails).toEqual(['stakeholder@example.com']);
     expect(await repository.getAdminAccessOverride()).toEqual(saved);
   });
+  it('preserves chosen price, duration and buffer on reschedule after catalog edits', async () => {
+    const { repository, service } = await setup();
+    const original = (await repository.getService('massage-60'))!;
+    await repository.saveService({ ...original, durationOptions: [{ durationMinutes: 90, price: 2000 }] });
+    const booking = await service.create({ clientId: 'options', telegramChatId: 'options', serviceId: original.id, durationMinutes: 90, startAt: '2099-01-01T09:00:00.000Z' });
+    expect(booking).toMatchObject({ durationMinutes: 90, price: 2000, currency: 'UAH' });
+    await repository.saveService({ ...original, durationMinutes: 30, price: 999, bufferMinutes: 0 });
+    const moved = await service.reschedule(booking.id, { startAt: '2099-01-02T09:00:00.000Z' });
+    expect(moved).toMatchObject({ durationMinutes: 90, price: 2000, currency: 'UAH' });
+    expect(Date.parse(moved.endAt) - Date.parse(moved.startAt)).toBe(90 * 60_000);
+    const stored = (await getFirestore().collection('bookings').doc(booking.id).get()).data()!;
+    expect(stored.bufferMinutes).toBe(15);
+    expect(stored.lockedSlots).toHaveLength(7);
+  });
   it('persists pending actions and returns only the latest 20 conversation messages', async () => {
     const { repository } = await setup();
     const now = new Date().toISOString();

@@ -1,4 +1,6 @@
-type ServiceCaptionSource = { name: string; description: string; durationMinutes: number; price: number; currency: string };
+type DurationOption = { durationMinutes: number; price: number };
+type ServiceCaptionSource = DurationOption & { name: string; description: string; currency: string; durationOptions?: DurationOption[] };
+export const serviceDurationOptions = (service: DurationOption & { durationOptions?: DurationOption[] }): DurationOption[] => [{ durationMinutes: service.durationMinutes, price: service.price }, ...(service.durationOptions ?? [])];
 
 const truncateUtf16 = (text: string, maxLength: number): string => {
   if (text.length <= maxLength) return text;
@@ -11,7 +13,7 @@ const truncateUtf16 = (text: string, maxLength: number): string => {
 export const defaultServiceCaption = (service: ServiceCaptionSource, withPhoto: boolean): string => {
   const prefix = service.name;
   const description = service.description.trim();
-  const footer = `${service.durationMinutes} хв · ${service.price} ${service.currency}`;
+  const footer = serviceDurationOptions(service).map((option) => `${option.durationMinutes} хв · ${option.price} ${service.currency}`).join('\n');
   if (!withPhoto) return [prefix, description, footer].filter(Boolean).join('\n\n');
   const heading = `${prefix}\n\n`;
   const ending = `\n\n${footer}`;

@@ -18,7 +18,7 @@ export const lockedSlotKeys = (resourceId: string, startAt: string, endAt: strin
   return result;
 };
 export const serviceEndAt = (startAt: string, service: Pick<ServiceDto, 'durationMinutes'>): string => DateTime.fromISO(startAt).plus({ minutes: service.durationMinutes }).toUTC().toISO({ suppressMilliseconds: true })!;
-export const generateAvailableSlots = (input: { date: string; timezone: string; service: ServiceDto; rules: AvailabilityRuleDto[]; exceptions: ScheduleExceptionDto[]; occupied: TimeInterval[]; busy: TimeInterval[]; after?: string; before?: string }): string[] => {
+export const generateAvailableSlots = (input: { date: string; timezone: string; service: Pick<ServiceDto, 'durationMinutes' | 'bufferMinutes'>; rules: AvailabilityRuleDto[]; exceptions: ScheduleExceptionDto[]; occupied: TimeInterval[]; busy: TimeInterval[]; after?: string; before?: string }): string[] => {
   const { date, timezone, service } = input; const day = parseLocal(date, '00:00', timezone); if (!day.isValid) throw new InvalidScheduleError('Invalid date');
   const exceptions = input.exceptions.filter((item) => item.date === date); if (exceptions.some((item) => item.type === 'day_off')) return [];
   let windows = input.rules.filter((rule) => rule.enabled && rule.dayOfWeek === day.weekday % 7).map((rule) => ({ start: rule.start, end: rule.end }));

@@ -18,6 +18,12 @@ Each `bookingSlots` document stores its `bookingId`. Creation reads every requir
 
 No migration is needed for the initial schema. New persisted fields or collections require a prior specification and this document update.
 
+## Service duration options
+
+Services retain `durationMinutes` and `price` as their first option. Optional `durationOptions` stores up to nine additional `{ durationMinutes, price }` maps. All durations across the service must be unique (integer 15–480 minutes); prices are finite and nonnegative. Currency, buffer and Telegram content are shared. Missing options means the legacy single duration/price pair; no production migration is required.
+
+New bookings snapshot server-selected `durationMinutes`, `price`, and `currency`. These fields are optional when reading historical bookings. Historical duration falls back to the start/end interval; historical price is unknown. Rescheduling preserves the snapshot and internal `bufferMinutes`, including when a catalog option is removed. Pending-action arguments may now contain a numeric `durationMinutes` alongside their existing string values. Availability and booking APIs use duration as the option selector, never trust a supplied price.
+
 
 ## Private assistant conversation state
 

@@ -1,11 +1,11 @@
 import { Alert, Box, Button, Card, CardActions, CardContent, CardMedia, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, IconButton, Paper, Stack, Switch, TextField, Typography } from '@mui/material';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState, type ReactNode } from 'react';
-import { defaultServiceCaption, serviceSchema, telegramCaptionSchema, type ServiceDto, type TelegramMessageEntityDto, type TelegramUrlButtonDto } from '@booking/contracts';
+import { defaultServiceCaption, serviceDurationOptions, serviceSchema, telegramCaptionSchema, type ServiceDto, type TelegramMessageEntityDto, type TelegramUrlButtonDto } from '@booking/contracts';
 import { adminApi } from './api.js';
 
 type FormState = {
-  id: string; name: string; description: string; durationMinutes: string; bufferMinutes: string; price: string; currency: string; enabled: boolean;
+  id: string; name: string; description: string; options: { durationMinutes: string; price: string }[]; bufferMinutes: string; currency: string; enabled: boolean;
   photoUrl: string; captionText: string; entities: TelegramMessageEntityDto[]; buttons: TelegramUrlButtonDto[][];
 };
 type Selection = { start: number; end: number };
@@ -15,13 +15,13 @@ const errorText = (error: unknown) => error instanceof Error ? error.message : '
 const newId = () => globalThis.crypto?.randomUUID?.() ?? `service-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const numberFromDraft = (value: string) => value.trim() === '' ? Number.NaN : Number(value);
 const toForm = (service?: ServiceDto): FormState => ({
-  id: service?.id ?? newId(), name: service?.name ?? '', description: service?.description ?? '', durationMinutes: String(service?.durationMinutes ?? 60),
-  bufferMinutes: String(service?.bufferMinutes ?? 0), price: String(service?.price ?? ''), currency: service?.currency ?? 'UAH', enabled: service?.enabled ?? true,
+  id: service?.id ?? newId(), name: service?.name ?? '', description: service?.description ?? '', options: service ? serviceDurationOptions(service).map((option) => ({ durationMinutes: String(option.durationMinutes), price: String(option.price) })) : [{ durationMinutes: '60', price: '' }],
+  bufferMinutes: String(service?.bufferMinutes ?? 0), currency: service?.currency ?? 'UAH', enabled: service?.enabled ?? true,
   photoUrl: service?.photoUrl ?? '', captionText: service?.telegramCaption?.text ?? '', entities: service?.telegramCaption?.entities ?? [], buttons: service?.telegramButtons?.map((row) => row.map((button) => ({ ...button }))) ?? [],
 });
 const toService = (form: FormState): unknown => ({
-  id: form.id, name: form.name, description: form.description, durationMinutes: numberFromDraft(form.durationMinutes), bufferMinutes: numberFromDraft(form.bufferMinutes),
-  price: numberFromDraft(form.price), currency: form.currency.trim().toUpperCase(), enabled: form.enabled,
+  id: form.id, name: form.name, description: form.description, durationMinutes: numberFromDraft(form.options[0]!.durationMinutes), bufferMinutes: numberFromDraft(form.bufferMinutes),
+  price: numberFromDraft(form.options[0]!.price), durationOptions: form.options.slice(1).map((option) => ({ durationMinutes: numberFromDraft(option.durationMinutes), price: numberFromDraft(option.price) })), currency: form.currency.trim().toUpperCase(), enabled: form.enabled,
   ...(form.photoUrl ? { photoUrl: form.photoUrl } : {}),
   ...(form.captionText.trim() ? { telegramCaption: { text: form.captionText, entities: form.entities } } : {}),
   ...(form.buttons.length ? { telegramButtons: form.buttons } : {}),
@@ -131,7 +131,7 @@ export const Services = () => {
     rows[rowIndex]![buttonIndex]![key] = value;
     update('buttons', rows);
   };
-  const previewCaption = form ? (form.captionText || defaultServiceCaption({ name: form.name || 'Service name', description: form.description, durationMinutes: Number(form.durationMinutes), price: Number(form.price || '0'), currency: form.currency }, Boolean(form.photoUrl || photoFile))) : '';
+  const previewCaption = form ? (form.captionText || defaultServiceCaption({ name: form.name || 'Service name', description: form.description, durationMinutes: Number(form.options[0]!.durationMinutes), price: Number(form.options[0]!.price || '0'), durationOptions: form.options.slice(1).map((option) => ({ durationMinutes: Number(option.durationMinutes), price: Number(option.price) })), currency: form.currency }, Boolean(form.photoUrl || photoFile))) : '';
 
   return <Stack spacing={2}>
     <Stack direction="row" justifyContent="space-between" alignItems="center">
@@ -147,7 +147,7 @@ export const Services = () => {
           <CardContent>
             <Stack direction="row" justifyContent="space-between" alignItems="start" gap={1}><Typography variant="h6">{service.name}</Typography><Chip size="small" color={service.enabled ? 'success' : 'default'} label={service.enabled ? 'Active' : 'Disabled'} /></Stack>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>{service.description || 'No assistant description.'}</Typography>
-            <Typography sx={{ mt: 1 }}>{service.durationMinutes} min · {service.price} {service.currency}</Typography>
+            <Stack spacing={0.5} sx={{ mt: 1 }}>{serviceDurationOptions(service).map((option) => <Typography key={option.durationMinutes}>{option.durationMinutes} min · {option.price} {service.currency}</Typography>)}</Stack>
             <Typography variant="caption" color="text.secondary">Buffer {service.bufferMinutes} min</Typography>
           </CardContent>
           <CardActions>
@@ -167,10 +167,18 @@ export const Services = () => {
                 <Typography variant="h6">Booking details</Typography>
                 <TextField label="Service name" value={form.name} onChange={(event) => update('name', event.target.value)} required fullWidth />
                 <TextField label="Description for assistant" value={form.description} onChange={(event) => update('description', event.target.value)} multiline minRows={3} inputProps={{ maxLength: 2000 }} helperText={`${form.description.length}/2,000. Used by assistant when explaining this service.`} fullWidth />
+                <Typography variant="subtitle1">Duration and price options</Typography>
+                <Typography variant="body2" color="text.secondary">Offer different session lengths under this service. Each duration needs its own price; currency and buffer apply to every option.</Typography>
+                {form.options.map((option, index) => <Paper key={index} variant="outlined" sx={{ p: 1.5 }}>
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <TextField label={index === 0 ? 'Duration (minutes)' : `Option ${index + 1} duration (minutes)`} type="number" required value={option.durationMinutes} onChange={(event) => update('options', form.options.map((item, position) => position === index ? { ...item, durationMinutes: event.target.value } : item))} inputProps={{ min: 15, max: 480, step: 1 }} fullWidth />
+                    <TextField label={index === 0 ? 'Price' : `Option ${index + 1} price`} type="number" required value={option.price} onChange={(event) => update('options', form.options.map((item, position) => position === index ? { ...item, price: event.target.value } : item))} inputProps={{ min: 0, step: 'any' }} fullWidth />
+                    <IconButton aria-label={`Remove duration option ${index + 1}`} disabled={form.options.length === 1} onClick={() => update('options', form.options.filter((_, position) => position !== index))}>×</IconButton>
+                  </Stack>
+                </Paper>)}
+                <Button variant="outlined" onClick={() => update('options', [...form.options, { durationMinutes: '', price: '' }])} disabled={form.options.length >= 10}>Add duration option</Button>
                 <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                  <TextField label="Duration (minutes)" type="number" required value={form.durationMinutes} onChange={(event) => update('durationMinutes', event.target.value)} inputProps={{ min: 15, max: 480, step: 15 }} />
                   <TextField label="Buffer (minutes)" type="number" required value={form.bufferMinutes} onChange={(event) => update('bufferMinutes', event.target.value)} inputProps={{ min: 0, max: 120, step: 5 }} />
-                  <TextField label="Price" type="number" required value={form.price} onChange={(event) => update('price', event.target.value)} inputProps={{ min: 0, step: 'any' }} />
                   <TextField label="Currency" required value={form.currency} onChange={(event) => update('currency', event.target.value)} inputProps={{ maxLength: 3 }} />
                 </Box>
                 <FormControlLabel control={<Switch checked={form.enabled} onChange={(event) => update('enabled', event.target.checked)} />} label="Offer this service in Telegram" />
@@ -224,7 +232,7 @@ export const Services = () => {
             </Box>
             {formError && <Alert severity="error">{formError}</Alert>}
             {save.isError && <Alert severity="error">Could not save service. {errorText(save.error)}</Alert>}
-            {parsed && !parsed.success && <Alert severity="warning">Check the service fields, caption formatting, and button links.</Alert>}
+            {parsed && !parsed.success && <Alert severity="warning">{parsed.error.issues[0]?.message ?? 'Check the service fields, caption formatting, and button links.'}</Alert>}
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2 }}><Button onClick={close} disabled={save.isPending}>Cancel</Button><Button variant="contained" onClick={() => { if (parsed?.success) save.mutate({ service: parsed.data, creating: isNew, photo: photoFile }); }} disabled={!canSave}>{save.isPending ? 'Saving…' : 'Save service'}</Button></DialogActions>

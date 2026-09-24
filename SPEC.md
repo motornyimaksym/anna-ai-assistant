@@ -376,6 +376,7 @@ assistantSettings
   durationMinutes: 60,
   bufferMinutes: 15,
   price: 1500,
+  durationOptions: [{ durationMinutes: 90, price: 2000 }],
   currency: "UAH",
   enabled: true
 }
@@ -394,6 +395,16 @@ Admin повинен підтримувати:
 - preview the exact Telegram message before saving.
 
 Негативні ціни та некоректна тривалість заборонені.
+
+### 9.1. Duration and price options
+
+One service may offer 1–10 distinct duration/price options, sharing its name, description, currency, buffer, enabled state, photo and Telegram presentation. Keep the existing `durationMinutes` and `price` as the first option for backward compatibility; optional `durationOptions` holds up to nine additional `{ durationMinutes, price }` pairs. Durations must be unique across all options, integer 15–480 minutes; prices must be finite and nonnegative. Existing services without `durationOptions` remain single-option services without migration.
+
+The Services editor shows editable duration/price rows with Add option and Remove option controls; at least one row must remain. Catalog cards and automatic Telegram captions show all options. Custom Telegram captions remain administrator-authored.
+
+Availability and create-booking requests accept optional integer `durationMinutes`. It must match an offered option. Omission is allowed only for a single-option service; a multi-option service requires the client to choose before availability or booking. The assistant tools expose this selection, and the assistant asks which duration the client wants when unclear. Pending booking proposals persist and display the chosen duration. New bookings snapshot the selected `durationMinutes`, `price`, and `currency` from the server catalog, never a caller-supplied price. These values do not change when the catalog changes. Admin Bookings displays booked duration and price; old bookings derive duration from start/end and show unknown historical price rather than the current catalog price.
+
+Rescheduling preserves booked duration, price, currency and stored buffer, even if the catalog option changes or is removed. Availability rechecks for an existing booking use its stored timing. Legacy bookings use their start/end interval as duration. Booking slot locks and Calendar end times use the selected/booked duration.
 
 Service `description` remains plain information for the assistant. Optional `telegramCaption` stores plain text and Telegram message entities (UTF-16 offsets); optional `photoUrl` points to an uploaded service photo; optional `telegramButtons` stores rows of URL buttons. When no custom caption exists, the bot builds a plain service card from name, description, duration, and price. When `get_services` is used, send one Telegram service card per returned enabled service after the assistant's text answer. Cards use `sendPhoto` when a photo exists and `sendMessage` otherwise. Support Telegram formatting entities for bold, italic, underline, strikethrough, spoiler, code, preformatted text, quote, expandable quote, and linked text. Callback buttons and other media types are outside this service-card flow.
 
@@ -462,6 +473,10 @@ Service photos are JPEG, PNG, or WebP up to 5 MiB. Upload through the protected 
 {
   clientId,
   serviceId,
+
+  durationMinutes, // selected duration snapshot; optional on legacy bookings
+  price,           // server catalog price at booking creation
+  currency,
 
   startAt,
   endAt,
@@ -599,6 +614,7 @@ Input:
 ```ts
 {
   serviceId: string;
+  durationMinutes?: number; // required for services with multiple options
   date: string;
   after?: string;
   before?: string;
@@ -887,6 +903,7 @@ Actions:
 - enable / disable;
 - price;
 - duration;
+- add, edit and remove duration/price options for one service;
 - buffer;
 - upload or remove a catalog photo;
 - edit Telegram caption text with formatting toolbar and link support;

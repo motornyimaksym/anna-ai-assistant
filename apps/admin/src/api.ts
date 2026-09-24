@@ -18,7 +18,7 @@ export const adminApi = {
   },
   conversations: () => request('/admin/conversations', conversationSchema.array()),
   updateConversation: (id: string, data: { assistantEnabled?: boolean }) => request(`/admin/conversations/${id}`, conversationSchema, { method: 'PATCH', body: JSON.stringify(data) }),
-  slots: (data: { serviceId: string; date: string }) => request('/admin/available-slots', availableSlotsResponseSchema, { method: 'POST', body: JSON.stringify(data) }),
+  slots: (data: { serviceId: string; date: string; durationMinutes?: number }) => request('/admin/available-slots', availableSlotsResponseSchema, { method: 'POST', body: JSON.stringify(data) }),
   spec: () => request('/admin/spec', specResponseSchema),
   assistantPrompt: () => request('/admin/assistant-prompt', assistantPromptResponseSchema),
   saveAssistantPrompt: (prompt: string) => request('/admin/assistant-prompt', assistantPromptResponseSchema, { method: 'PUT', body: JSON.stringify({ prompt }) }),

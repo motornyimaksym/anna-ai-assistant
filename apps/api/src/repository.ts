@@ -4,7 +4,7 @@ import {
   availabilityRuleSchema, bookingSchema, botSettingsSchema, conversationSchema, scheduleExceptionSchema, serviceSchema, updateAdminAccessSchema,
   type AvailabilityRuleDto, type BookingDto, type BotSettings, type ConversationDto, type ScheduleExceptionDto, type ServiceDto,
 } from '@booking/contracts';
-import { BookingConflictError, BookingNotFoundError } from '@booking/domain';
+import { BookingConflictError, BookingNotFoundError, lockedSlotKeys, serviceEndAt } from '@booking/domain';
 import { FirebaseAdminService } from './firebase-admin.js';
 
 export type CreateStoredBooking = Omit<BookingDto, 'id' | 'createdAt' | 'updatedAt'> & { lockedSlots: string[]; bufferMinutes: number };
@@ -66,6 +66,12 @@ export class BookingRepository {
     const doc = await this.db.collection('bookings').doc(id).get();
     return doc.exists ? bookingSchema.parse({ ...doc.data(), id: doc.id }) : undefined;
   }
+  async getBookingTiming(id: string): Promise<{ durationMinutes: number; bufferMinutes: number }> {
+    const doc = await this.db.collection('bookings').doc(id).get();
+    if (!doc.exists) throw new BookingNotFoundError();
+    const booking = storedBooking(id, doc.data());
+    return { durationMinutes: booking.durationMinutes ?? (Date.parse(booking.endAt) - Date.parse(booking.startAt)) / 60_000, bufferMinutes: booking.bufferMinutes };
+  }
   async createBooking(input: CreateStoredBooking): Promise<BookingDto> {
     const bookingRef = this.db.collection('bookings').doc();
     const slotRefs = input.lockedSlots.map((slot) => this.db.collection('bookingSlots').doc(slot));
@@ -105,13 +111,16 @@ export class BookingRepository {
       return bookingSchema.parse(changed);
     });
   }
-  async rescheduleBooking(id: string, startAt: string, endAt: string, slots: string[]): Promise<BookingDto> {
+  async rescheduleBooking(id: string, startAt: string): Promise<BookingDto> {
     const bookingRef = this.db.collection('bookings').doc(id);
     return this.db.runTransaction(async (transaction) => {
       const doc = await transaction.get(bookingRef);
       if (!doc.exists) throw new BookingNotFoundError();
       const booking = storedBooking(id, doc.data());
       if (booking.status === 'cancelled') throw new BookingConflictError();
+      const durationMinutes = booking.durationMinutes ?? (Date.parse(booking.endAt) - Date.parse(booking.startAt)) / 60_000;
+      const endAt = serviceEndAt(startAt, { durationMinutes });
+      const slots = lockedSlotKeys('default', startAt, endAt, booking.bufferMinutes);
       const allKeys = [...new Set([...booking.lockedSlots, ...slots])];
       const refs = allKeys.map((slot) => this.db.collection('bookingSlots').doc(slot));
       const snapshots = await Promise.all(refs.map((ref) => transaction.get(ref)));
@@ -127,9 +136,9 @@ export class BookingRepository {
   async setCalendarSync(id: string, status: BookingDto['calendarSyncStatus'], eventId?: string): Promise<void> {
     await this.db.collection('bookings').doc(id).update(withoutUndefined({ calendarSyncStatus: status, googleCalendarEventId: eventId, updatedAt: new Date().toISOString() }));
   }
-  async listLockedIntervals(): Promise<{ start: string; end: string }[]> {
+  async listLockedIntervals(excludeBookingId?: string): Promise<{ start: string; end: string }[]> {
     const snapshot = await this.db.collection('bookings').get();
-    return snapshot.docs.map((doc) => storedBooking(doc.id, doc.data())).filter((booking) => booking.status !== 'cancelled').map((booking) => ({ start: booking.startAt, end: new Date(Date.parse(booking.endAt) + booking.bufferMinutes * 60_000).toISOString() }));
+    return snapshot.docs.filter((doc) => doc.id !== excludeBookingId).map((doc) => storedBooking(doc.id, doc.data())).filter((booking) => booking.status !== 'cancelled').map((booking) => ({ start: booking.startAt, end: new Date(Date.parse(booking.endAt) + booking.bufferMinutes * 60_000).toISOString() }));
   }
   async getRules(): Promise<AvailabilityRuleDto[]> {
     const snapshot = await this.db.collection('availabilityRules').get();

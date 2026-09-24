@@ -11,6 +11,25 @@ afterEach(() => { cleanup(); vi.clearAllMocks(); });
 const show = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } })}><Services /></QueryClientProvider>);
 
 describe('admin service catalog editor', () => {
+  it('adds, validates and removes duration/price options on one service', async () => {
+    vi.mocked(adminApi.services).mockResolvedValue([service]);
+    vi.mocked(adminApi.saveService).mockImplementation(async (value) => value);
+    show();
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit Massage 60 min' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add duration option' }));
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Option 2 duration (minutes)' }), { target: { value: '60' } });
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Option 2 price' }), { target: { value: '2000' } });
+    expect(screen.getByRole('button', { name: 'Save service' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Option 2 duration (minutes)' }), { target: { value: '90' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save service' }));
+    await waitFor(() => expect(adminApi.saveService).toHaveBeenCalledWith(expect.objectContaining({ durationMinutes: 60, price: 1500, durationOptions: [{ durationMinutes: 90, price: 2000 }] }), false));
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit Massage 60 min' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove duration option 1' }));
+    expect((screen.getByRole('spinbutton', { name: 'Duration (minutes)' }) as HTMLInputElement).value).toBe('90');
+    expect(screen.getByRole('button', { name: 'Remove duration option 1' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Save service' }));
+    await waitFor(() => expect(adminApi.saveService).toHaveBeenLastCalledWith(expect.objectContaining({ durationMinutes: 90, price: 2000, durationOptions: [] }), false));
+  });
   it('edits service details and applies Telegram caption formatting', async () => {
     vi.mocked(adminApi.services).mockResolvedValue([service]);
     vi.mocked(adminApi.saveService).mockResolvedValue({ ...service, name: 'Classic massage' });

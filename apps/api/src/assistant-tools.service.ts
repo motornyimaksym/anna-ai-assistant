@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
-import { availableSlotsRequestSchema } from '@booking/contracts';
+import { availableSlotsRequestSchema, serviceDurationOptionSchema } from '@booking/contracts';
 import { AvailabilityService } from './availability.service.js';
 import { BookingService } from './booking.service.js';
 import { BookingRepository } from './repository.js';
@@ -9,7 +9,7 @@ export const assistantToolSchema = z.discriminatedUnion('name', [
   z.object({ name: z.literal('get_services'), arguments: z.object({}) }),
   z.object({ name: z.literal('get_available_slots'), arguments: availableSlotsRequestSchema }),
   z.object({ name: z.literal('get_bookings'), arguments: z.object({}) }),
-  z.object({ name: z.literal('create_booking'), arguments: z.object({ serviceId: z.string().min(1), startAt: z.string().datetime() }) }),
+  z.object({ name: z.literal('create_booking'), arguments: z.object({ serviceId: z.string().min(1), startAt: z.string().datetime(), durationMinutes: serviceDurationOptionSchema.shape.durationMinutes.optional() }) }),
   z.object({ name: z.literal('cancel_booking'), arguments: z.object({ bookingId: z.string().min(1) }) }),
   z.object({ name: z.literal('reschedule_booking'), arguments: z.object({ bookingId: z.string().min(1), startAt: z.string().datetime() }) }),
 ]);
@@ -23,7 +23,7 @@ export class AssistantToolsService {
       case 'get_available_slots': return this.availability.find(tool.arguments);
       case 'get_bookings': return (await this.repository.listBookings()).filter((booking) => booking.clientId === context.clientId && booking.telegramChatId === context.telegramChatId);
       case 'create_booking':
-        await this.checkSlot(tool.arguments.serviceId, tool.arguments.startAt);
+        await this.checkSlot(tool.arguments.serviceId, tool.arguments.startAt, tool.arguments.durationMinutes);
         return this.bookings.create({ ...tool.arguments, ...context });
       case 'cancel_booking':
         await this.ownedBooking(tool.arguments.bookingId, context);
@@ -31,7 +31,7 @@ export class AssistantToolsService {
       case 'reschedule_booking': {
         const booking = await this.ownedBooking(tool.arguments.bookingId, context);
         if (booking.startAt === tool.arguments.startAt) return booking;
-        await this.checkSlot(booking.serviceId, tool.arguments.startAt);
+        await this.checkSlot(booking.serviceId, tool.arguments.startAt, undefined, booking.id);
         return this.bookings.reschedule(booking.id, { startAt: tool.arguments.startAt });
       }
     }
@@ -41,10 +41,10 @@ export class AssistantToolsService {
     if (!booking || booking.clientId !== context.clientId || booking.telegramChatId !== context.telegramChatId) throw new Error('Booking not found');
     return booking;
   }
-  private async checkSlot(serviceId: string, startAt: string) {
+  private async checkSlot(serviceId: string, startAt: string, durationMinutes?: number, bookingId?: string) {
     const date = new Intl.DateTimeFormat('en-CA', { timeZone: process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(startAt));
     if (Date.parse(startAt) <= Date.now()) throw new Error('Time is in the past');
-    const { slots } = await this.availability.find({ serviceId, date });
+    const { slots } = bookingId ? await this.availability.findForBooking(bookingId, date) : await this.availability.find({ serviceId, date, ...(durationMinutes === undefined ? {} : { durationMinutes }) });
     if (!slots.includes(startAt)) throw new Error('Time is unavailable');
   }
 }

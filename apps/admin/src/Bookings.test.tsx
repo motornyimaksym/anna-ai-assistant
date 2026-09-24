@@ -15,6 +15,12 @@ describe('admin bookings', () => {
     expect(await screen.findByText('Demo massage')).toBeTruthy();
     expect(screen.getByText(/25.09.2026, 10:00/)).toBeTruthy();
     expect(screen.getByText('confirmed')).toBeTruthy();
+    expect(screen.getByText('60 min · Price not recorded')).toBeTruthy();
+  });
+  it('displays the booked duration and price snapshot', async () => {
+    vi.mocked(adminApi.bookings).mockResolvedValue([{ id: 'snapshot', clientId: '61785', serviceId: 'demo', durationMinutes: 90, price: 2000, currency: 'UAH', startAt: '2026-09-25T07:00:00.000Z', endAt: '2026-09-25T08:30:00.000Z', status: 'confirmed', telegramChatId: '61785', calendarSyncStatus: 'pending', createdAt: '2026-09-24T00:00:00.000Z', updatedAt: '2026-09-24T00:00:00.000Z' }]);
+    show();
+    expect(await screen.findByText('90 min · 2000 UAH')).toBeTruthy();
   });
   it('explains empty booking storage', async () => {
     vi.mocked(adminApi.bookings).mockResolvedValue([]);

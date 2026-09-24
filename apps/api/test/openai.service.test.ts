@@ -6,7 +6,7 @@ const conversation = { telegramChatId: 'chat', clientId: 'alice', assistantEnabl
 const context = { clientId: 'alice', telegramChatId: 'chat' };
 const setup = () => {
   vi.stubEnv('OPENAI_API_KEY', 'test-key');
-  const repository = { listMessages: vi.fn(async () => []), getAssistantPromptOverride: vi.fn(async () => undefined), saveConversation: vi.fn(async (value: typeof conversation & { pendingAction?: unknown }) => value), appendMessage: vi.fn() };
+  const repository = { getService: vi.fn(async () => ({ id: 'massage', name: 'Massage', durationMinutes: 60, price: 1500, durationOptions: [{ durationMinutes: 90, price: 2000 }], currency: 'UAH', enabled: true })), listMessages: vi.fn(async () => []), getAssistantPromptOverride: vi.fn(async () => undefined), saveConversation: vi.fn(async (value: typeof conversation & { pendingAction?: unknown }) => value), appendMessage: vi.fn() };
   const tools = { execute: vi.fn(async (): Promise<unknown> => ({ id: 'booking-1', startAt: '2099-01-01T10:00:00.000Z', status: 'confirmed' })) };
   const service = new OpenAiService(repository as unknown as BookingRepository, tools as unknown as AssistantToolsService);
   return { repository, tools, service };
@@ -39,10 +39,11 @@ describe('OpenAI conversation', () => {
   });
   it('stages mutation without executing and consumes it only on explicit confirmation', async () => {
     const { service, tools, repository } = setup();
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'create_booking', arguments: JSON.stringify({ serviceId: 'massage', startAt: '2099-01-01T10:00:00.000Z' }) }] }) })));
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'create_booking', arguments: JSON.stringify({ serviceId: 'massage', durationMinutes: 90, startAt: '2099-01-01T10:00:00.000Z' }) }] }) })));
     expect((await service.respond(conversation, context, 'Запиши мене')).text).toContain('/confirm');
     expect(tools.execute).not.toHaveBeenCalled();
     const saved = repository.saveConversation.mock.calls[0]![0];
+    expect(saved.pendingAction).toMatchObject({ arguments: { durationMinutes: 90 } });
     expect((await service.respond(saved, context, '/confirm')).text).toContain('booking-1');
     expect(tools.execute).toHaveBeenCalledOnce();
     expect(repository.saveConversation.mock.calls[1]![0].pendingAction).toBeUndefined();
@@ -51,6 +52,15 @@ describe('OpenAI conversation', () => {
     const { service, tools } = setup();
     await service.respond({ ...conversation, pendingAction: { name: 'cancel_booking', arguments: { bookingId: 'b' }, expiresAt: '2020-01-01T00:00:00.000Z' } }, context, '/confirm');
     expect(tools.execute).not.toHaveBeenCalled();
+  });
+  it('asks for a duration instead of staging an ambiguous multi-option booking', async () => {
+    const { service, repository } = setup();
+    const fetch = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'create_booking', arguments: JSON.stringify({ serviceId: 'massage', startAt: '2099-01-01T10:00:00.000Z' }) }] }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: '60 чи 90 хвилин?' }] }] }) });
+    vi.stubGlobal('fetch', fetch);
+    expect((await service.respond(conversation, context, 'Запиши мене')).text).toContain('60 чи 90');
+    expect(repository.saveConversation).not.toHaveBeenCalled();
+    const request = JSON.parse(fetch.mock.calls[0]![1].body);
+    expect(request.tools.find((tool: { name: string }) => tool.name === 'create_booking').parameters.required).toContain('durationMinutes');
   });
   it('returns a safe fallback when the provider fails', async () => {
     const { service } = setup();
