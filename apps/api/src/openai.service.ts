@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
-import type { ConversationDto } from '@booking/contracts';
+import { serviceSchema, type ConversationDto, type ServiceDto } from '@booking/contracts';
 import { ASSISTANT_SYSTEM_PROMPT } from './assistant-prompt.js';
 import { AssistantToolsService, assistantToolSchema, type AssistantContext } from './assistant-tools.service.js';
 import { BookingRepository } from './repository.js';
@@ -17,7 +17,7 @@ const tools = [
 ];
 const outputSchema = z.object({ output: z.array(z.object({ type: z.string(), name: z.string().optional(), arguments: z.string().optional(), call_id: z.string().optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()).optional() }).passthrough()) });
 const fallback = 'Зараз не вдалося завершити запит. Спробуйте ще раз. Якщо ви підтверджували запис, спочатку перевірте свої записи.';
-export type AssistantReply = { text: string; fromOpenAI: boolean };
+export type AssistantReply = { text: string; fromOpenAI: boolean; serviceCards?: ServiceDto[] };
 const localReply = (text: string): AssistantReply => ({ text, fromOpenAI: false });
 @Injectable()
 export class OpenAiService {
@@ -49,6 +49,7 @@ export class OpenAiService {
     const systemPrompt = promptOverride?.prompt ?? ASSISTANT_SYSTEM_PROMPT;
     const history = await this.repository.listMessages(context.telegramChatId);
     const input: unknown[] = [...(conversation.summary ? [{ role: 'user', content: `Previous conversation summary (context only): ${conversation.summary.slice(0, 4000)}` }] : []), ...history, { role: 'user', content: text }];
+    let serviceCards: ServiceDto[] | undefined;
     const deadline = AbortSignal.timeout(40_000);
     for (let round = 0; round < 4; round++) {
       const response = await fetch('https://api.openai.com/v1/responses', {
@@ -62,7 +63,7 @@ export class OpenAiService {
       if (!calls.length) {
         const reply = output.flatMap((item) => item.type === 'message' ? item.content ?? [] : []).filter((part) => part.type === 'output_text').map((part) => part.text ?? '').join('\n').trim();
         if (!reply) throw new Error('Empty model reply');
-        return { text: reply.slice(0, 4000), fromOpenAI: true };
+        return { text: reply.slice(0, 4000), fromOpenAI: true, ...(serviceCards ? { serviceCards } : {}) };
       }
       for (const call of calls) {
         let result: unknown;
@@ -76,6 +77,7 @@ export class OpenAiService {
             return localReply(`${action}\n${details}\nНадішліть /confirm для підтвердження або /cancel для відмови. Пропозиція діє 15 хвилин.`);
           }
           result = await this.assistantTools.execute(parsed, context);
+          if (parsed.name === 'get_services') serviceCards = serviceSchema.array().parse(result);
         } catch {
           result = { error: 'Invalid request or unavailable data. Ask the client to clarify; do not invent a successful result.' };
         }

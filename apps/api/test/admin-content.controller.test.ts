@@ -5,6 +5,7 @@ import type { AvailabilityService } from '../src/availability.service.js';
 import type { BookingService } from '../src/booking.service.js';
 import type { BookingRepository } from '../src/repository.js';
 import type { SpecService } from '../src/spec.service.js';
+import type { ServicePhotoService } from '../src/service-photo.service.js';
 
 const setup = () => {
   const repository = {
@@ -15,7 +16,8 @@ const setup = () => {
     deleteAssistantPromptOverride: vi.fn(async () => undefined),
   };
   const specService = { getSpec: vi.fn(async () => ({ content: '# Test spec' })) };
-  const controller = new AdminController(repository as unknown as BookingRepository, {} as BookingService, {} as AvailabilityService, specService as unknown as SpecService);
+  const servicePhotos = { upload: vi.fn(), delete: vi.fn() };
+  const controller = new AdminController(repository as unknown as BookingRepository, {} as BookingService, {} as AvailabilityService, specService as unknown as SpecService, servicePhotos as unknown as ServicePhotoService);
   return { controller, repository, specService };
 };
 

@@ -1,14 +1,15 @@
-import { Body, Controller, Delete, Get, Headers, HttpCode, Param, Patch, Post, Put, UseGuards } from '@nestjs/common';
-import { assistantPromptResponseSchema, availabilityRuleSchema, availableSlotsRequestSchema, botSettingsResponseSchema, createBookingRequestSchema, patchConversationSchema, rescheduleBookingRequestSchema, scheduleExceptionSchema, serviceSchema, updateAssistantPromptSchema, updateBotSettingsSchema, updateBookingRequestSchema } from '@booking/contracts';
+import { Body, Controller, Delete, Get, Headers, HttpCode, NotFoundException, Param, Patch, Post, Put, UseGuards } from '@nestjs/common';
+import { assistantPromptResponseSchema, availabilityRuleSchema, availableSlotsRequestSchema, botSettingsResponseSchema, createBookingRequestSchema, patchConversationSchema, rescheduleBookingRequestSchema, scheduleExceptionSchema, servicePhotoUploadSchema, serviceSchema, updateAssistantPromptSchema, updateBotSettingsSchema, updateBookingRequestSchema } from '@booking/contracts';
 import { AdminGuard } from './auth.js'; import { AvailabilityService } from './availability.service.js'; import { BookingService } from './booking.service.js'; import { BookingRepository } from './repository.js'; import { SpecService } from './spec.service.js'; import { TelegramService } from './telegram.service.js'; import { ASSISTANT_SYSTEM_PROMPT } from './assistant-prompt.js';
 import { DEFAULT_BOT_SETTINGS } from './bot-settings.js';
+import { ServicePhotoService } from './service-photo.service.js';
 @Controller()
 export class HealthController { @Get('health') health() { return { status: 'ok' }; } }
 @Controller('telegram')
 export class TelegramController { constructor(private readonly telegram: TelegramService) {} @Post('webhook') @HttpCode(200) async webhook(@Headers('x-telegram-bot-api-secret-token') secret: string | undefined, @Body() body: unknown) { await this.telegram.handle(secret, body); return { ok: true }; } }
 @UseGuards(AdminGuard) @Controller('admin')
 export class AdminController {
-  constructor(private readonly repository: BookingRepository, private readonly bookings: BookingService, private readonly availability: AvailabilityService, private readonly specService: SpecService) {}
+  constructor(private readonly repository: BookingRepository, private readonly bookings: BookingService, private readonly availability: AvailabilityService, private readonly specService: SpecService, private readonly servicePhotos: ServicePhotoService) {}
   @Get('spec') spec() { return this.specService.getSpec(); }
   @Get('assistant-prompt') async assistantPrompt() { return this.promptResponse(await this.repository.getAssistantPromptOverride()); }
   @Put('assistant-prompt') async updateAssistantPrompt(@Body() body: unknown) { const { prompt } = updateAssistantPromptSchema.parse(body); return this.promptResponse(await this.repository.saveAssistantPromptOverride(prompt)); }
@@ -24,7 +25,8 @@ export class AdminController {
   @Post('bookings/:id/reschedule') reschedule(@Param('id') id: string, @Body() body: unknown) { return this.bookings.reschedule(id, rescheduleBookingRequestSchema.parse(body)); }
   @Get('services') services() { return this.repository.listServices(); }
   @Post('services') createService(@Body() body: unknown) { return this.repository.saveService(serviceSchema.parse(body)); }
-  @Patch('services/:id') patchService(@Param('id') id: string, @Body() body: unknown) { return this.repository.saveService(serviceSchema.parse({ ...(body as object), id })); }
+  @Patch('services/:id') async patchService(@Param('id') id: string, @Body() body: unknown) { const current = await this.repository.getService(id); const service = serviceSchema.parse({ ...(body as object), id }); const saved = await this.repository.saveService(service); if (current?.photoUrl && current.photoUrl !== saved.photoUrl) await this.servicePhotos.delete(current.photoUrl); return saved; }
+  @Post('services/:id/photo') async uploadServicePhoto(@Param('id') id: string, @Body() body: unknown) { const current = await this.repository.getService(id); if (!current) throw new NotFoundException('Service not found'); const { contentType, base64 } = servicePhotoUploadSchema.parse(body); const photoUrl = await this.servicePhotos.upload(id, { contentType, base64 }); try { await this.repository.saveService({ ...current, photoUrl }); } catch (error) { await this.servicePhotos.delete(photoUrl); throw error; } if (current.photoUrl) await this.servicePhotos.delete(current.photoUrl); return { photoUrl }; }
   @Get('schedule') schedule() { return this.repository.getRules(); }
   @Put('schedule') async putSchedule(@Body() body: unknown) { const rules = availabilityRuleSchema.array().parse(body); await this.repository.setRules(rules); return rules; }
   @Get('schedule-exceptions') exceptions() { return this.repository.getExceptions(); }

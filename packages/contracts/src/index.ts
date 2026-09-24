@@ -1,13 +1,41 @@
 import { z } from 'zod';
+export { defaultServiceCaption } from './service-presentation.js';
 
 export const timeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Expected HH:mm');
 export const bookingStatusSchema = z.enum(['pending', 'confirmed', 'cancelled', 'completed', 'no_show']);
 export const calendarSyncStatusSchema = z.enum(['pending', 'synced', 'failed']);
-export const serviceSchema = z.object({
-  id: z.string().min(1), name: z.string().min(1), description: z.string().max(2_000).default(''),
-  durationMinutes: z.number().int().min(15).max(480), bufferMinutes: z.number().int().min(0).max(120),
-  price: z.number().nonnegative(), currency: z.string().length(3).default('UAH'), enabled: z.boolean().default(true)
+export const telegramMessageEntitySchema = z.object({
+  type: z.enum(['bold', 'italic', 'underline', 'strikethrough', 'spoiler', 'code', 'pre', 'text_link', 'blockquote', 'expandable_blockquote']),
+  offset: z.number().int().min(0), length: z.number().int().min(1), url: z.string().url().refine((value) => /^(https?:\/\/|tg:\/\/|mailto:|tel:)/i.test(value), 'Unsupported link protocol').optional(), language: z.string().max(64).optional(),
+}).superRefine((entity, ctx) => {
+  if (entity.type === 'text_link' && !entity.url) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['url'], message: 'Text links require a URL' });
+  if (entity.type !== 'text_link' && entity.url) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['url'], message: 'Only text links accept a URL' });
+  if (entity.type !== 'pre' && entity.language) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['language'], message: 'Only preformatted text accepts a language' });
 });
+export const telegramCaptionSchema = z.object({ text: z.string().min(1).max(4096), entities: z.array(telegramMessageEntitySchema).max(100).default([]) }).superRefine((caption, ctx) => {
+  caption.entities.forEach((entity, index) => {
+    if (entity.offset + entity.length > caption.text.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['entities', index], message: 'Entity range exceeds the caption text' });
+    for (let nextIndex = index + 1; nextIndex < caption.entities.length; nextIndex++) {
+      const next = caption.entities[nextIndex]!;
+      const entityEnd = entity.offset + entity.length; const nextEnd = next.offset + next.length;
+      const intersects = entity.offset < nextEnd && next.offset < entityEnd;
+      const nested = (entity.offset <= next.offset && entityEnd >= nextEnd) || (next.offset <= entity.offset && nextEnd >= entityEnd);
+      if (intersects && !nested) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['entities', nextIndex], message: 'Formatting ranges may nest but may not cross' });
+    }
+  });
+});
+export const telegramUrlButtonSchema = z.object({ text: z.string().trim().min(1).max(64), url: z.string().url().max(2048).refine((value) => value.startsWith('https://') || value.startsWith('tg://'), 'Button URL must use HTTPS or Telegram links') });
+export const telegramButtonRowsSchema = z.array(z.array(telegramUrlButtonSchema).min(1).max(2)).max(8).optional();
+export const serviceSchema = z.object({
+  id: z.string().min(1), name: z.string().trim().min(1).max(120), description: z.string().max(2_000).default(''),
+  durationMinutes: z.number().int().min(15).max(480), bufferMinutes: z.number().int().min(0).max(120),
+  price: z.number().nonnegative(), currency: z.string().length(3).default('UAH'), enabled: z.boolean().default(true),
+  photoUrl: z.string().url().refine((value) => value.startsWith('https://firebasestorage.googleapis.com/v0/b/'), 'Photo must use the Firebase Storage download URL').optional(), telegramCaption: telegramCaptionSchema.optional(), telegramButtons: telegramButtonRowsSchema,
+}).superRefine((service, ctx) => {
+  if (service.photoUrl && service.telegramCaption && service.telegramCaption.text.length > 1024) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['telegramCaption', 'text'], message: 'Photo captions may be at most 1,024 characters' });
+});
+export const servicePhotoUploadSchema = z.object({ contentType: z.enum(['image/jpeg', 'image/png', 'image/webp']), base64: z.string().min(1).max(7_000_000) });
+export const servicePhotoUploadResponseSchema = z.object({ photoUrl: z.string().url() });
 export const availabilityRuleSchema = z.object({ id: z.string().min(1), dayOfWeek: z.number().int().min(0).max(6), start: timeSchema, end: timeSchema, enabled: z.boolean().default(true) }).refine((rule) => rule.start < rule.end, 'End must be after start');
 export const scheduleExceptionSchema = z.object({ id: z.string().min(1), date: z.string().date(), type: z.enum(['day_off', 'working_interval', 'blocked_interval']), start: timeSchema.optional(), end: timeSchema.optional(), note: z.string().max(500).optional() }).superRefine((value, ctx) => { if (value.type !== 'day_off' && (!value.start || !value.end || value.start >= value.end)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Intervals require a valid start and end' }); });
 export const bookingSchema = z.object({
@@ -38,6 +66,6 @@ export const telegramToolArgsSchema = z.discriminatedUnion('name', [
   z.object({ name: z.literal('cancel_booking'), arguments: z.object({ bookingId: z.string().min(1) }) }),
   z.object({ name: z.literal('reschedule_booking'), arguments: z.object({ bookingId: z.string().min(1), startAt: z.string().datetime() }) })
 ]);
-export type ServiceDto = z.infer<typeof serviceSchema>; export type AvailabilityRuleDto = z.infer<typeof availabilityRuleSchema>; export type ScheduleExceptionDto = z.infer<typeof scheduleExceptionSchema>; export type BookingDto = z.infer<typeof bookingSchema>; export type ClientDto = z.infer<typeof clientSchema>; export type ConversationDto = z.infer<typeof conversationSchema>; export type CreateBookingRequest = z.infer<typeof createBookingRequestSchema>; export type UpdateBookingRequest = z.infer<typeof updateBookingRequestSchema>; export type RescheduleBookingRequest = z.infer<typeof rescheduleBookingRequestSchema>; export type AvailableSlotsRequest = z.infer<typeof availableSlotsRequestSchema>; export type AvailableSlotsResponse = z.infer<typeof availableSlotsResponseSchema>;
+export type ServiceDto = z.infer<typeof serviceSchema>; export type TelegramCaptionDto = z.infer<typeof telegramCaptionSchema>; export type TelegramMessageEntityDto = z.infer<typeof telegramMessageEntitySchema>; export type TelegramUrlButtonDto = z.infer<typeof telegramUrlButtonSchema>; export type AvailabilityRuleDto = z.infer<typeof availabilityRuleSchema>; export type ScheduleExceptionDto = z.infer<typeof scheduleExceptionSchema>; export type BookingDto = z.infer<typeof bookingSchema>; export type ClientDto = z.infer<typeof clientSchema>; export type ConversationDto = z.infer<typeof conversationSchema>; export type CreateBookingRequest = z.infer<typeof createBookingRequestSchema>; export type UpdateBookingRequest = z.infer<typeof updateBookingRequestSchema>; export type RescheduleBookingRequest = z.infer<typeof rescheduleBookingRequestSchema>; export type AvailableSlotsRequest = z.infer<typeof availableSlotsRequestSchema>; export type AvailableSlotsResponse = z.infer<typeof availableSlotsResponseSchema>;
 export type AssistantPromptResponse = z.infer<typeof assistantPromptResponseSchema>; export type UpdateAssistantPromptRequest = z.infer<typeof updateAssistantPromptSchema>; export type SpecResponse = z.infer<typeof specResponseSchema>;
 export type BotSettings = z.infer<typeof botSettingsSchema>; export type BotSettingsResponse = z.infer<typeof botSettingsResponseSchema>; export type UpdateBotSettingsRequest = z.infer<typeof updateBotSettingsSchema>;

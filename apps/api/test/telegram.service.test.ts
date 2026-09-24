@@ -1,4 +1,4 @@
-import type { OpenAiService } from '../src/openai.service.js';
+import type { AssistantReply, OpenAiService } from '../src/openai.service.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BookingRepository } from '../src/repository.js';
 import { TelegramService } from '../src/telegram.service.js';
@@ -25,7 +25,7 @@ const setup = (settings = { maxReadDelayMs: 0, typingDelayPerSymbolMs: 600, upda
   };
   const send = vi.fn(async (url: string, _init?: RequestInit) => { order.push(url.split('/').at(-1)!); return { ok: true, json: async () => ({ ok: true }) }; });
   vi.stubGlobal('fetch', send);
-  const assistant = { respond: vi.fn(async () => { order.push('assistant'); return { text: 'OK', fromOpenAI: true }; }) };
+  const assistant = { respond: vi.fn(async (): Promise<AssistantReply> => { order.push('assistant'); return { text: 'OK', fromOpenAI: true }; }) };
   return { service: new TelegramService(repository as unknown as BookingRepository, assistant as unknown as OpenAiService), repository, send, assistant, order };
 };
 
@@ -193,4 +193,42 @@ it('uses the configured typing delay per symbol for OpenAI answers', async () =>
   await vi.advanceTimersByTimeAsync(1);
   await handling;
   expect(send.mock.calls.some(([url]) => url.includes('/sendMessage'))).toBe(true);
+});
+
+it('sends configured service photos, formatted captions, and inline URL buttons', async () => {
+  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+  vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
+  vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+  const { service, send, assistant, order } = setup();
+  assistant.respond.mockResolvedValue({
+    text: 'Here are the services.', fromOpenAI: false,
+    serviceCards: [{ id: 'massage', name: 'Massage', description: 'Relaxing massage', durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH', enabled: true, photoUrl: 'https://firebasestorage.googleapis.com/v0/b/demo/o/massage.jpg?token=x', telegramCaption: { text: 'Classic massage', entities: [{ type: 'bold', offset: 0, length: 7 }] }, telegramButtons: [[{ text: 'Book', url: 'https://example.com/book' }]] }],
+  });
+  const dm = { update_id: 404, message: { ...update('user61785').business_message, business_connection_id: undefined, chat: { id: 123, type: 'private' } } };
+
+  await service.handle('webhook-secret', dm);
+
+  const photoCall = send.mock.calls.find(([url]) => url.includes('/sendPhoto'));
+  expect(order).toEqual(['sendChatAction', 'sendMessage', 'sendPhoto']);
+  expect(JSON.parse(send.mock.calls[1]![1]!.body as string)).toMatchObject({ text: 'Here are the services.' });
+  expect(photoCall).toBeTruthy();
+  expect(JSON.parse(photoCall![1]!.body as string)).toMatchObject({ photo: 'https://firebasestorage.googleapis.com/v0/b/demo/o/massage.jpg?token=x', caption: 'Classic massage', caption_entities: [{ type: 'bold', offset: 0, length: 7 }], reply_markup: { inline_keyboard: [[{ text: 'Book', url: 'https://example.com/book' }]] } });
+});
+
+it('continues delivering later service cards if one card fails', async () => {
+  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+  vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
+  vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+  const { service, send, assistant } = setup();
+  const services = ['First', 'Second'].map((name, index) => ({ id: `massage-${index}`, name, description: 'Massage', durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH', enabled: true }));
+  assistant.respond.mockResolvedValue({ text: 'Here are the services.', fromOpenAI: false, serviceCards: services });
+  send.mockImplementation(async (_url, init) => {
+    const body = JSON.parse(init?.body as string) as { text?: string };
+    return body.text?.startsWith('First') ? { ok: false, json: async () => ({ ok: false }) } : { ok: true, json: async () => ({ ok: true }) };
+  });
+  const dm = { update_id: 405, message: { ...update('user61785').business_message, business_connection_id: undefined, chat: { id: 123, type: 'private' } } };
+
+  await service.handle('webhook-secret', dm);
+
+  expect(send.mock.calls.some(([, init]) => (JSON.parse(init?.body as string) as { text?: string }).text?.startsWith('Second'))).toBe(true);
 });

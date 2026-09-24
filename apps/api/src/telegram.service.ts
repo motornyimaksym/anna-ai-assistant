@@ -2,7 +2,7 @@ import { waitForRandomReadDelay, waitForResponsePacing } from './response-pacing
 import { OpenAiService } from './openai.service.js';
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { z } from 'zod';
-import type { ConversationDto } from '@booking/contracts';
+import { defaultServiceCaption, type ConversationDto, type ServiceDto } from '@booking/contracts';
 import { loadBackendRuntimeEnv } from '@booking/config';
 import { BookingRepository } from './repository.js';
 import { DEFAULT_BOT_SETTINGS } from './bot-settings.js';
@@ -30,16 +30,19 @@ export class TelegramService {
     }
     const stopTyping = await this.startTyping(chatId, message.business_connection_id);
     let reply: string;
+    let serviceCards: ServiceDto[] = [];
     try {
       const answer = await this.assistant.respond(conversation, { clientId: String(message.from!.id), telegramChatId: chatId, businessConnectionId: message.business_connection_id }, message.text);
       if (answer.fromOpenAI) await waitForResponsePacing(answer.text, settings.typingDelayPerSymbolMs);
       reply = answer.text;
+      serviceCards = answer.serviceCards ?? [];
     } finally {
       stopTyping();
     }
     await this.repository.appendMessage(chatId, 'user', message.text.slice(0, 4000));
     await this.reply(chatId, message.business_connection_id, reply);
     await this.repository.appendMessage(chatId, 'assistant', reply);
+    await this.sendServiceCards(chatId, message.business_connection_id, serviceCards);
   }
   private async startTyping(chatId: string, businessConnectionId: string | undefined): Promise<() => void> {
     if (!process.env.TELEGRAM_BOT_TOKEN) return () => undefined;
@@ -79,4 +82,25 @@ export class TelegramService {
     }
   }
   private async reply(chatId: string, businessConnectionId: string | undefined, text: string): Promise<void> { const token = process.env.TELEGRAM_BOT_TOKEN; if (!token) throw new Error('Telegram token not configured'); const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', signal: AbortSignal.timeout(10_000), headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text, ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}) }) }); if (!response.ok) throw new Error('Telegram reply failed'); }
+  private async sendServiceCards(chatId: string, businessConnectionId: string | undefined, services: ServiceDto[]): Promise<void> {
+    const token = process.env.TELEGRAM_BOT_TOKEN;
+    if (!token) return;
+    for (const service of services) {
+      const text = service.telegramCaption?.text ?? defaultServiceCaption(service, Boolean(service.photoUrl));
+      const method = service.photoUrl ? 'sendPhoto' : 'sendMessage';
+      const body = {
+        chat_id: chatId,
+        ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}),
+        ...(service.photoUrl ? { photo: service.photoUrl, caption: text, ...(service.telegramCaption?.entities.length ? { caption_entities: service.telegramCaption.entities } : {}) } : { text, ...(service.telegramCaption?.entities.length ? { entities: service.telegramCaption.entities } : {}) }),
+        ...(service.telegramButtons?.length ? { reply_markup: { inline_keyboard: service.telegramButtons } } : {}),
+      };
+      try {
+        const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, { method: 'POST', signal: AbortSignal.timeout(10_000), headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+        const result = await response.json().catch(() => undefined) as { ok?: boolean } | undefined;
+        if (!response.ok || result?.ok === false) this.logger.warn('Telegram service card delivery failed');
+      } catch {
+        this.logger.warn('Telegram service card delivery failed');
+      }
+    }
+  }
 }

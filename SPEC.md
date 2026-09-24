@@ -389,9 +389,15 @@ Admin повинен підтримувати:
 - enable / disable;
 - зміну ціни;
 - зміну тривалості;
-- зміну buffer.
+- зміну buffer;
+- окремий Telegram client message: photo, rich caption and inline URL buttons;
+- preview the exact Telegram message before saving.
 
 Негативні ціни та некоректна тривалість заборонені.
+
+Service `description` remains plain information for the assistant. Optional `telegramCaption` stores plain text and Telegram message entities (UTF-16 offsets); optional `photoUrl` points to an uploaded service photo; optional `telegramButtons` stores rows of URL buttons. When no custom caption exists, the bot builds a plain service card from name, description, duration, and price. When `get_services` is used, send one Telegram service card per returned enabled service after the assistant's text answer. Cards use `sendPhoto` when a photo exists and `sendMessage` otherwise. Support Telegram formatting entities for bold, italic, underline, strikethrough, spoiler, code, preformatted text, quote, expandable quote, and linked text. Callback buttons and other media types are outside this service-card flow.
+
+Service photos are JPEG, PNG, or WebP up to 5 MiB. Upload through the protected Admin API to Firebase Storage. Storage writes are backend-only; tokenized photo URLs allow Telegram and customers to view the intentionally public catalog images. Never accept arbitrary external photo URLs through the editor.
 
 ---
 
@@ -877,7 +883,13 @@ Actions:
 - enable / disable;
 - price;
 - duration;
-- buffer.
+- buffer;
+- upload or remove a catalog photo;
+- edit Telegram caption text with formatting toolbar and link support;
+- add, edit, reorder, and remove inline URL buttons;
+- preview the photo, formatted caption, and buttons as a Telegram card.
+
+The editor has clear validation and save/error states. Photo upload accepts JPEG, PNG, or WebP up to 5 MiB. The service's plain description remains the assistant's source of truth; optional Telegram presentation content is separate.
 
 ### 25.4. Schedule
 
@@ -929,6 +941,7 @@ POST   /admin/bookings/:id/reschedule
 GET    /admin/services
 POST   /admin/services
 PATCH  /admin/services/:id
+POST   /admin/services/:id/photo
 
 GET    /admin/schedule
 PUT    /admin/schedule
@@ -955,6 +968,8 @@ GET    /health
 `GET /admin/spec` повертає `{ content: string }`. Prompt endpoints використовують спільні Zod contracts. `GET` повертає `{ prompt: string, isCustom: boolean, updatedAt?: string }`; `PUT` приймає `{ prompt: string }` і повертає ефективне значення; `DELETE` видаляє override та повертає default. Усі `/admin/**` endpoints вимагають allowlisted Firebase ID token.
 
 Bot settings endpoints використовують спільні Zod contracts. `GET /admin/bot-settings` повертає `{ maxReadDelayMs, typingDelayPerSymbolMs, isCustom, updatedAt? }`, включно з defaults коли override відсутній. `PUT` приймає `{ maxReadDelayMs, typingDelayPerSymbolMs }` і зберігає налаштування. `maxReadDelayMs` обмежений 0–10,000 ms, `typingDelayPerSymbolMs` — 0–800 ms. Збереження доступне лише авторизованому адміністратору.
+
+Service endpoints використовують спільну `serviceSchema`; create and update accept all editable catalog and Telegram presentation fields. `POST /admin/services/:id/photo` accepts `{ contentType, base64 }` for a JPEG, PNG, or WebP up to 5 MiB, uploads it to Firebase Storage, saves the `photoUrl` on the service, and returns `{ photoUrl }`. All routes require an allowlisted Firebase ID token.
 
 ---
 
@@ -1036,17 +1051,20 @@ Production автоматично не seed-ити.
 - valid webhook secret;
 - invalid webhook secret;
 - duplicate update;
-- `business_message` parsing.
+- `business_message` parsing;
+- service cards with photo, caption entities, and URL buttons;
+- card failure logs without blocking text reply.
 
 ### 29.5. Admin API
 
 - authentication;
 - authorization;
-- critical booking actions.
+- critical booking actions;
+- service catalog validation and protected image upload.
 
 ### 29.6. Frontend
 
-Кілька ключових component/page tests через Vitest + React Testing Library.
+Кілька ключових component/page tests через Vitest + React Testing Library, включно зі створенням/редагуванням послуги, caption formatting, photo selection, and Telegram card preview.
 
 ---
 
@@ -1219,3 +1237,7 @@ Wait `typingDelayPerSymbolMs` for each Unicode code point in each generated assi
 ## 40. Telegram Business read receipt
 
 For an accepted `business_message`, wait a random integer number of milliseconds from 0 through `maxReadDelayMs` (inclusive; default 2,000 ms) before marking the incoming message as read, then begin the typing indicator and assistant response. Call Telegram Bot API `readBusinessMessage` with its `business_connection_id`, `chat_id`, and `message_id`. This requires the connected bot's `can_read_messages` right. If that right is unavailable or the API call fails, log a credential-free warning and continue answering. Do not call the method or add its delay for regular private bot DMs, rejected senders, duplicate updates, disabled conversations, or human takeover; the method only supports messages received through a Business connection.
+
+## 41. Telegram service cards
+
+When the assistant uses `get_services`, deliver one card per returned enabled service after the assistant's text response. A card uses `sendPhoto` with caption/entities when `photoUrl` is set, otherwise `sendMessage`; attach configured inline URL buttons to that card. Use `telegramCaption.text` and its Telegram `entities` when customized, otherwise compose a plain caption from the service's name, plain description, duration, and price. Service captions remain within Telegram's 1,024-character photo-caption limit; text-only cards remain within 4,096 characters. Include `business_connection_id` for Business replies. Card delivery failures are logged without credentials and must not prevent remaining cards or normal conversation persistence.

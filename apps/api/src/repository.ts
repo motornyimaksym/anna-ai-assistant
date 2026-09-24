@@ -9,7 +9,31 @@ import { FirebaseAdminService } from './firebase-admin.js';
 
 export type CreateStoredBooking = Omit<BookingDto, 'id' | 'createdAt' | 'updatedAt'> & { lockedSlots: string[]; bufferMinutes: number };
 type StoredBooking = BookingDto & { lockedSlots: string[]; bufferMinutes: number };
+type StoredTelegramButton = { row: number; text: string; url: string };
 const withoutUndefined = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+const serviceFromDocument = (id: string, data: DocumentData): ServiceDto => {
+  const { telegramButtons: storedButtons, ...fields } = data;
+  let telegramButtons: ServiceDto['telegramButtons'];
+  if (Array.isArray(storedButtons)) {
+    if (storedButtons.every((button): button is StoredTelegramButton => Boolean(button && typeof button === 'object' && Number.isInteger(button.row) && typeof button.text === 'string' && typeof button.url === 'string'))) {
+      const rows = new Map<number, Array<{ text: string; url: string }>>();
+      for (const button of storedButtons) rows.set(button.row, [...(rows.get(button.row) ?? []), { text: button.text, url: button.url }]);
+      telegramButtons = [...rows.entries()].sort(([left], [right]) => left - right).map(([, buttons]) => buttons);
+    } else if (storedButtons.every(Array.isArray)) {
+      telegramButtons = storedButtons;
+    }
+  }
+  return serviceSchema.parse({ ...fields, ...(telegramButtons === undefined ? {} : { telegramButtons }), id });
+};
+const serviceDocument = (service: ServiceDto): DocumentData => {
+  const { telegramButtons, ...fields } = service;
+  return withoutUndefined({
+    ...fields,
+    ...(telegramButtons === undefined ? {} : {
+      telegramButtons: telegramButtons.flatMap((buttons, row) => buttons.map(({ text, url }) => ({ row, text, url }))),
+    }),
+  });
+};
 const storedBooking = (id: string, data: DocumentData | undefined): StoredBooking => ({
   ...bookingSchema.parse({ ...data, id }),
   lockedSlots: Array.isArray(data?.lockedSlots) ? data.lockedSlots as string[] : [],
@@ -24,14 +48,14 @@ export class BookingRepository {
 
   async listServices(): Promise<ServiceDto[]> {
     const snapshot = await this.db.collection('services').get();
-    return snapshot.docs.map((doc) => serviceSchema.parse({ ...doc.data(), id: doc.id }));
+    return snapshot.docs.map((doc) => serviceFromDocument(doc.id, doc.data()));
   }
   async getService(id: string): Promise<ServiceDto | undefined> {
     const doc = await this.db.collection('services').doc(id).get();
-    return doc.exists ? serviceSchema.parse({ ...doc.data(), id: doc.id }) : undefined;
+    return doc.exists ? serviceFromDocument(doc.id, doc.data()!) : undefined;
   }
   async saveService(service: ServiceDto): Promise<ServiceDto> {
-    await this.db.collection('services').doc(service.id).set(withoutUndefined(service));
+    await this.db.collection('services').doc(service.id).set(serviceDocument(service));
     return service;
   }
   async listBookings(): Promise<BookingDto[]> {

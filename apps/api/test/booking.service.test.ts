@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { getApps, initializeApp } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
 import { BookingConflictError } from '@booking/domain';
 import { BookingService } from '../src/booking.service.js';
 import { CalendarService } from '../src/calendar.js';
@@ -61,6 +62,13 @@ describe.skipIf(!withEmulator)('Firestore booking transactions', () => {
     expect(await repository.getAssistantPromptOverride()).toEqual(saved);
     await repository.deleteAssistantPromptOverride();
     expect(await repository.getAssistantPromptOverride()).toBeUndefined();
+  });
+  it('persists service photos, rich caption entities, and inline URL buttons', async () => {
+    const repository = new BookingRepository(new FirebaseAdminService());
+    const service = { id: 'telegram-card', name: 'Massage', description: 'Assistant details', durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH', enabled: true, photoUrl: 'https://firebasestorage.googleapis.com/v0/b/demo-ai-massage/o/service-photos%2Fmassage.jpg?alt=media&token=test', telegramCaption: { text: 'Classic massage', entities: [{ type: 'bold' as const, offset: 0, length: 7 }] }, telegramButtons: [[{ text: 'Book', url: 'https://example.com/book' }]] };
+    await repository.saveService(service);
+    expect((await getFirestore().collection('services').doc(service.id).get()).data()?.telegramButtons).toEqual([{ row: 0, text: 'Book', url: 'https://example.com/book' }]);
+    expect(await repository.getService(service.id)).toEqual(service);
   });
   it('persists bot timing settings in the shared assistant settings collection', async () => {
     const repository = new BookingRepository(new FirebaseAdminService());
