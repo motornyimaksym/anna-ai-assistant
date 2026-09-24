@@ -3,13 +3,13 @@ import { botSettingsResponseSchema, botSettingsSchema } from './index.js';
 
 describe('bot settings contract', () => {
   it('accepts inclusive configured limits', () => {
-    expect(botSettingsSchema.parse({ maxReadDelayMs: 10_000, typingDelayPerSymbolMs: 800 })).toEqual({ maxReadDelayMs: 10_000, typingDelayPerSymbolMs: 800 });
+    expect(botSettingsSchema.parse({ maxReadDelayMs: 3_540_000, typingDelayPerSymbolMs: 800 })).toEqual({ maxReadDelayMs: 3_540_000, typingDelayPerSymbolMs: 800 });
     expect(botSettingsSchema.parse({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0 })).toEqual({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0 });
   });
 
   it('rejects fractional and out-of-range settings', () => {
     expect(botSettingsSchema.safeParse({ maxReadDelayMs: -1, typingDelayPerSymbolMs: 600 }).success).toBe(false);
-    expect(botSettingsSchema.safeParse({ maxReadDelayMs: 10_001, typingDelayPerSymbolMs: 600 }).success).toBe(false);
+    expect(botSettingsSchema.safeParse({ maxReadDelayMs: 3_540_001, typingDelayPerSymbolMs: 600 }).success).toBe(false);
     expect(botSettingsSchema.safeParse({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 800.5 }).success).toBe(false);
     expect(botSettingsSchema.safeParse({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 801 }).success).toBe(false);
   });

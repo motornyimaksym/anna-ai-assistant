@@ -1,4 +1,4 @@
-import { assistantPromptResponseSchema, availableSlotsResponseSchema, bookingSchema, botSettingsResponseSchema, conversationSchema, servicePhotoUploadResponseSchema, servicePhotoUploadSchema, serviceSchema, specResponseSchema, type BotSettings, type ServiceDto } from '@booking/contracts';
+import { adminAccessResponseSchema, assistantPromptResponseSchema, availableSlotsResponseSchema, bookingSchema, botSettingsResponseSchema, conversationSchema, servicePhotoUploadResponseSchema, servicePhotoUploadSchema, serviceSchema, specResponseSchema, updateAdminAccessSchema, type BotSettings, type ServiceDto } from '@booking/contracts';
 import { getAuth } from 'firebase/auth';
 const request = async <T>(path: string, schema: { parse(value: unknown): T }, init?: RequestInit): Promise<T> => { const user = getAuth().currentUser; const token = user ? await user.getIdToken() : undefined; const response = await fetch(`/api${path}`, { ...init, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...init?.headers } }); if (!response.ok) throw new Error(`API request failed (${response.status})`); return schema.parse(await response.json()); };
 export const adminApi = {
@@ -25,4 +25,6 @@ export const adminApi = {
   resetAssistantPrompt: () => request('/admin/assistant-prompt', assistantPromptResponseSchema, { method: 'DELETE' }),
   botSettings: () => request('/admin/bot-settings', botSettingsResponseSchema),
   saveBotSettings: (settings: BotSettings) => request('/admin/bot-settings', botSettingsResponseSchema, { method: 'PUT', body: JSON.stringify(settings) }),
+  adminAccess: () => request('/admin/admin-access', adminAccessResponseSchema),
+  saveAdminAccess: (emails: string[]) => request('/admin/admin-access', adminAccessResponseSchema, { method: 'PUT', body: JSON.stringify(updateAdminAccessSchema.parse({ emails })) }),
 };

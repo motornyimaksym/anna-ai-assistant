@@ -360,7 +360,7 @@ assistantSettings
 
 Для system prompt використовується документ `assistantSettings/prompt` з полями `prompt` (string) та `updatedAt` (ISO timestamp). Документ існує лише для кастомного prompt. Якщо документа немає, backend використовує `ASSISTANT_SYSTEM_PROMPT` з коду. Reset видаляє документ і повертає default без migration.
 
-Налаштування поведінки бота зберігаються в `assistantSettings/behavior`: `maxReadDelayMs` (integer, 0–10,000), `typingDelayPerSymbolMs` (integer, 0–800) та `updatedAt` (ISO timestamp). Якщо документа немає, використовуються defaults `maxReadDelayMs: 2000` і `typingDelayPerSymbolMs: 600`. Backend перевіряє значення за спільною Zod-схемою.
+Налаштування поведінки бота зберігаються в `assistantSettings/behavior`: `maxReadDelayMs` (integer, 0–3,540,000), `typingDelayPerSymbolMs` (integer, 0–800) та `updatedAt` (ISO timestamp). `maxReadDelayMs` задає верхню межу випадкової затримки перед Business read receipt, максимум — 59 хвилин. Admin UI вводить цю межу в секундах (0–3,540) і конвертує в мілісекунди через API. Якщо документа немає, використовуються defaults `maxReadDelayMs: 2000` і `typingDelayPerSymbolMs: 600`. Backend перевіряє значення за спільною Zod-схемою.
 
 ---
 
@@ -818,7 +818,9 @@ MVP:
 
 - Google Sign-In;
 - backend перевіряє Firebase ID token;
-- доступ лише для allowlisted UID.
+- `ADMIN_UIDS` містить UID власників, які завжди мають admin доступ і можуть керувати stakeholder allowlist;
+- verified email з Firestore allowlist дає admin доступ без права змінювати allowlist;
+- email нормалізується до lowercase, а unverified email не дає доступ.
 
 Environment:
 
@@ -827,6 +829,8 @@ ADMIN_UIDS=uid1,uid2
 ```
 
 Frontend route guard не є достатнім захистом.
+
+Власники керують stakeholder email list на сторінці Bot Settings. Дані зберігаються у `assistantSettings/adminAccess`. Список містить до 100 унікальних валідних email адрес. Owner може переглядати, додавати та видаляти адреси; stakeholder адміністратор має доступ до інших admin сторінок, але не може змінювати список.
 
 ---
 
@@ -922,7 +926,7 @@ Actions:
 
 ### 25.8. Bot settings
 
-Захищена сторінка дозволяє змінити максимальну випадкову затримку перед Telegram Business read receipt (`maxReadDelayMs`, 0–10,000 ms) і затримку typing-відповіді на кожен Unicode символ (`typingDelayPerSymbolMs`, 0–800 ms). Початкові значення: 2,000 ms та 600 ms. Сторінка показує одиниці й допустимі межі, валідує цілі числа та має явну кнопку Save. Збережені значення застосовуються до наступного вхідного повідомлення без redeploy.
+Захищена сторінка дозволяє змінити максимальну випадкову затримку перед Telegram Business read receipt (`maxReadDelayMs`, UI 0–3,540 seconds; API/storage 0–3,540,000 ms) і затримку typing-відповіді на кожен Unicode символ (`typingDelayPerSymbolMs`, 0–800 ms). Початкові значення: 2 seconds та 600 ms. Поле read delay приймає дробові секунди до мілісекундної точності та показує межу 59 хвилин. Сторінка валідує значення та має явну кнопку Save. Збережені значення застосовуються до наступного вхідного повідомлення без redeploy.
 
 ---
 
@@ -961,15 +965,19 @@ PUT    /admin/assistant-prompt
 DELETE /admin/assistant-prompt
 GET    /admin/bot-settings
 PUT    /admin/bot-settings
+GET    /admin/admin-access
+PUT    /admin/admin-access
 
 GET    /health
 ```
 
-`GET /admin/spec` повертає `{ content: string }`. Prompt endpoints використовують спільні Zod contracts. `GET` повертає `{ prompt: string, isCustom: boolean, updatedAt?: string }`; `PUT` приймає `{ prompt: string }` і повертає ефективне значення; `DELETE` видаляє override та повертає default. Усі `/admin/**` endpoints вимагають allowlisted Firebase ID token.
+`GET /admin/spec` повертає `{ content: string }`. Prompt endpoints використовують спільні Zod contracts. `GET` повертає `{ prompt: string, isCustom: boolean, updatedAt?: string }`; `PUT` приймає `{ prompt: string }` і повертає ефективне значення; `DELETE` видаляє override та повертає default. Усі `/admin/**` endpoints вимагають Firebase ID token від owner UID у `ADMIN_UIDS` або verified email з stakeholder allowlist.
 
-Bot settings endpoints використовують спільні Zod contracts. `GET /admin/bot-settings` повертає `{ maxReadDelayMs, typingDelayPerSymbolMs, isCustom, updatedAt? }`, включно з defaults коли override відсутній. `PUT` приймає `{ maxReadDelayMs, typingDelayPerSymbolMs }` і зберігає налаштування. `maxReadDelayMs` обмежений 0–10,000 ms, `typingDelayPerSymbolMs` — 0–800 ms. Збереження доступне лише авторизованому адміністратору.
+Bot settings endpoints використовують спільні Zod contracts. `GET /admin/bot-settings` повертає `{ maxReadDelayMs, typingDelayPerSymbolMs, isCustom, updatedAt? }`, включно з defaults коли override відсутній. `PUT` приймає `{ maxReadDelayMs, typingDelayPerSymbolMs }` у мілісекундах і зберігає налаштування. `maxReadDelayMs` обмежений 0–3,540,000 ms, `typingDelayPerSymbolMs` — 0–800 ms. Збереження доступне лише авторизованому адміністратору.
 
-Service endpoints використовують спільну `serviceSchema`; create and update accept all editable catalog and Telegram presentation fields. `POST /admin/services/:id/photo` accepts `{ contentType, base64 }` for a JPEG, PNG, or WebP up to 5 MiB, uploads it to Firebase Storage, saves the `photoUrl` on the service, and returns `{ photoUrl }`. All routes require an allowlisted Firebase ID token.
+Admin access endpoints використовують спільні Zod contracts. `GET /admin/admin-access` повертає `{ emails, canManage, updatedAt? }`. `PUT` приймає `{ emails }` з максимум 100 унікальними email адресами та повертає той самий response shape. Лише UID з `ADMIN_UIDS` може зберегти allowlist; прочитати її можуть усі авторизовані адміністратори.
+
+Service endpoints використовують спільну `serviceSchema`; create and update accept all editable catalog and Telegram presentation fields. `POST /admin/services/:id/photo` accepts `{ contentType, base64 }` for a JPEG, PNG, or WebP up to 5 MiB, uploads it to Firebase Storage, saves the `photoUrl` on the service, and returns `{ photoUrl }`. All routes require an owner UID or verified stakeholder email Firebase ID token.
 
 ---
 
@@ -1231,12 +1239,14 @@ Before the assistant calls OpenAI, send `sendChatAction` with `action: "typing"`
 
 ## 39. Assistant response pacing
 
-Wait `typingDelayPerSymbolMs` for each Unicode code point in each generated assistant reply before sending it to Telegram. The default is 600 ms; admins can configure 0–800 ms per symbol. Keep the typing indicator refreshed throughout this wait. Empty replies and non-LLM control messages do not incur this delay. Limit reply text to 4,000 characters; the maximum configured artificial wait is 53 minutes 20 seconds. Set the HTTPS function timeout to 3,600 seconds so OpenAI processing and the maximum pacing interval fit within the invocation limit.
+Wait `typingDelayPerSymbolMs` for each Unicode code point in each generated assistant reply before sending it to Telegram. The default is 600 ms; admins can configure 0–800 ms per symbol. Keep the typing indicator refreshed throughout this wait. Empty replies and non-LLM control messages do not incur this delay. Limit reply text to 4,000 characters; the maximum configured artificial wait is 53 minutes 20 seconds. Set the HTTPS function timeout to 3,600 seconds. Read delay and response pacing share this one-hour invocation budget; near-maximum read delays leave little time for generating and sending the reply.
 
 
 ## 40. Telegram Business read receipt
 
 For an accepted `business_message`, wait a random integer number of milliseconds from 0 through `maxReadDelayMs` (inclusive; default 2,000 ms) before marking the incoming message as read, then begin the typing indicator and assistant response. Call Telegram Bot API `readBusinessMessage` with its `business_connection_id`, `chat_id`, and `message_id`. This requires the connected bot's `can_read_messages` right. If that right is unavailable or the API call fails, log a credential-free warning and continue answering. Do not call the method or add its delay for regular private bot DMs, rejected senders, duplicate updates, disabled conversations, or human takeover; the method only supports messages received through a Business connection.
+
+The maximum configurable delay is 59 minutes. Telegram webhook requests must target the direct Cloud Function URL for this setting: Firebase Hosting rewrites time out at 60 seconds, even when the function allows longer requests. The function's HTTP timeout is configured to 3,600 seconds. A long delay keeps the webhook request open and may queue later updates; preserve update idempotency so Telegram retries do not start duplicate assistant work. The assistant response and configured typing pace also consume this one-hour invocation budget after the read delay.
 
 ## 41. Telegram service cards
 

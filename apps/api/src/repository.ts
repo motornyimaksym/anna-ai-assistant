@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { getFirestore, type DocumentData, type Firestore } from 'firebase-admin/firestore';
 import {
-  availabilityRuleSchema, bookingSchema, botSettingsSchema, conversationSchema, scheduleExceptionSchema, serviceSchema,
+  availabilityRuleSchema, bookingSchema, botSettingsSchema, conversationSchema, scheduleExceptionSchema, serviceSchema, updateAdminAccessSchema,
   type AvailabilityRuleDto, type BookingDto, type BotSettings, type ConversationDto, type ScheduleExceptionDto, type ServiceDto,
 } from '@booking/contracts';
 import { BookingConflictError, BookingNotFoundError } from '@booking/domain';
@@ -195,6 +195,18 @@ export class BookingRepository {
   async saveBotSettingsOverride(settings: BotSettings): Promise<BotSettings & { updatedAt: string }> {
     const value = { ...botSettingsSchema.parse(settings), updatedAt: new Date().toISOString() };
     await this.db.collection('assistantSettings').doc('behavior').set(withoutUndefined(value));
+    return value;
+  }
+  async getAdminAccessOverride(): Promise<{ emails: string[]; updatedAt: string } | undefined> {
+    const doc = await this.db.collection('assistantSettings').doc('adminAccess').get();
+    if (!doc.exists) return undefined;
+    const data = doc.data();
+    if (typeof data?.updatedAt !== 'string') return undefined;
+    return { ...updateAdminAccessSchema.parse({ emails: data.emails }), updatedAt: data.updatedAt };
+  }
+  async saveAdminAccessOverride(emails: string[]): Promise<{ emails: string[]; updatedAt: string }> {
+    const value = { ...updateAdminAccessSchema.parse({ emails }), updatedAt: new Date().toISOString() };
+    await this.db.collection('assistantSettings').doc('adminAccess').set(withoutUndefined(value));
     return value;
   }
   async claimTelegramUpdate(updateId: number): Promise<boolean> {

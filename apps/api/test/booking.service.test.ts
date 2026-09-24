@@ -77,6 +77,14 @@ describe.skipIf(!withEmulator)('Firestore booking transactions', () => {
     expect(saved).toMatchObject({ maxReadDelayMs: 900, typingDelayPerSymbolMs: 350, updatedAt: expect.any(String) });
     expect(await repository.getBotSettingsOverride()).toEqual(saved);
   });
+  it('persists a normalized stakeholder email allowlist', async () => {
+    const repository = new BookingRepository(new FirebaseAdminService());
+    expect(await repository.getAdminAccessOverride()).toBeUndefined();
+    const saved = await repository.saveAdminAccessOverride(['Stakeholder@Example.com']);
+    expect(saved).toMatchObject({ emails: ['stakeholder@example.com'], updatedAt: expect.any(String) });
+    expect((await getFirestore().collection('assistantSettings').doc('adminAccess').get()).data()?.emails).toEqual(['stakeholder@example.com']);
+    expect(await repository.getAdminAccessOverride()).toEqual(saved);
+  });
   it('persists pending actions and returns only the latest 20 conversation messages', async () => {
     const { repository } = await setup();
     const now = new Date().toISOString();

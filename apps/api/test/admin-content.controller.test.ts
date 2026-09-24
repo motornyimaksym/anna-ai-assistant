@@ -9,6 +9,8 @@ import type { ServicePhotoService } from '../src/service-photo.service.js';
 
 const setup = () => {
   const repository = {
+    getAdminAccessOverride: vi.fn(async () => ({ emails: ['partner@example.com'], updatedAt: '2026-09-24T10:00:00.000Z' })),
+    saveAdminAccessOverride: vi.fn(async (emails: string[]) => ({ emails, updatedAt: '2026-09-24T10:00:00.000Z' })),
     getBotSettingsOverride: vi.fn(async () => undefined),
     saveBotSettingsOverride: vi.fn(async (settings: { maxReadDelayMs: number; typingDelayPerSymbolMs: number }) => ({ ...settings, updatedAt: '2026-09-24T10:00:00.000Z' })),
     getAssistantPromptOverride: vi.fn(async () => undefined),
@@ -48,12 +50,29 @@ describe('admin content endpoints', () => {
     expect(await controller.botSettings()).toEqual({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, isCustom: false });
     expect(await controller.updateBotSettings({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400 })).toEqual({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z' });
     expect(repository.saveBotSettingsOverride).toHaveBeenCalledWith({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400 });
+    await controller.updateBotSettings({ maxReadDelayMs: 3_540_000, typingDelayPerSymbolMs: 400 });
+    expect(repository.saveBotSettingsOverride).toHaveBeenLastCalledWith({ maxReadDelayMs: 3_540_000, typingDelayPerSymbolMs: 400 });
   });
 
   it('rejects bot settings outside documented limits', async () => {
     const { controller, repository } = setup();
-    await expect(controller.updateBotSettings({ maxReadDelayMs: 10_001, typingDelayPerSymbolMs: 600 })).rejects.toThrow();
+    await expect(controller.updateBotSettings({ maxReadDelayMs: 3_540_001, typingDelayPerSymbolMs: 600 })).rejects.toThrow();
     await expect(controller.updateBotSettings({ maxReadDelayMs: 1000, typingDelayPerSymbolMs: 800.5 })).rejects.toThrow();
     expect(repository.saveBotSettingsOverride).not.toHaveBeenCalled();
+  });
+
+  it('returns and saves the stakeholder email allowlist', async () => {
+    const { controller, repository } = setup();
+    expect(await controller.adminAccess({ admin: { uid: 'owner', isOwner: true } })).toEqual({ emails: ['partner@example.com'], canManage: true, updatedAt: '2026-09-24T10:00:00.000Z' });
+    expect(await controller.updateAdminAccess({ emails: [' Partner@Example.com ', 'second@example.com'] })).toEqual({ emails: ['partner@example.com', 'second@example.com'], canManage: true, updatedAt: '2026-09-24T10:00:00.000Z' });
+    expect(repository.saveAdminAccessOverride).toHaveBeenCalledWith(['partner@example.com', 'second@example.com']);
+    expect(await controller.adminAccess({ admin: { uid: 'stakeholder', isOwner: false } })).toEqual({ emails: ['partner@example.com'], canManage: false, updatedAt: '2026-09-24T10:00:00.000Z' });
+  });
+
+  it('rejects invalid stakeholder access lists before persistence', async () => {
+    const { controller, repository } = setup();
+    await expect(controller.updateAdminAccess({ emails: ['bad-email'] })).rejects.toThrow();
+    await expect(controller.updateAdminAccess({ emails: ['x@example.com', 'X@example.com'] })).rejects.toThrow();
+    expect(repository.saveAdminAccessOverride).not.toHaveBeenCalled();
   });
 });
