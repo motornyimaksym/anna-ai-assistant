@@ -124,6 +124,8 @@ React admin application.
 - винятки з графіка;
 - керування станом асистента;
 - керування автоматизацією розмов;
+- перегляд специфікації з репозиторію;
+- перегляд та редагування system prompt асистента;
 - базовий dashboard.
 
 ### 4.3. `packages/contracts`
@@ -351,9 +353,12 @@ bookings
 bookingSlots
 conversations
 telegramUpdates
+assistantSettings
 ```
 
 Допускаються додаткові internal collections за обґрунтованої потреби.
+
+Для system prompt використовується документ `assistantSettings/prompt` з полями `prompt` (string) та `updatedAt` (ISO timestamp). Документ існує лише для кастомного prompt. Якщо документа немає, backend використовує `ASSISTANT_SYSTEM_PROMPT` з коду. Reset видаляє документ і повертає default без migration.
 
 ---
 
@@ -665,6 +670,8 @@ Backend відповідає за:
 
 LLM не є джерелом істини.
 
+System prompt за замовчуванням експортується як `ASSISTANT_SYSTEM_PROMPT` з `apps/api/src/assistant-prompt.ts`. Для кожного нового запиту backend використовує збережений `assistantSettings/prompt`, якщо він є; інакше використовує default. Зміна prompt застосовується до наступного повідомлення без redeploy.
+
 ---
 
 ## 20. Assistant tools
@@ -826,6 +833,8 @@ Routes:
 /services
 /schedule
 /conversations
+/specs
+/prompt
 ```
 
 ### 25.1. Dashboard
@@ -888,6 +897,14 @@ Actions:
 
 Повний Telegram chat UI в MVP не потрібен.
 
+### 25.6. Specs
+
+Захищена сторінка показує `SPEC.md` версії, запакованої з відповідним backend release, відформатований як Markdown. Вміст доступний лише через Admin API після Firebase ID token перевірки.
+
+### 25.7. Assistant prompt
+
+Захищена сторінка показує ефективний prompt у редагованому полі. Save зберігає кастомний prompt довжиною 1–12,000 символів та застосовує його до наступного запиту асистента. Reset видаляє кастомний prompt і повертає prompt з `assistant-prompt.ts`. Порожній prompt не приймається. UI показує, чи використовується default або кастомний prompt, та надає явні Save і Reset actions.
+
 ---
 
 ## 26. Admin API
@@ -918,9 +935,15 @@ GET    /admin/conversations
 PATCH  /admin/conversations/:id
 
 GET    /admin/dashboard
+GET    /admin/spec
+GET    /admin/assistant-prompt
+PUT    /admin/assistant-prompt
+DELETE /admin/assistant-prompt
 
 GET    /health
 ```
+
+`GET /admin/spec` повертає `{ content: string }`. Prompt endpoints використовують спільні Zod contracts. `GET` повертає `{ prompt: string, isCustom: boolean, updatedAt?: string }`; `PUT` приймає `{ prompt: string }` і повертає ефективне значення; `DELETE` видаляє override та повертає default. Усі `/admin/**` endpoints вимагають allowlisted Firebase ID token.
 
 ---
 

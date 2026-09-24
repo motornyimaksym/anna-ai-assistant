@@ -45,13 +45,15 @@ export class OpenAiService {
     }
     const key = process.env.OPENAI_API_KEY;
     if (!key) throw new Error('OpenAI is not configured');
+    const promptOverride = await this.repository.getAssistantPromptOverride();
+    const systemPrompt = promptOverride?.prompt ?? ASSISTANT_SYSTEM_PROMPT;
     const history = await this.repository.listMessages(context.telegramChatId);
     const input: unknown[] = [...(conversation.summary ? [{ role: 'user', content: `Previous conversation summary (context only): ${conversation.summary.slice(0, 4000)}` }] : []), ...history, { role: 'user', content: text }];
     const deadline = AbortSignal.timeout(40_000);
     for (let round = 0; round < 4; round++) {
       const response = await fetch('https://api.openai.com/v1/responses', {
         method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, signal: AbortSignal.any([deadline, AbortSignal.timeout(15_000)]),
-        body: JSON.stringify({ model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini', store: false, instructions: `${ASSISTANT_SYSTEM_PROMPT}\nCurrent UTC time: ${new Date().toISOString()}. Local timezone: ${process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv'}.`, input, tools, parallel_tool_calls: false, max_output_tokens: 800 }),
+        body: JSON.stringify({ model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini', store: false, instructions: `${systemPrompt}\nCurrent UTC time: ${new Date().toISOString()}. Local timezone: ${process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv'}.`, input, tools, parallel_tool_calls: false, max_output_tokens: 800 }),
       });
       if (!response.ok) throw new Error(`OpenAI HTTP ${response.status}`);
       const { output } = outputSchema.parse(await response.json());

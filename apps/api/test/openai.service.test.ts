@@ -6,7 +6,7 @@ const conversation = { telegramChatId: 'chat', clientId: 'alice', assistantEnabl
 const context = { clientId: 'alice', telegramChatId: 'chat' };
 const setup = () => {
   vi.stubEnv('OPENAI_API_KEY', 'test-key');
-  const repository = { listMessages: vi.fn(async () => []), saveConversation: vi.fn(async (value: typeof conversation & { pendingAction?: unknown }) => value), appendMessage: vi.fn() };
+  const repository = { listMessages: vi.fn(async () => []), getAssistantPromptOverride: vi.fn(async () => undefined), saveConversation: vi.fn(async (value: typeof conversation & { pendingAction?: unknown }) => value), appendMessage: vi.fn() };
   const tools = { execute: vi.fn(async () => ({ id: 'booking-1', startAt: '2099-01-01T10:00:00.000Z', status: 'confirmed' })) };
   const service = new OpenAiService(repository as unknown as BookingRepository, tools as unknown as AssistantToolsService);
   return { repository, tools, service };
@@ -20,6 +20,14 @@ describe('OpenAI conversation', () => {
     expect(await service.respond(conversation, context, 'Привіт')).toEqual({ text: 'Вітаю!', fromOpenAI: true });
     expect(tools.execute).toHaveBeenCalledWith({ name: 'get_services', arguments: {} }, context);
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+  it('uses the current stored prompt override for the next assistant request', async () => {
+    const { service, repository } = setup();
+    repository.getAssistantPromptOverride.mockResolvedValue({ prompt: 'Speak only in short sentences.', updatedAt: '2026-09-24T10:00:00.000Z' });
+    const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello.' }] }] }) }));
+    vi.stubGlobal('fetch', fetch);
+    await service.respond(conversation, context, 'Hi');
+    expect(JSON.parse(fetch.mock.calls[0]![1]!.body as string).instructions).toContain('Speak only in short sentences.');
   });
   it('stages mutation without executing and consumes it only on explicit confirmation', async () => {
     const { service, tools, repository } = setup();

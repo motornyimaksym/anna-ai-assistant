@@ -147,6 +147,20 @@ export class BookingRepository {
   async appendMessage(chatId: string, role: 'user' | 'assistant', text: string): Promise<void> {
     await this.db.collection('conversations').doc(chatId).collection('messages').add({ role, text, createdAt: new Date().toISOString() });
   }
+  async getAssistantPromptOverride(): Promise<{ prompt: string; updatedAt: string } | undefined> {
+    const doc = await this.db.collection('assistantSettings').doc('prompt').get();
+    if (!doc.exists) return undefined;
+    const data = doc.data();
+    return typeof data?.prompt === 'string' && typeof data.updatedAt === 'string' ? { prompt: data.prompt, updatedAt: data.updatedAt } : undefined;
+  }
+  async saveAssistantPromptOverride(prompt: string): Promise<{ prompt: string; updatedAt: string }> {
+    const value = { prompt, updatedAt: new Date().toISOString() };
+    await this.db.collection('assistantSettings').doc('prompt').set(value);
+    return value;
+  }
+  async deleteAssistantPromptOverride(): Promise<void> {
+    await this.db.collection('assistantSettings').doc('prompt').delete();
+  }
   async claimTelegramUpdate(updateId: number): Promise<boolean> {
     const ref = this.db.collection('telegramUpdates').doc(String(updateId));
     return this.db.runTransaction(async (transaction) => {

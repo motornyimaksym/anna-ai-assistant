@@ -53,6 +53,15 @@ describe.skipIf(!withEmulator)('Firestore booking transactions', () => {
     const outcomes = await Promise.all([left.claimTelegramUpdate(123), right.claimTelegramUpdate(123)]);
     expect(outcomes.sort()).toEqual([false, true]);
   });
+  it('persists and resets the custom assistant prompt override', async () => {
+    const repository = new BookingRepository(new FirebaseAdminService());
+    expect(await repository.getAssistantPromptOverride()).toBeUndefined();
+    const saved = await repository.saveAssistantPromptOverride('Use shorter replies.');
+    expect(saved).toMatchObject({ prompt: 'Use shorter replies.', updatedAt: expect.any(String) });
+    expect(await repository.getAssistantPromptOverride()).toEqual(saved);
+    await repository.deleteAssistantPromptOverride();
+    expect(await repository.getAssistantPromptOverride()).toBeUndefined();
+  });
   it('persists pending actions and returns only the latest 20 conversation messages', async () => {
     const { repository } = await setup();
     const now = new Date().toISOString();

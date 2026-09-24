@@ -28,6 +28,7 @@ await rm(destination, { recursive: true, force: true });
 await mkdir(destination, { recursive: true });
 const apiManifest = await readManifest(join(api, 'package.json'));
 await cp(join(api, 'dist'), join(destination, 'dist'), { recursive: true });
+await cp(join(root, 'SPEC.md'), join(destination, 'SPEC.md'));
 await writeFile(join(destination, 'package.json'), `${JSON.stringify(productionManifest(apiManifest, true), null, 2)}\n`);
 
 for (const name of workspacePackages) {

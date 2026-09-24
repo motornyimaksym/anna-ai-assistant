@@ -16,7 +16,7 @@ For the current private Telegram test, set nonsecret `TELEGRAM_ALLOWED_USERNAME=
 
 To deploy while Calendar authorization is pending, leave `GOOGLE_CLIENT_ID` and `GOOGLE_CALENDAR_ID` unset when running `firebase:prepare`. The API then uses Firestore booking data without Calendar busy intervals or event sync. An empty `ADMIN_UIDS` secret starts the API but denies all admin requests until an administrator UID is added.
 
-From the repository root, prepare artifacts with `pnpm firebase:prepare`. Only after you explicitly authorize a production deployment, run the code-only release command:
+From the repository root, prepare artifacts with `pnpm firebase:prepare`. Preparation copies `SPEC.md` into the private function package so the authenticated `/admin/spec` endpoint serves the same spec version as its backend release. Only after you explicitly authorize a production deployment, run the code-only release command:
 
 ```bash
 pnpm firebase:deploy:code
