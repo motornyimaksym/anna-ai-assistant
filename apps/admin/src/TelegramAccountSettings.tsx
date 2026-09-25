@@ -49,7 +49,7 @@ export function TelegramAccountSettings() {
         <Button variant="contained" disabled={busy || !telegramAccountCodeSchema.safeParse({ code }).success} onClick={() => void act('code')}>Verify code</Button>
       </>}
       {query.data.configured && query.data.phase === 'password' && <>
-        <TextField label="Telegram two-step verification password" type="password" autoComplete="off" value={password} onChange={(e) => setPassword(e.target.value)} disabled={busy} helperText="Used only for this login; never saved." />
+        <TextField label="Telegram account password" type="password" autoComplete="off" value={password} onChange={(e) => setPassword(e.target.value)} disabled={busy} helperText="Enter your personal Telegram account password set for two-step verification, not the one-time login code. Used only for this login; never saved." />
         <Button variant="contained" disabled={busy || !telegramAccountPasswordSchema.safeParse({ password }).success} onClick={() => void act('password')}>Authorize account</Button>
       </>}
       {query.data.configured && query.data.phase === 'connected' && <Button disabled={busy} onClick={() => void act('check')}>Check connection</Button>}

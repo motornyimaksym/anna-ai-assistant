@@ -79,7 +79,7 @@ export class TelegramAccountService {
           failure = new HttpException(`Telegram rate limit. Try again in ${Math.ceil((record.retryAt - Date.now()) / 1000)} seconds.`, 429);
         } else {
           const messages: Record<string, string> = {
-            PHONE_CODE_INVALID: 'Incorrect Telegram code. Try again.', PASSWORD_HASH_INVALID: 'Incorrect two-step verification password. Try again.',
+            PHONE_CODE_INVALID: 'Incorrect Telegram code. Try again.', PASSWORD_HASH_INVALID: 'Incorrect Telegram account password. Try again.',
             PHONE_NUMBER_INVALID: 'Invalid phone number. Use international format.', PHONE_NUMBER_BANNED: 'Telegram cannot authorize this phone number.',
             API_ID_INVALID: 'Telegram API credentials are invalid. Contact the administrator.', SIGNUP_NOT_SUPPORTED: 'Use an existing Telegram account.',
             TELEGRAM_TIMEOUT: 'Telegram timed out. Refresh the connection status before retrying.',

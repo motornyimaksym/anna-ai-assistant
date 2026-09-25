@@ -70,6 +70,14 @@ describe('Telegram account login', () => {
     expect(get().phase).toBe('disconnected');
     expect(transport.execute).toHaveBeenCalledTimes(5);
   });
+  it('calls an incorrect personal account password by its clear UI name', async () => {
+    const { service, set, transport, get } = fixture();
+    set({ phase: 'password', ownerUid: 'a', expiresAt: Date.now() + 30_000, attempts: 0, encrypted: encryptSession({ session: 'pending', phone: '+380501234567', phoneCodeHash: 'h' }, key) });
+    transport.execute.mockRejectedValue({ errorMessage: 'PASSWORD_HASH_INVALID' });
+    await expect(service.run('a', 'password', 'wrong')).rejects.toThrow('Incorrect Telegram account password. Try again.');
+    expect(get().phase).toBe('password');
+    expect(JSON.stringify(get())).not.toContain('wrong');
+  });
   it('keeps a connected session if remote logout fails', async () => {
     const { service, set, transport, get } = fixture();
     set({ phase: 'connected', encrypted: encryptSession({ session: 'authorized' }, key) });

@@ -20,16 +20,17 @@ describe('Telegram account settings', () => {
     await waitFor(() => expect(adminApi.telegramAccountAction).toHaveBeenCalledWith('start', { phone: '+380501234567' }));
     expect(await screen.findByRole('textbox', { name: 'Telegram login code' })).toBeTruthy();
   });
-  it('asks for 2FA password and clears it after submission', async () => {
+  it('explains the personal Telegram account password and clears it after submission', async () => {
     vi.mocked(adminApi.telegramAccount).mockResolvedValue({ configured: true, phase: 'password', maskedPhone: '••••4567' });
     vi.mocked(adminApi.telegramAccountAction).mockResolvedValue({ configured: true, phase: 'connected', username: 'owner' });
     show();
-    const field = await screen.findByLabelText('Telegram two-step verification password');
+    const field = await screen.findByLabelText('Telegram account password');
+    expect(screen.getByText('Enter your personal Telegram account password set for two-step verification, not the one-time login code. Used only for this login; never saved.')).toBeTruthy();
     fireEvent.change(field, { target: { value: 'secret' } });
     fireEvent.click(screen.getByRole('button', { name: 'Authorize account' }));
     await waitFor(() => expect(adminApi.telegramAccountAction).toHaveBeenCalledWith('password', { password: 'secret' }));
     expect(await screen.findByText('Telegram account connected.')).toBeTruthy();
-    expect(screen.queryByLabelText('Telegram two-step verification password')).toBeNull();
+    expect(screen.queryByLabelText('Telegram account password')).toBeNull();
   });
   it('shows configuration gap without login controls', async () => {
     vi.mocked(adminApi.telegramAccount).mockResolvedValue({ configured: false, phase: 'disconnected' });
