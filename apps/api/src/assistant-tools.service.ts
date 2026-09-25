@@ -1,11 +1,14 @@
-import { Injectable } from '@nestjs/common';
+import { MediaStoreService } from './media-store.service.js';
+import { Inject, Injectable } from '@nestjs/common';
 import { z } from 'zod';
-import { availableSlotsRequestSchema, serviceDurationOptionSchema } from '@booking/contracts';
+import { availableSlotsRequestSchema, serviceDurationOptionSchema, mediaIdSchema } from '@booking/contracts';
 import { AvailabilityService } from './availability.service.js';
 import { BookingService } from './booking.service.js';
 import { BookingRepository } from './repository.js';
 export type AssistantContext = { clientId: string; telegramChatId: string; businessConnectionId?: string };
 export const assistantToolSchema = z.discriminatedUnion('name', [
+  z.object({ name: z.literal('get_media'), arguments: z.object({}).strict() }),
+  z.object({ name: z.literal('send_media'), arguments: z.object({ mediaId: mediaIdSchema }).strict() }),
   z.object({ name: z.literal('get_services'), arguments: z.object({}) }),
   z.object({ name: z.literal('get_available_slots'), arguments: availableSlotsRequestSchema }),
   z.object({ name: z.literal('get_bookings'), arguments: z.object({}) }),
@@ -15,10 +18,13 @@ export const assistantToolSchema = z.discriminatedUnion('name', [
 ]);
 @Injectable()
 export class AssistantToolsService {
+  @Inject(MediaStoreService) private readonly media!: MediaStoreService;
   constructor(private readonly repository: BookingRepository, private readonly availability: AvailabilityService, private readonly bookings: BookingService) {}
   async execute(input: unknown, context: AssistantContext): Promise<unknown> {
     const tool = assistantToolSchema.parse(input);
     switch (tool.name) {
+      case 'get_media': return this.media.available(context.telegramChatId);
+      case 'send_media': return this.media.send(tool.arguments.mediaId, context.telegramChatId, context.businessConnectionId);
       case 'get_services': return (await this.repository.listServices()).filter((service) => service.enabled);
       case 'get_available_slots': return this.availability.find(tool.arguments);
       case 'get_bookings': return (await this.repository.listBookings()).filter((booking) => booking.clientId === context.clientId && booking.telegramChatId === context.telegramChatId);

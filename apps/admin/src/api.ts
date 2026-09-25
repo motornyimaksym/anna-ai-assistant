@@ -1,8 +1,25 @@
+import { mediaSchema, mediaDeleteResponseSchema, createMediaSchema, updateMediaSchema, type MediaDto } from '@booking/contracts';
 import { telegramAccountStatusSchema } from '@booking/contracts';
 import { adminAccessResponseSchema, assistantPromptResponseSchema, availableSlotsResponseSchema, bookingSchema, botSettingsResponseSchema, conversationSchema, servicePhotoUploadResponseSchema, servicePhotoUploadSchema, serviceSchema, specResponseSchema, updateAdminAccessSchema, type BotSettings, type ServiceDto } from '@booking/contracts';
 import { getAuth } from 'firebase/auth';
-const request = async <T>(path: string, schema: { parse(value: unknown): T }, init?: RequestInit): Promise<T> => { const user = getAuth().currentUser; const token = user ? await user.getIdToken() : undefined; const response = await fetch(`/api${path}`, { ...init, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...init?.headers } }); if (!response.ok) { const body = path.startsWith('/admin/telegram-account') ? await response.json().catch(() => ({})) as { message?: unknown } : {}; throw new Error(typeof body.message === 'string' ? body.message : `API request failed (${response.status})`); } return schema.parse(await response.json()); };
+const request = async <T>(path: string, schema: { parse(value: unknown): T }, init?: RequestInit): Promise<T> => { const user = getAuth().currentUser; const token = user ? await user.getIdToken() : undefined; const response = await fetch(`/api${path}`, { ...init, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...init?.headers } }); if (!response.ok) { const body = (path.startsWith('/admin/telegram-account') || path.startsWith('/admin/media')) ? await response.json().catch(() => ({})) as { message?: unknown } : {}; throw new Error(typeof body.message === 'string' ? body.message : `API request failed (${response.status})`); } return schema.parse(await response.json()); };
+const readMediaFile = async (file: File) => {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read the selected file.'));
+    reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Could not read the selected file.'));
+    reader.readAsDataURL(file);
+  });
+  return { filename: file.name, contentType: file.type, base64: dataUrl.slice(dataUrl.indexOf(',') + 1) };
+};
 export const adminApi = {
+  media: () => request('/admin/media', mediaSchema.array()),
+  saveMedia: async (id: string | undefined, metadata: Pick<MediaDto, 'description' | 'debounceSeconds' | 'enabled'>, file?: File) => {
+    const value = { ...metadata, ...(file ? { file: await readMediaFile(file) } : {}) };
+    const input = id ? updateMediaSchema.parse(value) : createMediaSchema.parse(value);
+    return request(id ? `/admin/media/${encodeURIComponent(id)}` : '/admin/media', mediaSchema, { method: id ? 'PATCH' : 'POST', body: JSON.stringify(input) });
+  },
+  deleteMedia: (id: string) => request(`/admin/media/${encodeURIComponent(id)}`, mediaDeleteResponseSchema, { method: 'DELETE' }),
   telegramAccount: () => request('/admin/telegram-account', telegramAccountStatusSchema, { cache: 'no-store' }),
   telegramAccountAction: (action: 'start' | 'code' | 'password' | 'check' | 'disconnect', data?: { phone?: string; code?: string; password?: string }) => request(action === 'disconnect' ? '/admin/telegram-account' : `/admin/telegram-account/${action}`, telegramAccountStatusSchema, { method: action === 'disconnect' ? 'DELETE' : 'POST', ...(data ? { body: JSON.stringify(data) } : {}) }),
   bookings: () => request('/admin/bookings', bookingSchema.array()),

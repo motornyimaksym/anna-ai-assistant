@@ -195,7 +195,7 @@ it('uses the configured typing delay per symbol for OpenAI answers', async () =>
   expect(send.mock.calls.some(([url]) => url.includes('/sendMessage'))).toBe(true);
 });
 
-it('sends configured service photos, formatted captions, and inline URL buttons', async () => {
+it('does not automatically send legacy service photos or captions', async () => {
   vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
   vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
   vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
@@ -209,13 +209,12 @@ it('sends configured service photos, formatted captions, and inline URL buttons'
   await service.handle('webhook-secret', dm);
 
   const photoCall = send.mock.calls.find(([url]) => url.includes('/sendPhoto'));
-  expect(order).toEqual(['sendChatAction', 'sendMessage', 'sendPhoto']);
+  expect(order).toEqual(['sendChatAction', 'sendMessage']);
   expect(JSON.parse(send.mock.calls[1]![1]!.body as string)).toMatchObject({ text: 'Here are the services.' });
-  expect(photoCall).toBeTruthy();
-  expect(JSON.parse(photoCall![1]!.body as string)).toMatchObject({ photo: 'https://firebasestorage.googleapis.com/v0/b/demo/o/massage.jpg?token=x', caption: 'Classic massage', caption_entities: [{ type: 'bold', offset: 0, length: 7 }], reply_markup: { inline_keyboard: [[{ text: 'Book', url: 'https://example.com/book' }]] } });
+  expect(photoCall).toBeUndefined();
 });
 
-it('continues delivering later service cards if one card fails', async () => {
+it('does not automatically send legacy text service cards', async () => {
   vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
   vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
   vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
@@ -230,5 +229,5 @@ it('continues delivering later service cards if one card fails', async () => {
 
   await service.handle('webhook-secret', dm);
 
-  expect(send.mock.calls.some(([, init]) => (JSON.parse(init?.body as string) as { text?: string }).text?.startsWith('Second'))).toBe(true);
+  expect(send.mock.calls.some(([, init]) => (JSON.parse(init?.body as string) as { text?: string }).text?.startsWith('Second'))).toBe(false);
 });

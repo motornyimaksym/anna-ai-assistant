@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { mediaIdSchema } from './media.js';
 export { defaultServiceCaption, serviceDurationOptions } from './service-presentation.js';
 
 export const timeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Expected HH:mm');
@@ -70,6 +71,8 @@ export const updateAdminAccessSchema = adminAccessEmailsSchema.superRefine(uniqu
 export const adminAccessResponseSchema = adminAccessEmailsSchema.extend({ canManage: z.boolean(), updatedAt: z.string().datetime().optional() }).superRefine(uniqueAdminEmails);
 export const specResponseSchema = z.object({ content: z.string() });
 export const telegramToolArgsSchema = z.discriminatedUnion('name', [
+  z.object({ name: z.literal('get_media'), arguments: z.object({}).strict() }),
+  z.object({ name: z.literal('send_media'), arguments: z.object({ mediaId: mediaIdSchema }).strict() }),
   z.object({ name: z.literal('get_services'), arguments: z.object({}) }),
   z.object({ name: z.literal('get_available_slots'), arguments: availableSlotsRequestSchema }),
   z.object({ name: z.literal('create_booking'), arguments: createBookingRequestSchema }),
@@ -82,3 +85,4 @@ export type AssistantPromptResponse = z.infer<typeof assistantPromptResponseSche
 export type BotSettings = z.infer<typeof botSettingsSchema>; export type BotSettingsResponse = z.infer<typeof botSettingsResponseSchema>; export type UpdateBotSettingsRequest = z.infer<typeof updateBotSettingsSchema>;
 export type AdminAccessResponse = z.infer<typeof adminAccessResponseSchema>; export type UpdateAdminAccessRequest = z.infer<typeof updateAdminAccessSchema>;
 export * from './telegram-account.js';
+export * from './media.js';

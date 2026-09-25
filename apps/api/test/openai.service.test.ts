@@ -21,13 +21,13 @@ describe('OpenAI conversation', () => {
     expect(tools.execute).toHaveBeenCalledWith({ name: 'get_services', arguments: {} }, context);
     expect(fetch).toHaveBeenCalledTimes(2);
   });
-  it('includes enabled services for Telegram card delivery when get_services is used', async () => {
+  it('returns catalog facts without automatic Telegram card delivery', async () => {
     const { service, tools } = setup();
     const services = [{ id: 'massage', name: 'Massage', description: 'Relaxing massage', durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH', enabled: true, photoUrl: 'https://firebasestorage.googleapis.com/v0/b/demo/o/massage.jpg?token=x' }];
     tools.execute.mockResolvedValueOnce(services);
     const fetch = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'get_services', arguments: '{}' }] }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Here are the services.' }] }] }) });
     vi.stubGlobal('fetch', fetch);
-    expect(await service.respond(conversation, context, 'What services do you have?')).toEqual({ text: 'Here are the services.', fromOpenAI: true, serviceCards: services });
+    expect(await service.respond(conversation, context, 'What services do you have?')).toEqual({ text: 'Here are the services.', fromOpenAI: true });
   });
   it('uses the current stored prompt override for the next assistant request', async () => {
     const { service, repository } = setup();
