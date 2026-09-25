@@ -81,3 +81,4 @@ export type ServiceDto = z.infer<typeof serviceSchema>; export type TelegramCapt
 export type AssistantPromptResponse = z.infer<typeof assistantPromptResponseSchema>; export type UpdateAssistantPromptRequest = z.infer<typeof updateAssistantPromptSchema>; export type SpecResponse = z.infer<typeof specResponseSchema>;
 export type BotSettings = z.infer<typeof botSettingsSchema>; export type BotSettingsResponse = z.infer<typeof botSettingsResponseSchema>; export type UpdateBotSettingsRequest = z.infer<typeof updateBotSettingsSchema>;
 export type AdminAccessResponse = z.infer<typeof adminAccessResponseSchema>; export type UpdateAdminAccessRequest = z.infer<typeof updateAdminAccessSchema>;
+export * from './telegram-account.js';

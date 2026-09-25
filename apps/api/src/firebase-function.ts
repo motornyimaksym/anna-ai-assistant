@@ -4,6 +4,9 @@ import { createApp } from './main.js';
 import { stripApiPrefix } from './routing.js';
 
 const secrets = [
+  defineSecret('TELEGRAM_API_ID'),
+  defineSecret('TELEGRAM_API_HASH'),
+  defineSecret('TELEGRAM_SESSION_ENCRYPTION_KEY'),
   defineSecret('TELEGRAM_BOT_TOKEN'),
   defineSecret('TELEGRAM_WEBHOOK_SECRET'),
   defineSecret('OPENAI_API_KEY'),

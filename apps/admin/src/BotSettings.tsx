@@ -1,3 +1,4 @@
+import { TelegramAccountSettings } from './TelegramAccountSettings.js';
 import { Alert, Box, Button, Chip, Divider, Stack, TextField, Typography } from '@mui/material';
 import { botSettingsSchema, updateAdminAccessSchema, type BotSettings as BotSettingsDto } from '@booking/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -68,6 +69,7 @@ export const BotSettings = () => {
   };
 
   return <Stack spacing={2}>
+    {accessQuery.data?.canManage && <><TelegramAccountSettings /><Divider /></>}
     <Stack direction="row" alignItems="center" spacing={1}>
       <Chip size="small" color={query.data.isCustom ? 'primary' : 'default'} label={query.data.isCustom ? 'Custom settings' : 'Default settings'} />
       <Typography variant="body2" color="text.secondary">Changes apply to the next incoming message.</Typography>

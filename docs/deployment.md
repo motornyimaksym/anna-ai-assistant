@@ -37,3 +37,7 @@ Assistant replies are paced at 600 ms per Unicode code point before sending; typ
 
 
 Production deployments require an explicit user request. Do not run `firebase:deploy`, `firebase:deploy:code`, or Firebase CLI deploy commands after coding, committing, or pushing unless the user explicitly asks to deploy. The code-only command is `pnpm firebase:deploy:code`; it builds, prepares, and deploys Hosting plus the `api` function only.
+
+## Telegram account login
+
+Bot Settings includes an owner-only Telegram account connection. Provision `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, and `TELEGRAM_SESSION_ENCRYPTION_KEY` in Secret Manager before deploying the function. The last value is 32 cryptographically random bytes encoded as base64; preserve it across releases. Never expose these values in frontend env, build output, Git, or logs. Local development can supply the same names through the backend environment. No account is connected automatically by deployment: the owner enters their phone, Telegram login code, and optional 2FA password in Settings. A session can be checked and revoked there. Authorization does not import chats or change Business bot behavior.

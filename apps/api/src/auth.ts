@@ -37,7 +37,7 @@ export class AdminGuard implements CanActivate {
 export class AdminOwnerGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<AdminRequest>();
-    if (!request.admin?.isOwner) throw new ForbiddenException('Only an admin owner can change stakeholder access');
+    if (!request.admin?.isOwner) throw new ForbiddenException('Only an admin owner can use this setting');
     return true;
   }
 }

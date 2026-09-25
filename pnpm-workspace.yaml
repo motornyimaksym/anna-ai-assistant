@@ -3,5 +3,8 @@ packages:
   - packages/*
 allowBuilds:
   '@firebase/util': true
+  bufferutil: false
+  es5-ext: false
   esbuild: true
   protobufjs: true
+  utf-8-validate: false

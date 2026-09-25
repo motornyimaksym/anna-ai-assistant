@@ -242,6 +242,9 @@ DEFAULT_TIMEZONE=Europe/Kyiv
 TELEGRAM_BOT_TOKEN
 TELEGRAM_WEBHOOK_SECRET
 TELEGRAM_ALLOWED_USERNAME
+TELEGRAM_API_ID
+TELEGRAM_API_HASH
+TELEGRAM_SESSION_ENCRYPTION_KEY
 
 OPENAI_API_KEY
 OPENAI_MODEL
@@ -270,6 +273,7 @@ VITE_FIREBASE_APP_ID
 Не можна передавати у frontend:
 
 - Telegram bot token;
+- Telegram API ID, API hash, and session encryption key;
 - OpenAI API key;
 - Google client secret;
 - Google refresh token;
@@ -1268,3 +1272,17 @@ The maximum configurable delay is 59 minutes. Telegram webhook requests must tar
 ## 41. Telegram service cards
 
 When the assistant uses `get_services`, deliver one card per returned enabled service after the assistant's text response. A card uses `sendPhoto` with caption/entities when `photoUrl` is set, otherwise `sendMessage`; attach configured inline URL buttons to that card. Use `telegramCaption.text` and its Telegram `entities` when customized, otherwise compose a plain caption from the service's name, plain description, duration, and price. Service captions remain within Telegram's 1,024-character photo-caption limit; text-only cards remain within 4,096 characters. Include `business_connection_id` for Business replies. Card delivery failures are logged without credentials and must not prevent remaining cards or normal conversation persistence.
+
+## 42. Telegram account authorization in Settings
+
+The owner can connect one Telegram user account from Bot Settings for later conversation-history analysis. This is separate from the Business bot connection. Stakeholders cannot view or change this connection. The UI explains that connecting grants account access; this feature only authenticates and checks access, never sends messages or marks chats read. Chat-history import/analysis is a separate feature.
+
+Owner-only routes under `/admin/telegram-account`: `GET` returns configuration readiness and connection state; `POST /start` accepts an international phone number; `POST /code` accepts the login code; `POST /password` accepts the 2FA password; `POST /check` verifies the saved session against Telegram; `DELETE` cancels a pending login or logs out the connected session. All responses use `Cache-Control: no-store`. No session material, API hash, phone-code hash, code, or password is returned or logged.
+
+Login progresses disconnected → code → password (when required) → connected. A connected account cannot be replaced without disconnecting. Pending logins belong to the initiating owner UID, expire after 10 minutes, and allow at most five code/password attempts. Starting again is limited to once per 60 seconds; Telegram flood-wait responses establish an additional cooldown. Distributed Firestore leases serialize mutations across instances; a timed-out/stale request cannot overwrite later state. Telegram operations have a bounded timeout and disconnect their network client after each request. Wrong codes/passwords are recoverable, expired/revoked sessions require a new login, and other failures produce safe actionable errors. A failed remote logout preserves local credentials for retry.
+
+Backend-only `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, and a random 32-byte base64 `TELEGRAM_SESSION_ENCRYPTION_KEY` are optional as a group for feature readiness; production binds all three through Secret Manager. Credentials are never bundled into the frontend. Persist pending and authorized StringSession material encrypted with AES-256-GCM and versioned envelope in a backend-only Firestore document. Codes and passwords are never persisted. Status exposes only phase, masked phone, optional username, and login expiry. Refreshing the page resumes the pending step. Disconnect clears the saved account after successful Telegram logout (or a confirmed revoked session).
+
+Validation covers request contracts, owner guards, encrypted persistence, login/2FA transitions, retries/expiry/cooldowns, stale-operation exclusion, safe failures, disconnect, and Settings UI states. Live login requires the owner's interactive code/2FA entry and is not automated during deployment.
+
+The MTProto client uses the pinned `telegram` package. Optional native WebSocket accelerators (`bufferutil`, `utf-8-validate`) and `es5-ext` install scripts are explicitly disabled; the server uses the JavaScript/TCP implementation.
