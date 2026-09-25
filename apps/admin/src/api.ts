@@ -1,6 +1,7 @@
 import { knowledgeBaseResponseSchema } from '@booking/contracts';
 import { mediaSchema, mediaDeleteResponseSchema, createMediaSchema, updateMediaSchema, type MediaDto } from '@booking/contracts';
 import { telegramAccountStatusSchema } from '@booking/contracts';
+import { telegramScheduleSlotsResponseSchema } from '@booking/contracts';
 import { humanAssistanceSettingsResponseSchema, humanReleaseResponseSchema, humanRequestSchema, updateHumanAssistanceSettingsSchema, type HumanAssistanceSettings } from '@booking/contracts';
 import { adminAccessResponseSchema, assistantPromptResponseSchema, availableSlotsResponseSchema, bookingSchema, botSettingsResponseSchema, conversationSchema, servicePhotoUploadResponseSchema, servicePhotoUploadSchema, serviceSchema, specResponseSchema, updateAdminAccessSchema, type BotSettings, type ServiceDto } from '@booking/contracts';
 import { getAuth } from 'firebase/auth';
@@ -24,6 +25,7 @@ export const adminApi = {
   deleteMedia: (id: string) => request(`/admin/media/${encodeURIComponent(id)}`, mediaDeleteResponseSchema, { method: 'DELETE' }),
   telegramAccount: () => request('/admin/telegram-account', telegramAccountStatusSchema, { cache: 'no-store' }),
   telegramAccountAction: (action: 'start' | 'code' | 'password' | 'check' | 'disconnect', data?: { phone?: string; code?: string; password?: string }) => request(action === 'disconnect' ? '/admin/telegram-account' : `/admin/telegram-account/${action}`, telegramAccountStatusSchema, { method: action === 'disconnect' ? 'DELETE' : 'POST', ...(data ? { body: JSON.stringify(data) } : {}) }),
+  telegramScheduleSlots: () => request('/admin/schedule/imported-slots', telegramScheduleSlotsResponseSchema, { cache: 'no-store' }),
   bookings: () => request('/admin/bookings', bookingSchema.array()),
   services: () => request('/admin/services', serviceSchema.array()),
   saveService: (service: ServiceDto, isNew: boolean) => request(isNew ? '/admin/services' : `/admin/services/${encodeURIComponent(service.id)}`, serviceSchema, { method: isNew ? 'POST' : 'PATCH', body: JSON.stringify(service) }),

@@ -12,6 +12,7 @@ describe('Telegram account settings', () => {
     vi.mocked(adminApi.telegramAccount).mockResolvedValue({ configured: true, phase: 'disconnected' });
     vi.mocked(adminApi.telegramAccountAction).mockResolvedValue({ configured: true, phase: 'code', maskedPhone: '••••4567' });
     show();
+    expect(await screen.findByText(/reads the five newest text messages from the matching schedule group at most once every five minutes/)).toBeTruthy();
     const send = await screen.findByRole('button', { name: 'Send login code' });
     expect(send.hasAttribute('disabled')).toBe(true);
     fireEvent.change(screen.getByRole('textbox', { name: 'Telegram phone number' }), { target: { value: '+380501234567' } });

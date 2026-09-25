@@ -88,3 +88,4 @@ export * from './telegram-account.js';
 export * from './media.js';
 export * from './knowledge-base.js';
 export * from './human-assistance.js';
+export * from './telegram-schedule-import.js';

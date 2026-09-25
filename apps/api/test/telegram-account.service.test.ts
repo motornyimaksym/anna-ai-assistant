@@ -18,7 +18,7 @@ const fixture = () => {
     }),
     finish: vi.fn(async (_id: string, next: AccountRecord) => { record = next; leased = false; }),
   };
-  const transport = { execute: vi.fn() };
+  const transport = { execute: vi.fn(), readScheduleMessages: vi.fn() };
   const service = new TelegramAccountService(store as unknown as TelegramAccountStore, transport as unknown as TelegramAccountTransport);
   return { service, store, transport, get: () => record, set: (value: AccountRecord) => { record = value; } };
 };
@@ -92,5 +92,22 @@ describe('Telegram account login', () => {
     delete process.env.TELEGRAM_SESSION_ENCRYPTION_KEY;
     expect(await service.status('a')).toEqual({ configured: false, phase: 'disconnected' });
     await expect(service.run('a', 'start', '+380501234567')).rejects.toThrow('not configured');
+  });
+
+  it('reads schedule history only from a connected encrypted user session', async () => {
+    const { service, set, transport, get } = fixture();
+    expect(await service.canReadSchedule()).toBe(false);
+    expect(await service.readScheduleMessages()).toBeUndefined();
+    set({ phase: 'connected', encrypted: encryptSession({ session: 'authorized' }, key) });
+    transport.readScheduleMessages.mockResolvedValueOnce({
+      session: 'refreshed-session', sourcePeerId: '42', sourceChatTitle: 'Календар та планування часу', slots: [],
+    });
+
+    await expect(service.readScheduleMessages('42')).resolves.toEqual({ sourcePeerId: '42', sourceChatTitle: 'Календар та планування часу', slots: [] });
+    expect(transport.readScheduleMessages).toHaveBeenCalledWith(
+      expect.objectContaining({ apiId: 123456, apiHash: 'a'.repeat(32) }), { session: 'authorized' }, '42',
+    );
+    expect(decryptSession(get().encrypted!, key)).toEqual({ session: 'refreshed-session' });
+    expect(get().leaseId).toBeUndefined();
   });
 });

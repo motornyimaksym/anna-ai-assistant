@@ -4,12 +4,50 @@ import { StringSession } from 'telegram/sessions/index.js';
 import { Logger, LogLevel } from 'telegram/extensions/Logger.js';
 import { computeCheck } from 'telegram/Password.js';
 import type { SessionPayload } from './telegram-account.store.js';
+import { findScheduleDialog } from './telegram-schedule-source.js';
 
 export type TelegramOperation = 'start' | 'code' | 'password' | 'check' | 'disconnect';
 export type TransportResult = { session: string; phoneCodeHash?: string; passwordNeeded?: boolean; username?: string; phone?: string };
 export type TelegramCredentials = { apiId: number; apiHash: string };
+export type ScheduleMessage = { messageId: string; text: string; createdAt: string };
+export type ScheduleHistoryResult = { session: string; sourcePeerId: string; sourceChatTitle: string; slots: ScheduleMessage[] };
 @Injectable()
 export class TelegramAccountTransport {
+  async readScheduleMessages(credentials: TelegramCredentials, payload: SessionPayload, sourcePeerId?: string): Promise<ScheduleHistoryResult | undefined> {
+    const session = new StringSession(payload.session);
+    const client = new TelegramClient(session, credentials.apiId, credentials.apiHash, {
+      connectionRetries: 1, requestRetries: 2, autoReconnect: false, floodSleepThreshold: 0,
+      baseLogger: new Logger(LogLevel.NONE), deviceModel: 'Booking Admin', appVersion: '1.0',
+    });
+    client.onError = async () => {};
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let expired = false;
+    const work = async (): Promise<ScheduleHistoryResult | undefined> => {
+      await client.connect();
+      if (expired) throw new Error('TELEGRAM_TIMEOUT');
+      const dialogs = await client.getDialogs({ limit: 1000 });
+      const dialog = findScheduleDialog(dialogs, sourcePeerId);
+      if (!dialog?.inputEntity || !dialog.id) return undefined;
+      const history = await client.getMessages(dialog.inputEntity, { limit: 5 });
+      if (expired) throw new Error('TELEGRAM_TIMEOUT');
+      const slots = history
+        .filter((message): message is Api.Message => message instanceof Api.Message && !!message.message?.trim())
+        .map((message) => ({ messageId: String(message.id), text: message.message.slice(0, 4_000), createdAt: new Date(message.date * 1000).toISOString() }))
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+      return { session: session.save(), sourcePeerId: dialog.id.toString(), sourceChatTitle: dialog.title ?? dialog.name ?? 'Telegram chat', slots };
+    };
+    const pending = work();
+    void pending.finally(() => { if (expired) void client.destroy().catch(() => {}); }).catch(() => {});
+    try {
+      return await Promise.race([pending, new Promise<never>((_, reject) => {
+        timer = setTimeout(() => { expired = true; reject(new Error('TELEGRAM_TIMEOUT')); }, 20_000);
+      })]);
+    } finally {
+      clearTimeout(timer);
+      if (!expired) await client.destroy().catch(() => {});
+    }
+  }
+
   async execute(credentials: TelegramCredentials, payload: SessionPayload, operation: TelegramOperation, input?: string): Promise<TransportResult> {
     const session = new StringSession(payload.session);
     const client = new TelegramClient(session, credentials.apiId, credentials.apiHash, {

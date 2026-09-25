@@ -37,7 +37,21 @@ describe('OpenAI conversation', () => {
     const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello.' }] }] }) }));
     vi.stubGlobal('fetch', fetch);
     await service.respond(conversation, context, 'Hi');
-    expect(JSON.parse(fetch.mock.calls[0]![1]!.body as string).instructions).toContain('Speak only in short sentences.');
+    const instructions = JSON.parse(fetch.mock.calls[0]![1]!.body as string).instructions as string;
+    expect(instructions).toContain('Speak only in short sentences.');
+    expect(instructions).toContain('TELEGRAM FORMATTING');
+    expect(instructions).toContain('Never use Markdown markers');
+  });
+  it('includes Telegram HTML formatting rules in the default assistant prompt', async () => {
+    const { service } = setup();
+    const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello.' }] }] }) }));
+    vi.stubGlobal('fetch', fetch);
+    await service.respond(conversation, context, 'Hi');
+    const instructions = JSON.parse(fetch.mock.calls[0]![1]!.body as string).instructions as string;
+    expect(instructions).toContain('TELEGRAM FORMATTING');
+    expect(instructions).toContain('<b>');
+    expect(instructions).toContain('&amp;, &lt;, and &gt;');
+    expect(instructions).toContain('Never use Markdown markers');
   });
   it('appends editable knowledge and the live enabled service catalog to every OpenAI request', async () => {
     const { service, repository } = setup();

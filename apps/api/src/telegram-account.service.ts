@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { telegramAccountStatusSchema, type TelegramAccountStatus } from '@booking/contracts';
 import { TelegramAccountStore, decryptSession, encryptSession, type AccountRecord, type SessionPayload } from './telegram-account.store.js';
-import { TelegramAccountTransport, type TelegramOperation } from './telegram-account.transport.js';
+import { TelegramAccountTransport, type ScheduleHistoryResult, type TelegramOperation } from './telegram-account.transport.js';
 
 const expired = (record: AccountRecord) => (record.phase === 'code' || record.phase === 'password') && (record.expiresAt ?? 0) <= Date.now();
 const clear = (record: AccountRecord): AccountRecord => ({ phase: 'disconnected', retryAt: record.retryAt, startRetryAt: record.startRetryAt });
@@ -22,6 +22,27 @@ export class TelegramAccountService {
     return telegramAccountStatusSchema.parse({ configured: !!this.config(), phase: visible.phase, maskedPhone: visible.maskedPhone, username: visible.username, expiresAt: visible.expiresAt });
   }
   async status(uid: string) { return this.view(await this.store.read(), uid); }
+  async canReadSchedule(): Promise<boolean> {
+    if (!this.config()) return false;
+    const record = await this.store.read();
+    return record.phase === 'connected' && !!record.encrypted;
+  }
+  async readScheduleMessages(sourcePeerId?: string): Promise<Omit<ScheduleHistoryResult, 'session'> | undefined> {
+    const config = this.config();
+    if (!config) return undefined;
+    const lease = await this.store.acquire();
+    const record = lease.record;
+    try {
+      if (record.phase !== 'connected' || !record.encrypted) return undefined;
+      const payload = decryptSession(record.encrypted, config.key);
+      const result = await this.transport.readScheduleMessages(config, payload, sourcePeerId);
+      if (!result) return undefined;
+      record.encrypted = encryptSession({ session: result.session }, config.key);
+      return { sourcePeerId: result.sourcePeerId, sourceChatTitle: result.sourceChatTitle, slots: result.slots };
+    } finally {
+      await this.store.finish(lease.id, record);
+    }
+  }
   async run(uid: string, operation: TelegramOperation, input?: string): Promise<TelegramAccountStatus> {
     const config = this.config();
     if (!config) throw new ServiceUnavailableException('Telegram account connection is not configured. Contact the administrator.');

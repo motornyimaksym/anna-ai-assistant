@@ -33,7 +33,7 @@ export function TelegramAccountSettings() {
   };
   return <Stack spacing={1.5}>
     <Typography variant="h6">Telegram account</Typography>
-    <Typography variant="body2">Connect your account for future chat-history analysis. This is separate from the Business bot. Connecting does not import chats or send messages.</Typography>
+    <Typography variant="body2">Connect your account for a read-only schedule import. On incoming Telegram messages, the app reads the five newest text messages from the matching schedule group at most once every five minutes. This is separate from the Business bot; it never sends messages or marks chats read.</Typography>
     {query.isPending && <Typography>Loading Telegram connection…</Typography>}
     {query.isError && <Alert severity="error">Could not load Telegram connection. <Button onClick={() => void query.refetch()}>Retry</Button></Alert>}
     {query.data && <>
@@ -41,7 +41,7 @@ export function TelegramAccountSettings() {
       <Typography>Status: {query.data.phase}{query.data.maskedPhone ? ` · ${query.data.maskedPhone}` : ''}{query.data.username ? ` · @${query.data.username}` : ''}</Typography>
       {query.data.configured && query.data.phase === 'disconnected' && <>
         <TextField label="Telegram phone number" type="tel" autoComplete="tel" placeholder="+380…" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={busy} />
-        <FormControlLabel control={<Checkbox checked={consent} onChange={(e) => setConsent(e.target.checked)} disabled={busy} />} label="I authorize this app to access my Telegram account. I can revoke the session here or in Telegram Settings → Devices." />
+        <FormControlLabel control={<Checkbox checked={consent} onChange={(e) => setConsent(e.target.checked)} disabled={busy} />} label="I authorize read-only access to the schedule chat's latest five text messages. Refresh runs at most once every five minutes. This app never sends messages or marks chats read. I can revoke the session here or in Telegram Settings → Devices." />
         <Button variant="contained" disabled={busy || !consent || !telegramAccountStartSchema.safeParse({ phone }).success} onClick={() => void act('start')}>Send login code</Button>
       </>}
       {query.data.configured && query.data.phase === 'code' && <>

@@ -360,6 +360,7 @@ telegramUpdates/{updateId}
 services
 availabilityRules
 scheduleExceptions
+telegramScheduleImports
 clients
 bookings
 bookingSlots
@@ -377,6 +378,8 @@ assistantSettings
 Налаштування поведінки бота зберігаються в `assistantSettings/behavior`: `maxReadDelayMs` (integer, 0–3,540,000), `typingDelayPerSymbolMs` (integer, 0–800) та `updatedAt` (ISO timestamp). `maxReadDelayMs` задає верхню межу випадкової затримки перед Business read receipt, максимум — 59 хвилин. Admin UI вводить цю межу в секундах (0–3,540) і конвертує в мілісекунди через API. Якщо документа немає, використовуються defaults `maxReadDelayMs: 2000` і `typingDelayPerSymbolMs: 600`. Backend перевіряє значення за спільною Zod-схемою.
 
 Jev routing and human responder records are defined in section 44 and `docs/data-model.md`. They are backend-only; no Jev token, client question, or responder chat ID is exposed through bot-settings responses.
+
+`telegramScheduleImports/availability` stores the latest read-only snapshot imported from the connected Telegram user account: source peer ID/title, at most five recent text messages as `{ messageId, text, createdAt }` free-slot entries, `syncedAt`, and `nextAttemptAt`. Incoming Telegram messages may trigger a refresh, but a Firestore transaction allows no more than one attempt every five minutes across API instances. The snapshot is backend-written and is exposed to admins through a read-only route. It does not alter booking availability or schedule rules.
 
 ---
 
@@ -698,6 +701,8 @@ LLM не є джерелом істини.
 
 System prompt за замовчуванням експортується як `ASSISTANT_SYSTEM_PROMPT` з `apps/api/src/assistant-prompt.ts`. Для кожного нового запиту backend використовує збережений `assistantSettings/prompt`, якщо він є; інакше використовує default. Зміна prompt застосовується до наступного повідомлення без redeploy.
 
+OpenAI-generated client replies use Telegram Bot API `HTML` parse mode. The default system prompt instructs the assistant to use only supported Telegram HTML tags (`<b>`, `<i>`, `<code>`), close every tag, escape literal `&`, `<`, and `>` as HTML entities, and never use Markdown markers such as `**bold**` or backticks as formatting. Keep formatting sparse; use ordinary line breaks and hyphen bullets for structure. Deterministic local responses remain plain text and do not use a parse mode.
+
 Editable knowledge base керується окремо від prompt на сторінці `/knowledge-base`. Вона зберігає додаткові бізнес-факти, а актуальні послуги, описи, тривалості та ціни backend автоматично додає до кожного system request із booking catalog. Custom prompt не замінює knowledge base або актуальний каталог. Збереження/reset knowledge base застосовується до наступного OpenAI запиту без redeploy.
 
 Before an eligible OpenAI turn, apply the Jev human-assistance gate in section 44. A routed human request must not invoke OpenAI for that turn.
@@ -926,7 +931,7 @@ Media list, photo/video preview, creation, metadata editing, file replacement, e
 
 ### 25.4. Schedule
 
-Редагування weekly working hours та schedule exceptions.
+Weekly working hours та schedule exceptions are managed through existing protected APIs. Show the imported Telegram free-slot snapshot as a separate read-only section: source chat title, last sync time, and at most five recent text messages in chronological order. Do not provide edit/delete actions for imported entries. This imported list is informational and does not change booking availability.
 
 ### 25.5. Conversations
 
@@ -991,6 +996,7 @@ POST   /admin/services/:id/photo
 
 GET    /admin/schedule
 PUT    /admin/schedule
+GET    /admin/schedule/imported-slots
 
 GET    /admin/schedule-exceptions
 POST   /admin/schedule-exceptions
@@ -1307,9 +1313,11 @@ The maximum configurable delay is 59 minutes. Telegram webhook requests must tar
 
 Automatic service-card delivery is replaced by contextual Media Store delivery (section 43). Service catalog lookups never send media. Legacy presentation fields remain readable for backward compatibility.
 
-## 42. Telegram account authorization in Settings
+## 42. Telegram account authorization and schedule import
 
-The owner can connect one Telegram user account from Bot Settings for later conversation-history analysis. This is separate from the Business bot connection. Stakeholders cannot view or change this connection. The UI explains that connecting grants account access; this feature only authenticates and checks access, never sends messages or marks chats read. Chat-history import/analysis is a separate feature.
+The owner can connect one Telegram user account from Bot Settings. This is separate from the Business bot connection. Stakeholders cannot view or change this connection. The Bot Settings disclosure and consent explain that the connected account reads the five newest text messages from the matched schedule group at most once every five minutes when Telegram messages arrive. The connected account is read-only for this feature: it never sends messages or marks chats read. If the account is disconnected or unavailable, skip the import without affecting the incoming-message flow.
+
+Resolve the source group/channel by a stored Telegram peer ID after the first successful match; before an ID exists, use a tolerant match against the configured identifying words in `Календар та планування часу`, not an exact-title comparison. Read the five newest messages, retain non-empty text with message ID and timestamp, and display them chronologically as read-only free-slot entries on `/schedule`. Do not parse or reinterpret message text, create availability rules, or make these imported entries authoritative for booking tools. Persist only the snapshot and resolved source peer ID/title; never log message contents.
 
 Owner-only routes under `/admin/telegram-account`: `GET` returns configuration readiness and connection state; `POST /start` accepts an international phone number; `POST /code` accepts the login code; `POST /password` accepts the 2FA password; `POST /check` verifies the saved session against Telegram; `DELETE` cancels a pending login or logs out the connected session. All responses use `Cache-Control: no-store`. No session material, API hash, phone-code hash, code, or password is returned or logged.
 
@@ -1317,7 +1325,7 @@ Login progresses disconnected → code → password (when required) → connecte
 
 Backend-only `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, and a random 32-byte base64 `TELEGRAM_SESSION_ENCRYPTION_KEY` are optional as a group for feature readiness; production binds all three through Secret Manager. Credentials are never bundled into the frontend. Persist pending and authorized StringSession material encrypted with AES-256-GCM and versioned envelope in a backend-only Firestore document. Codes and passwords are never persisted. Status exposes only phase, masked phone, optional username, and login expiry. Refreshing the page resumes the pending step. Disconnect clears the saved account after successful Telegram logout (or a confirmed revoked session).
 
-Validation covers request contracts, owner guards, encrypted persistence, login/2FA transitions, retries/expiry/cooldowns, stale-operation exclusion, safe failures, disconnect, and Settings UI states. Live login requires the owner's interactive code/2FA entry and is not automated during deployment.
+Validation covers request contracts, owner guards, encrypted persistence, login/2FA transitions, retries/expiry/cooldowns, stale-operation exclusion, safe failures, disconnect, schedule chat matching, five-minute throttling, read-only snapshot access, and Settings/Schedule UI states. Live login requires the owner's interactive code/2FA entry and is not automated during deployment.
 
 The MTProto client uses the pinned `telegram` package. Optional native WebSocket accelerators (`bufferutil`, `utf-8-validate`) and `es5-ext` install scripts are explicitly disabled; the server uses the JavaScript/TCP implementation.
 

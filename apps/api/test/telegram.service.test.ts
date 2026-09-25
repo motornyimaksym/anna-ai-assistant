@@ -28,7 +28,8 @@ const setup = (settings = { maxReadDelayMs: 0, typingDelayPerSymbolMs: 600, upda
   vi.stubGlobal('fetch', send);
   const assistant = { respond: vi.fn(async (): Promise<AssistantReply> => { order.push('assistant'); return { text: 'OK', fromOpenAI: true }; }) };
   const human = { decide: vi.fn(async () => ({ route: 'openai' as const })), isConfiguredUsername: vi.fn(async () => false), authorizedResponder: vi.fn(async () => undefined), enroll: vi.fn(async () => true), send: vi.fn(), reply: vi.fn(), queueExisting: vi.fn(), escalate: vi.fn() };
-  return { service: new TelegramService(repository as unknown as BookingRepository, assistant as unknown as OpenAiService, human as unknown as HumanAssistanceService), repository, send, assistant, human, order };
+  const scheduleImport = { syncIfDue: vi.fn(async () => undefined) };
+  return { service: new TelegramService(repository as unknown as BookingRepository, assistant as unknown as OpenAiService, human as unknown as HumanAssistanceService, scheduleImport as never), repository, send, assistant, human, scheduleImport, order };
 };
 
 afterEach(() => {
@@ -39,6 +40,18 @@ afterEach(() => {
 });
 
 describe('Telegram private test restriction', () => {
+  it('checks for schedule refresh on each incoming message and tolerates refresh failure', async () => {
+    vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+    vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+    const { service, scheduleImport } = setup();
+    scheduleImport.syncIfDue.mockRejectedValueOnce(new Error('import unavailable'));
+
+    await expect(service.handle('webhook-secret', update('other'))).resolves.toBeUndefined();
+    await service.handle('webhook-secret', { ...update('other'), update_id: 102 });
+
+    expect(scheduleImport.syncIfDue).toHaveBeenCalledTimes(2);
+  });
+
   it('ignores other senders and missing usernames before claiming their updates', async () => {
     vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
     vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
@@ -84,6 +97,7 @@ describe('Telegram private test restriction', () => {
     expect(JSON.parse(send.mock.calls[0]![1]!.body as string)).toEqual({ business_connection_id: 'connection-1', chat_id: 123, message_id: 9 });
     expect(JSON.parse(send.mock.calls[1]![1]!.body as string)).toMatchObject({ chat_id: '123', business_connection_id: 'connection-1', action: 'typing' });
     expect(send.mock.calls[2]![0]).toContain('/sendMessage');
+    expect(JSON.parse(send.mock.calls[2]![1]!.body as string)).toMatchObject({ parse_mode: 'HTML', text: 'OK' });
   });
 });
 
@@ -120,6 +134,7 @@ it('continues replying when Telegram rejects the business read receipt', async (
   expect(send).toHaveBeenCalledTimes(3);
   expect(send.mock.calls[0]![0]).toContain('/readBusinessMessage');
   expect(send.mock.calls[2]![0]).toContain('/sendMessage');
+  expect(JSON.parse(send.mock.calls[2]![1]!.body as string)).not.toHaveProperty('parse_mode');
   expect(assistant.respond).toHaveBeenCalledOnce();
 });
 
