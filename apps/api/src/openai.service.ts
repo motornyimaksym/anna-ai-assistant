@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { type ConversationDto } from '@booking/contracts';
 import { ASSISTANT_SYSTEM_PROMPT } from './assistant-prompt.js';
+import { DEFAULT_KNOWLEDGE_BASE } from './default-knowledge-base.js';
 import { AssistantToolsService, assistantToolSchema, type AssistantContext } from './assistant-tools.service.js';
 import { BookingRepository } from './repository.js';
 
@@ -57,7 +58,7 @@ export class OpenAiService {
     ]);
     const systemPrompt = promptOverride?.prompt ?? ASSISTANT_SYSTEM_PROMPT;
     const businessFacts = JSON.stringify({
-      additionalKnowledge: knowledgeBaseOverride?.content ?? '',
+      additionalKnowledge: knowledgeBaseOverride?.content ?? DEFAULT_KNOWLEDGE_BASE,
       currentEnabledServices: configuredServices.filter((service) => service.enabled).map(({ id, name, description, durationMinutes, durationOptions, price, currency }) => ({ id, name, description, durationMinutes, ...(durationOptions ? { durationOptions } : {}), price, currency })),
     });
     const history = await this.repository.listMessages(context.telegramChatId);

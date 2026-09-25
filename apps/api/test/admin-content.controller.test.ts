@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AdminController } from '../src/controllers.js';
 import { ASSISTANT_SYSTEM_PROMPT } from '../src/assistant-prompt.js';
+import { DEFAULT_KNOWLEDGE_BASE } from '../src/default-knowledge-base.js';
 import type { AvailabilityService } from '../src/availability.service.js';
 import type { BookingService } from '../src/booking.service.js';
 import type { BookingRepository } from '../src/repository.js';
@@ -52,10 +53,10 @@ describe('admin content endpoints', () => {
   it('serves an editable knowledge base with live service facts and resets it independently', async () => {
     const { controller, repository } = setup();
     const service = { id: 'massage-60', name: 'Relax', description: 'Relaxing massage', durationMinutes: 60, price: 1500, currency: 'UAH' };
-    expect(await controller.knowledgeBase()).toEqual({ content: '', isCustom: false, services: [service] });
+    expect(await controller.knowledgeBase()).toEqual({ content: DEFAULT_KNOWLEDGE_BASE, isCustom: false, services: [service] });
     expect(await controller.updateKnowledgeBase({ content: 'Parking is available.' })).toEqual({ content: 'Parking is available.', isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z', services: [service] });
     expect(repository.saveKnowledgeBaseOverride).toHaveBeenCalledWith('Parking is available.');
-    expect(await controller.resetKnowledgeBase()).toEqual({ content: '', isCustom: false, services: [service] });
+    expect(await controller.resetKnowledgeBase()).toEqual({ content: DEFAULT_KNOWLEDGE_BASE, isCustom: false, services: [service] });
     expect(repository.deleteKnowledgeBaseOverride).toHaveBeenCalledOnce();
   });
 

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OpenAiService } from '../src/openai.service.js';
+import { DEFAULT_KNOWLEDGE_BASE } from '../src/default-knowledge-base.js';
 import type { AssistantToolsService } from '../src/assistant-tools.service.js';
 import type { BookingRepository } from '../src/repository.js';
 import type { ServiceDto } from '@booking/contracts';
@@ -55,6 +56,16 @@ describe('OpenAI conversation', () => {
       additionalKnowledge: 'Parking is available beside the studio.',
       currentEnabledServices: [{ id: 'relax-60', name: 'Relax massage', description: 'Gentle full body massage', durationMinutes: 60, durationOptions: [{ durationMinutes: 90, price: 2000 }], price: 1500, currency: 'UAH' }],
     });
+  });
+
+  it('uses the repo knowledge base when no override exists', async () => {
+    const { service } = setup();
+    const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello.' }] }] }) }));
+    vi.stubGlobal('fetch', fetch);
+    await service.respond(conversation, context, 'Hi');
+    const request = JSON.parse(fetch.mock.calls[0]![1]!.body as string);
+    const match = request.instructions.match(/Business knowledge base JSON: (.*)\nServices may/);
+    expect(JSON.parse(match![1]).additionalKnowledge).toBe(DEFAULT_KNOWLEDGE_BASE);
   });
 
   it('stages mutation without executing and consumes it only on explicit confirmation', async () => {
