@@ -180,6 +180,20 @@ export class BookingRepository {
   async appendMessage(chatId: string, role: 'user' | 'assistant', text: string): Promise<void> {
     await this.db.collection('conversations').doc(chatId).collection('messages').add({ role, text, createdAt: new Date().toISOString() });
   }
+  async getKnowledgeBaseOverride(): Promise<{ content: string; updatedAt: string } | undefined> {
+    const doc = await this.db.collection('assistantSettings').doc('knowledgeBase').get();
+    if (!doc.exists) return undefined;
+    const data = doc.data();
+    return typeof data?.content === 'string' && typeof data.updatedAt === 'string' ? { content: data.content, updatedAt: data.updatedAt } : undefined;
+  }
+  async saveKnowledgeBaseOverride(content: string): Promise<{ content: string; updatedAt: string }> {
+    const value = { content, updatedAt: new Date().toISOString() };
+    await this.db.collection('assistantSettings').doc('knowledgeBase').set(value);
+    return value;
+  }
+  async deleteKnowledgeBaseOverride(): Promise<void> {
+    await this.db.collection('assistantSettings').doc('knowledgeBase').delete();
+  }
   async getAssistantPromptOverride(): Promise<{ prompt: string; updatedAt: string } | undefined> {
     const doc = await this.db.collection('assistantSettings').doc('prompt').get();
     if (!doc.exists) return undefined;

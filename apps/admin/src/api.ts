@@ -1,3 +1,4 @@
+import { knowledgeBaseResponseSchema } from '@booking/contracts';
 import { mediaSchema, mediaDeleteResponseSchema, createMediaSchema, updateMediaSchema, type MediaDto } from '@booking/contracts';
 import { telegramAccountStatusSchema } from '@booking/contracts';
 import { adminAccessResponseSchema, assistantPromptResponseSchema, availableSlotsResponseSchema, bookingSchema, botSettingsResponseSchema, conversationSchema, servicePhotoUploadResponseSchema, servicePhotoUploadSchema, serviceSchema, specResponseSchema, updateAdminAccessSchema, type BotSettings, type ServiceDto } from '@booking/contracts';
@@ -40,6 +41,9 @@ export const adminApi = {
   updateConversation: (id: string, data: { assistantEnabled?: boolean }) => request(`/admin/conversations/${id}`, conversationSchema, { method: 'PATCH', body: JSON.stringify(data) }),
   slots: (data: { serviceId: string; date: string; durationMinutes?: number }) => request('/admin/available-slots', availableSlotsResponseSchema, { method: 'POST', body: JSON.stringify(data) }),
   spec: () => request('/admin/spec', specResponseSchema),
+  knowledgeBase: () => request('/admin/knowledge-base', knowledgeBaseResponseSchema),
+  saveKnowledgeBase: (content: string) => request('/admin/knowledge-base', knowledgeBaseResponseSchema, { method: 'PUT', body: JSON.stringify({ content }) }),
+  resetKnowledgeBase: () => request('/admin/knowledge-base', knowledgeBaseResponseSchema, { method: 'DELETE' }),
   assistantPrompt: () => request('/admin/assistant-prompt', assistantPromptResponseSchema),
   saveAssistantPrompt: (prompt: string) => request('/admin/assistant-prompt', assistantPromptResponseSchema, { method: 'PUT', body: JSON.stringify({ prompt }) }),
   resetAssistantPrompt: () => request('/admin/assistant-prompt', assistantPromptResponseSchema, { method: 'DELETE' }),

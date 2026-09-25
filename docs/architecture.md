@@ -12,3 +12,7 @@ Media Store replaces the Services admin page, while the backend service catalog 
 A Firestore lease serializes sends for the same chat/media ID; successful and uncertain delivery establish a cooldown, explicit rejection does not. Network uncertainty and process crashes prevent a strict exactly-once guarantee across Telegram and Firestore. No background retry sends client messages.
 
 Telegram methods and URL transport constraints: https://core.telegram.org/bots/api#sending-files and https://core.telegram.org/bots/api#sendvideo. App uploads support JPEG/PNG (5 MB) and MP4 (20 MB); local JSON parser accepts 28 MiB for base64 transport. Uploaded URLs are intentionally shareable with clients.
+
+## Assistant knowledge base
+
+The Assistant prompt and editable Knowledge Base are separate admin settings and Firestore documents. For every OpenAI request, the API composes the effective prompt with Media Store guidance, the editable knowledge text, and a fresh snapshot of enabled service records (names, descriptions, IDs, duration options, prices, and currencies). The live booking catalog remains authoritative for structured booking tools. The knowledge text is serialized as JSON factual context and must not override system rules or current service records.

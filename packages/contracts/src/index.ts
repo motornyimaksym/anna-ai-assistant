@@ -86,3 +86,4 @@ export type BotSettings = z.infer<typeof botSettingsSchema>; export type BotSett
 export type AdminAccessResponse = z.infer<typeof adminAccessResponseSchema>; export type UpdateAdminAccessRequest = z.infer<typeof updateAdminAccessSchema>;
 export * from './telegram-account.js';
 export * from './media.js';
+export * from './knowledge-base.js';

@@ -16,6 +16,10 @@ const setup = () => {
     getAssistantPromptOverride: vi.fn(async () => undefined),
     saveAssistantPromptOverride: vi.fn(async (prompt: string) => ({ prompt, updatedAt: '2026-09-24T10:00:00.000Z' })),
     deleteAssistantPromptOverride: vi.fn(async () => undefined),
+    getKnowledgeBaseOverride: vi.fn(async () => undefined),
+    saveKnowledgeBaseOverride: vi.fn(async (content: string) => ({ content, updatedAt: '2026-09-24T10:00:00.000Z' })),
+    deleteKnowledgeBaseOverride: vi.fn(async () => undefined),
+    listServices: vi.fn(async () => [{ id: 'massage-60', name: 'Relax', description: 'Relaxing massage', durationMinutes: 60, price: 1500, currency: 'UAH', enabled: true }]),
   };
   const specService = { getSpec: vi.fn(async () => ({ content: '# Test spec' })) };
   const servicePhotos = { upload: vi.fn(), delete: vi.fn() };
@@ -43,6 +47,22 @@ describe('admin content endpoints', () => {
     const { controller, repository } = setup();
     await expect(controller.updateAssistantPrompt({ prompt: '  ' })).rejects.toThrow();
     expect(repository.saveAssistantPromptOverride).not.toHaveBeenCalled();
+  });
+
+  it('serves an editable knowledge base with live service facts and resets it independently', async () => {
+    const { controller, repository } = setup();
+    const service = { id: 'massage-60', name: 'Relax', description: 'Relaxing massage', durationMinutes: 60, price: 1500, currency: 'UAH' };
+    expect(await controller.knowledgeBase()).toEqual({ content: '', isCustom: false, services: [service] });
+    expect(await controller.updateKnowledgeBase({ content: 'Parking is available.' })).toEqual({ content: 'Parking is available.', isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z', services: [service] });
+    expect(repository.saveKnowledgeBaseOverride).toHaveBeenCalledWith('Parking is available.');
+    expect(await controller.resetKnowledgeBase()).toEqual({ content: '', isCustom: false, services: [service] });
+    expect(repository.deleteKnowledgeBaseOverride).toHaveBeenCalledOnce();
+  });
+
+  it('rejects blank knowledge base content before persistence', async () => {
+    const { controller, repository } = setup();
+    await expect(controller.updateKnowledgeBase({ content: '  ' })).rejects.toThrow();
+    expect(repository.saveKnowledgeBaseOverride).not.toHaveBeenCalled();
   });
 
   it('returns default bot settings and saves valid overrides', async () => {

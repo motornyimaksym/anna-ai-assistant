@@ -2,11 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OpenAiService } from '../src/openai.service.js';
 import type { AssistantToolsService } from '../src/assistant-tools.service.js';
 import type { BookingRepository } from '../src/repository.js';
+import type { ServiceDto } from '@booking/contracts';
 const conversation = { telegramChatId: 'chat', clientId: 'alice', assistantEnabled: true, state: 'active', summary: '', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
 const context = { clientId: 'alice', telegramChatId: 'chat' };
 const setup = () => {
   vi.stubEnv('OPENAI_API_KEY', 'test-key');
-  const repository = { getService: vi.fn(async () => ({ id: 'massage', name: 'Massage', durationMinutes: 60, price: 1500, durationOptions: [{ durationMinutes: 90, price: 2000 }], currency: 'UAH', enabled: true })), listMessages: vi.fn(async () => []), getAssistantPromptOverride: vi.fn(async () => undefined), saveConversation: vi.fn(async (value: typeof conversation & { pendingAction?: unknown }) => value), appendMessage: vi.fn() };
+  const repository = { getService: vi.fn(async () => ({ id: 'massage', name: 'Massage', durationMinutes: 60, price: 1500, durationOptions: [{ durationMinutes: 90, price: 2000 }], currency: 'UAH', enabled: true })), listMessages: vi.fn(async () => []), getAssistantPromptOverride: vi.fn(async () => undefined), getKnowledgeBaseOverride: vi.fn(async () => undefined), listServices: vi.fn(async () => [] as ServiceDto[]), saveConversation: vi.fn(async (value: typeof conversation & { pendingAction?: unknown }) => value), appendMessage: vi.fn() };
   const tools = { execute: vi.fn(async (): Promise<unknown> => ({ id: 'booking-1', startAt: '2099-01-01T10:00:00.000Z', status: 'confirmed' })) };
   const service = new OpenAiService(repository as unknown as BookingRepository, tools as unknown as AssistantToolsService);
   return { repository, tools, service };
@@ -37,6 +38,25 @@ describe('OpenAI conversation', () => {
     await service.respond(conversation, context, 'Hi');
     expect(JSON.parse(fetch.mock.calls[0]![1]!.body as string).instructions).toContain('Speak only in short sentences.');
   });
+  it('appends editable knowledge and the live enabled service catalog to every OpenAI request', async () => {
+    const { service, repository } = setup();
+    repository.getKnowledgeBaseOverride.mockResolvedValue({ content: 'Parking is available beside the studio.', updatedAt: '2026-09-24T10:00:00.000Z' });
+    repository.listServices.mockResolvedValue([
+      { id: 'relax-60', name: 'Relax massage', description: 'Gentle full body massage', durationMinutes: 60, durationOptions: [{ durationMinutes: 90, price: 2000 }], price: 1500, currency: 'UAH', bufferMinutes: 30, enabled: true },
+      { id: 'disabled', name: 'Disabled service', description: '', durationMinutes: 60, price: 100, currency: 'UAH', bufferMinutes: 30, enabled: false },
+    ]);
+    const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Here are the details.' }] }] }) }));
+    vi.stubGlobal('fetch', fetch);
+    await service.respond(conversation, context, 'Where can I park?');
+    const request = JSON.parse(fetch.mock.calls[0]![1]!.body as string);
+    const match = request.instructions.match(/Business knowledge base JSON: (.*)\nServices may/);
+    expect(match).toBeTruthy();
+    expect(JSON.parse(match![1])).toEqual({
+      additionalKnowledge: 'Parking is available beside the studio.',
+      currentEnabledServices: [{ id: 'relax-60', name: 'Relax massage', description: 'Gentle full body massage', durationMinutes: 60, durationOptions: [{ durationMinutes: 90, price: 2000 }], price: 1500, currency: 'UAH' }],
+    });
+  });
+
   it('stages mutation without executing and consumes it only on explicit confirmation', async () => {
     const { service, tools, repository } = setup();
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'create_booking', arguments: JSON.stringify({ serviceId: 'massage', durationMinutes: 90, startAt: '2099-01-01T10:00:00.000Z' }) }] }) })));
