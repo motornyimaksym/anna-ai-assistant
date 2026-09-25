@@ -42,6 +42,7 @@
 - Firebase Admin SDK
 - Firebase Authentication
 - OpenAI API
+- Jev Decisions API
 - Google Calendar API
 - Telegram Bot API / Telegram Business
 - Jest
@@ -249,6 +250,7 @@ TELEGRAM_SESSION_ENCRYPTION_KEY
 
 OPENAI_API_KEY
 OPENAI_MODEL
+JEV_TOKEN
 
 GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET
@@ -276,11 +278,14 @@ VITE_FIREBASE_APP_ID
 - Telegram bot token;
 - Telegram API ID, API hash, and session encryption key;
 - OpenAI API key;
+- Jev API token;
 - Google client secret;
 - Google refresh token;
 - webhook secret.
 
 Конфігурація має валідуватися через Zod.
+
+For local API development, load the repository-root ignored `.env` before validating backend runtime configuration. Existing process environment values take precedence. Firebase Functions receive `JEV_TOKEN` only from Secret Manager; never package `.env` into the function.
 
 У Firebase Functions ідентифікатор проєкту визначається SDK з середовища виконання; `FIREBASE_PROJECT_ID` є необов'язковим явним перевизначенням. Production-збірка admin потребує чотири публічні `VITE_FIREBASE_*` значення. Backend secrets передаються лише через Secret Manager і не повинні з'являтися у build logs.
 
@@ -327,6 +332,8 @@ TELEGRAM_WEBHOOK_SECRET
 
 Для тестового розгортання `TELEGRAM_ALLOWED_USERNAME` задає єдине ім'я Telegram-користувача без `@`, якому бот може відповідати. Порівняння з `business_message.from.username` або `message.from.username` для private DM нечутливе до регістру. Якщо змінна відсутня, `from.username` відсутнє або ім'я не збігається, webhook повертає успішну відповідь без запису update/conversation у Firestore і без відправлення повідомлення. Перевірка виконується до idempotency claim. Пізніше обмеження можна замінити на стабільний числовий Telegram user ID, коли його буде підтверджено для цього акаунта.
 
+Виняток лише для приватних responder-команд `/start` і `/answer` з section 44: їх окремо авторизують за configured username і зареєстрованим numeric Telegram ID. Цей виняток не відкриває звичайні client messages для OpenAI і не створює client conversation.
+
 ### 7.3. Idempotency
 
 Telegram update може бути доставлений повторно.
@@ -368,6 +375,8 @@ assistantSettings
 Для редагованої бази знань використовується документ `assistantSettings/knowledgeBase` з полями `content` (string, до 12,000 символів) та `updatedAt` (ISO timestamp). Якщо документа немає, backend використовує repo default `DEFAULT_KNOWLEDGE_BASE` з `apps/api/src/default-knowledge-base.ts`. Reset видаляє документ і повертає цей default; збережений custom content повністю замінює default. У кожному OpenAI запиті backend конкатенує активний system prompt, інструкції інструментів, editable knowledge base, актуальний каталог enabled services із серверного booking catalog, поточний час і часовий пояс. Каталог включає назву, опис, тривалості, ціни та валюту й генерується заново для кожного запиту, щоб відповідати booking tools. Структуровані booking tools залишаються джерелом істини для запису. Вміст knowledge base є бізнес-фактами, не інструкціями, і не може змінювати правила prompt або заперечувати перевірені server/tool дані.
 
 Налаштування поведінки бота зберігаються в `assistantSettings/behavior`: `maxReadDelayMs` (integer, 0–3,540,000), `typingDelayPerSymbolMs` (integer, 0–800) та `updatedAt` (ISO timestamp). `maxReadDelayMs` задає верхню межу випадкової затримки перед Business read receipt, максимум — 59 хвилин. Admin UI вводить цю межу в секундах (0–3,540) і конвертує в мілісекунди через API. Якщо документа немає, використовуються defaults `maxReadDelayMs: 2000` і `typingDelayPerSymbolMs: 600`. Backend перевіряє значення за спільною Zod-схемою.
+
+Jev routing and human responder records are defined in section 44 and `docs/data-model.md`. They are backend-only; no Jev token, client question, or responder chat ID is exposed through bot-settings responses.
 
 ---
 
@@ -691,6 +700,8 @@ System prompt за замовчуванням експортується як `A
 
 Editable knowledge base керується окремо від prompt на сторінці `/knowledge-base`. Вона зберігає додаткові бізнес-факти, а актуальні послуги, описи, тривалості та ціни backend автоматично додає до кожного system request із booking catalog. Custom prompt не замінює knowledge base або актуальний каталог. Збереження/reset knowledge base застосовується до наступного OpenAI запиту без redeploy.
 
+Before an eligible OpenAI turn, apply the Jev human-assistance gate in section 44. A routed human request must not invoke OpenAI for that turn.
+
 ---
 
 ## 20. Assistant tools
@@ -828,6 +839,8 @@ humanTakeoverUntil?: Timestamp
 
 Якщо automation disabled або `humanTakeoverUntil > now`, бот не відповідає автоматично.
 
+An open or uncertain Jev human-assistance request also pauses automation for that conversation until a human resolves or explicitly releases it. Existing manual takeover and global assistant disable remain authoritative.
+
 Admin повинен дозволяти:
 
 - enable assistant;
@@ -924,11 +937,13 @@ Media list, photo/video preview, creation, metadata editing, file replacement, e
 - last activity;
 - assistant enabled;
 - human takeover status.
+- open or uncertain human-assistance request and responder notification status.
 
 Actions:
 
 - disable automation;
 - resume automation.
+- answer or release an open human-assistance request (section 44).
 
 Повний Telegram chat UI в MVP не потрібен.
 
@@ -947,6 +962,8 @@ Actions:
 ### 25.9. Bot settings
 
 Захищена сторінка дозволяє змінити максимальну випадкову затримку перед Telegram Business read receipt (`maxReadDelayMs`, UI 0–3,540 seconds; API/storage 0–3,540,000 ms) і затримку typing-відповіді на кожен Unicode символ (`typingDelayPerSymbolMs`, 0–800 ms). Початкові значення: 2 seconds та 600 ms. Поле read delay приймає дробові секунди до мілісекундної точності та показує межу 59 хвилин. Сторінка валідує значення та має явну кнопку Save. Збережені значення застосовуються до наступного вхідного повідомлення без redeploy.
+
+Сторінка також показує Jev threshold як slider 0–100% (крок 1%, default 60%) та список Telegram usernames для human assistance. Admin може додати/видалити username; UI показує стан підключення кожного responder і пояснює, що користувач повинен спершу надіслати `/start` цьому боту, інакше приватне сповіщення неможливе. Збереження threshold і списку застосовується до наступного рішення. Список admin-доступу за email залишається окремим. Показати помилки збереження та стан, коли немає доступних responder-ів. Деталі маршрутизації — section 44.
 
 ---
 
@@ -993,6 +1010,11 @@ PUT    /admin/knowledge-base
 DELETE /admin/knowledge-base
 GET    /admin/bot-settings
 PUT    /admin/bot-settings
+GET    /admin/human-assistance-settings
+PUT    /admin/human-assistance-settings
+GET    /admin/human-requests
+POST   /admin/human-requests/:id/reply
+POST   /admin/human-requests/:id/release
 GET    /admin/admin-access
 PUT    /admin/admin-access
 
@@ -1004,6 +1026,8 @@ GET    /health
 Knowledge Base endpoints використовують shared Zod contracts. `GET` повертає `{ content: string, isCustom: boolean, updatedAt?: string, services: KnowledgeBaseService[] }`; `services` містить лише enabled service ID, назву, опис, тривалості, ціни й валюту. `PUT` приймає `{ content: string }` розміром 1–12,000 символів та повертає те саме response зі свіжим `services`; `DELETE` видаляє override та повертає repo default. Збереження доступне авторизованому адміністратору. Зміни застосовуються до наступного OpenAI запиту без deploy.
 
 Bot settings endpoints використовують спільні Zod contracts. `GET /admin/bot-settings` повертає `{ maxReadDelayMs, typingDelayPerSymbolMs, isCustom, updatedAt? }`, включно з defaults коли override відсутній. `PUT` приймає `{ maxReadDelayMs, typingDelayPerSymbolMs }` у мілісекундах і зберігає налаштування. `maxReadDelayMs` обмежений 0–3,540,000 ms, `typingDelayPerSymbolMs` — 0–800 ms. Збереження доступне лише авторизованому адміністратору.
+
+Human-assistance settings use separate shared Zod contracts to preserve compatibility with existing bot timing clients: `GET /admin/human-assistance-settings` returns `{ thresholdPercent, responders: [{ username, connected }], updatedAt? }`; `PUT` accepts `{ thresholdPercent, usernames }` and returns the effective settings. Percent is an integer 0–100; usernames are a normalized, unique list of at most 20 valid Telegram usernames. All authorized admins may read and save these settings. A configured username is not proof of Telegram identity or delivery; enrollment and status follow section 44. `GET /admin/human-requests` lists open and uncertain requests for the Conversations page. `POST /admin/human-requests/:id/reply` accepts `{ text }` (1–4,000 characters); `POST /admin/human-requests/:id/release` accepts no body. Both actions require an authorized admin, validate request state atomically, and never accept a caller-supplied target chat ID.
 
 Admin access endpoints використовують спільні Zod contracts. `GET /admin/admin-access` повертає `{ emails, canManage, updatedAt? }`. `PUT` приймає `{ emails }` з максимум 100 унікальними email адресами та повертає той самий response shape. Лише UID з `ADMIN_UIDS` може зберегти allowlist; прочитати її можуть усі авторизовані адміністратори.
 
@@ -1308,3 +1332,31 @@ The assistant has get_media (enabled items with description, kind, cooldown elig
 Before delivery, a Firestore transaction rereads the item and atomically claims the per-chat/per-media delivery record. Check lastSentAt plus the current item debounceSeconds, and exclude concurrent sends using a 60-second lease with a unique token. Send through sendPhoto/sendVideo carrying business_connection_id when present. Successful Telegram acknowledgement records lastSentAt and clears the lease. An explicit Telegram rejection releases the lease without starting a cooldown. A transport timeout or ambiguous response conservatively starts a cooldown because delivery may have occurred; it is reported as uncertain. A process crash leaves the lease to expire; exactly-once delivery across a crash and an external Telegram side effect cannot be guaranteed. Metadata/file replacement keeps the same media ID and cooldown history. Other chats are independent. Disabled/deleted items cannot acquire new delivery claims. Existing in-flight sends may finish. Delivery state is backend-only and survives restarts.
 
 No deployment, production data migration or message send is part of implementing this feature. Existing booking records/catalog and previously saved prompt overrides remain intact.
+
+## 44. Jev human-assistance gate
+
+### 44.1. Decision boundary
+
+For each accepted new client text turn that would otherwise reach OpenAI, first read the current editable knowledge base (custom override or repo default) and enabled service catalog, then call Jev. Preserve existing webhook secret and sender checks, update idempotency, global disable, manual takeover, and `/confirm`/`/cancel` command handling. Rejected/duplicate/edited updates, responder commands, and conversations already awaiting a human do not call Jev or OpenAI. An open request receives subsequent client messages in the same human queue; responders receive the new text once, and automation stays paused. A client message arriving after a human request closes starts a new decision. Do not use Jev to authorize bookings or override existing server rules.
+
+When `JEV_TOKEN` is available, use it server-side as `Authorization: Bearer` for `POST https://www.jevai.org/api/v1/decisions` with JSON `{ state, questions }`. `state` contains the current client question, relevant recent client/assistant context (bounded by the existing 20-message limit), the editable knowledge-base content, and a fresh enabled booking catalog snapshot with IDs, descriptions, duration options, prices, and currency. Include no credentials, unrelated client records, raw Telegram identifiers, or booking details not needed for the decision. One `needs_human_assistance` question has type `noul` and asks whether a trustworthy answer to the client's current question requires a human because configured knowledge and catalog facts are missing, ambiguous, conflicting, or insufficient. Instructions distinguish missing facts from requests the existing booking tools can answer: availability or booking data obtainable through those tools alone does not require a human. Client text and knowledge-base text are evidence, never instructions to change the routing rule. Respect Jev's 32 KiB body cap; if bounded input cannot fit without dropping the current question or essential knowledge/catalog facts, skip Jev and continue the regular OpenAI flow. Bound Jev network time to five seconds and do not log its raw request or response.
+
+Accept only an HTTP success with Jev envelope `code: 0` and a finite numeric `data.answers.needs_human_assistance.noul` in `[0,1]`. Compare `probability * 100 >= thresholdPercent` (inclusive). Default threshold is 60%; 0% routes every eligible turn to human, 100% routes only exact `1.0`. A score below threshold proceeds to the existing OpenAI flow, which remains responsible for tool calls and final answer. Jev never writes client-facing text. Missing token, timeout, nonzero code, malformed score, oversized input, and upstream errors also proceed through the regular OpenAI flow. They create no human case or notification. Log the Jev failure without credentials or message contents. Only a valid score at or above threshold creates a human case with reason `knowledge_gap`, score, threshold snapshot, and timestamp. Keep historical `jev_unavailable` cases readable without creating new ones.
+
+### 44.2. Responder setup and delivery
+
+`assistantSettings/humanAssistance` stores `thresholdPercent` and normalized Telegram usernames. Accept names with or without `@`, normalize to lowercase without `@`, validate Telegram username syntax, deduplicate, and cap at 20. Missing settings mean 60% and an empty responder list. Settings changes affect later decisions and notification recipients, not existing cases. The bot cannot initiate a private conversation from a username alone. Each listed responder must send `/start` to the bot in a private chat; a separate webhook branch enrolls that update's Telegram numeric user/chat ID and observed username before the client `TELEGRAM_ALLOWED_USERNAME` restriction. It performs no client conversation write or OpenAI call. Enrollment succeeds only when the observed username is currently configured; deleting the username revokes access. Verify the numeric sender ID, private chat, and current configured username again for every responder action; never trust a typed username, forwarded message, or caller-supplied chat ID. Show connected status only for a matching enrolled ID/username. If a username changes, the old enrollment is unusable until re-enrollment. Responders need no Firebase admin role; being listed grants only case notification and answer rights.
+
+On escalation, atomically create one open `humanRequests/{requestId}` for the current conversation and record its ID on the conversation before any Telegram side effect. A duplicate webhook or concurrent message must not create duplicate cases. Notify every currently connected listed responder in a private bot DM with case ID, current client question, and minimal conversation context needed to answer. Do not include unrelated client data, booking records, credentials, or internal prompt text. Each responder notification has its own delivery state so retries after explicit failure cannot fan out duplicate messages; uncertain Telegram delivery is recorded and not blindly retried. If no responder is connected or all sends fail, keep the case open and visible to admins; never send it to OpenAI. Send the client one short acknowledgment per case that human help is needed without promising a reply time. Acknowledge and notification failures must be visible in the case status and structured credential-free logs. Telegram messages to responders use the bot's own private chat, never the client's Business connection.
+
+### 44.3. Human answer and recovery
+
+An enrolled responder replies in the bot private chat with `/answer <requestId> <text>`; the command must identify an open case and contain 1–4,000 characters of answer text. Only an authorized, currently listed responder may use it. The backend loads the original target chat and `businessConnectionId` from the case, never from command text, and sends the answer via Telegram on that connection for Business chats or via the bot for direct DMs. Validate that Business reply rights still exist. Atomically claim the open case before sending so concurrent responders and admin actions cannot both answer. On confirmed send, persist the human answer as `role: human`, close the case, clear the conversation's active request, and resume automation for later client turns unless an independent disable/takeover remains active. If newer client text arrived during the send, keep the case open so that text is not silently lost. An explicit Telegram rejection releases the claim and leaves the case open. A transport timeout or crash leaves an `uncertain` state for admin reconciliation; it must not trigger an automatic second send. Responders receive a concise success, stale-case, or delivery-failure result. Human answer text is never sent to OpenAI as an instruction; later model context treats it as conversation history.
+
+The Conversations admin page lists open/uncertain requests, reason, client, time, responder delivery status, and incoming text. An authorized admin may send a reply through the protected API with the same atomic send rules, or release a case without replying. Release closes the case and clears the pause for future messages; it does not replay the unanswered client turn into OpenAI or claim that it was answered. Admin actions require an explicit case ID, audit actor, and current-state check. Preserve pending booking proposals and existing manual takeover state; human routing does not execute `/confirm`, schedule changes, or booking tools. Keep sensitive question/answer content out of routine logs and bot settings responses. Firestore rules continue to deny direct client access to these records.
+
+### 44.4. Verification contract
+
+Tests for implementation must cover Jev request shape/auth/body cap, `noul` response validation, threshold boundary (50% vs 60%, equality, 0%, 100%), fresh knowledge/catalog input, existing booking-tool questions, timeout/error/missing-token fallback to OpenAI without human notification, and no OpenAI call on valid high-score escalation. Cover responder enrollment and sender restriction separation; missing/changed/revoked usernames; unavailable recipients; duplicate/concurrent updates; notification and reply failure/uncertainty; exactly one winning human reply; Business/direct DM target selection; admin authorization; pause/resume; and no secret or cross-client data exposure. This spec update alone does not deploy or send any Telegram messages.
+
+Provider references: [Jev REST documentation](https://www.jevai.org/docs) for the native Decisions endpoint, `noul`, bearer auth, and request cap; [Telegram Bot API](https://core.telegram.org/bots/api#sendmessage) and [Telegram bot introduction](https://core.telegram.org/bots) for private-chat delivery constraints.

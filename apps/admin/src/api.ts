@@ -1,6 +1,7 @@
 import { knowledgeBaseResponseSchema } from '@booking/contracts';
 import { mediaSchema, mediaDeleteResponseSchema, createMediaSchema, updateMediaSchema, type MediaDto } from '@booking/contracts';
 import { telegramAccountStatusSchema } from '@booking/contracts';
+import { humanAssistanceSettingsResponseSchema, humanReleaseResponseSchema, humanRequestSchema, updateHumanAssistanceSettingsSchema, type HumanAssistanceSettings } from '@booking/contracts';
 import { adminAccessResponseSchema, assistantPromptResponseSchema, availableSlotsResponseSchema, bookingSchema, botSettingsResponseSchema, conversationSchema, servicePhotoUploadResponseSchema, servicePhotoUploadSchema, serviceSchema, specResponseSchema, updateAdminAccessSchema, type BotSettings, type ServiceDto } from '@booking/contracts';
 import { getAuth } from 'firebase/auth';
 const request = async <T>(path: string, schema: { parse(value: unknown): T }, init?: RequestInit): Promise<T> => { const user = getAuth().currentUser; const token = user ? await user.getIdToken() : undefined; const response = await fetch(`/api${path}`, { ...init, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...init?.headers } }); if (!response.ok) { const body = (path.startsWith('/admin/telegram-account') || path.startsWith('/admin/media')) ? await response.json().catch(() => ({})) as { message?: unknown } : {}; throw new Error(typeof body.message === 'string' ? body.message : `API request failed (${response.status})`); } return schema.parse(await response.json()); };
@@ -49,6 +50,11 @@ export const adminApi = {
   resetAssistantPrompt: () => request('/admin/assistant-prompt', assistantPromptResponseSchema, { method: 'DELETE' }),
   botSettings: () => request('/admin/bot-settings', botSettingsResponseSchema),
   saveBotSettings: (settings: BotSettings) => request('/admin/bot-settings', botSettingsResponseSchema, { method: 'PUT', body: JSON.stringify(settings) }),
+  humanAssistanceSettings: () => request('/admin/human-assistance-settings', humanAssistanceSettingsResponseSchema),
+  saveHumanAssistanceSettings: (settings: HumanAssistanceSettings) => request('/admin/human-assistance-settings', humanAssistanceSettingsResponseSchema, { method: 'PUT', body: JSON.stringify(updateHumanAssistanceSettingsSchema.parse(settings)) }),
+  humanRequests: () => request('/admin/human-requests', humanRequestSchema.array()),
+  replyHumanRequest: (id: string, text: string) => request(`/admin/human-requests/${encodeURIComponent(id)}/reply`, humanRequestSchema, { method: 'POST', body: JSON.stringify({ text }) }),
+  releaseHumanRequest: (id: string) => request(`/admin/human-requests/${encodeURIComponent(id)}/release`, humanReleaseResponseSchema, { method: 'POST' }),
   adminAccess: () => request('/admin/admin-access', adminAccessResponseSchema),
   saveAdminAccess: (emails: string[]) => request('/admin/admin-access', adminAccessResponseSchema, { method: 'PUT', body: JSON.stringify(updateAdminAccessSchema.parse({ emails })) }),
 };

@@ -166,7 +166,13 @@ export class BookingRepository {
     return doc.exists ? conversationSchema.parse({ ...doc.data(), telegramChatId: doc.id }) : undefined;
   }
   async saveConversation(conversation: ConversationDto): Promise<ConversationDto> {
-    await this.db.collection('conversations').doc(conversation.telegramChatId).set(withoutUndefined(conversation));
+    const ref = this.db.collection('conversations').doc(conversation.telegramChatId);
+    await this.db.runTransaction(async (tx) => {
+      const existing = (await tx.get(ref)).data() ?? {};
+      const merged = { ...existing, ...withoutUndefined(conversation) };
+      if (conversation.pendingAction === undefined) delete merged.pendingAction;
+      tx.set(ref, merged);
+    });
     return conversation;
   }
   async listConversations(): Promise<ConversationDto[]> {
@@ -175,9 +181,9 @@ export class BookingRepository {
   }
   async listMessages(chatId: string): Promise<{ role: 'user' | 'assistant'; content: string }[]> {
     const snapshot = await this.db.collection('conversations').doc(chatId).collection('messages').orderBy('createdAt', 'desc').limit(20).get();
-    return snapshot.docs.reverse().map((doc) => ({ role: doc.data().role as 'user' | 'assistant', content: String(doc.data().text) }));
+    return snapshot.docs.reverse().map((doc) => ({ role: doc.data().role === 'user' ? 'user' as const : 'assistant' as const, content: String(doc.data().text) }));
   }
-  async appendMessage(chatId: string, role: 'user' | 'assistant', text: string): Promise<void> {
+  async appendMessage(chatId: string, role: 'user' | 'assistant' | 'human', text: string): Promise<void> {
     await this.db.collection('conversations').doc(chatId).collection('messages').add({ role, text, createdAt: new Date().toISOString() });
   }
   async getKnowledgeBaseOverride(): Promise<{ content: string; updatedAt: string } | undefined> {

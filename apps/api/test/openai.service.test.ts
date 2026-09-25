@@ -57,7 +57,6 @@ describe('OpenAI conversation', () => {
       currentEnabledServices: [{ id: 'relax-60', name: 'Relax massage', description: 'Gentle full body massage', durationMinutes: 60, durationOptions: [{ durationMinutes: 90, price: 2000 }], price: 1500, currency: 'UAH' }],
     });
   });
-
   it('uses the repo knowledge base when no override exists', async () => {
     const { service } = setup();
     const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello.' }] }] }) }));

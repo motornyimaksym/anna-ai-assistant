@@ -1,16 +1,17 @@
 import { Body, Controller, Delete, Get, Headers, HttpCode, NotFoundException, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
-import { adminAccessResponseSchema, assistantPromptResponseSchema, availabilityRuleSchema, availableSlotsRequestSchema, botSettingsResponseSchema, createBookingRequestSchema, patchConversationSchema, rescheduleBookingRequestSchema, scheduleExceptionSchema, servicePhotoUploadSchema, serviceSchema, updateAdminAccessSchema, updateAssistantPromptSchema, updateBotSettingsSchema, knowledgeBaseResponseSchema, updateKnowledgeBaseSchema, updateBookingRequestSchema } from '@booking/contracts';
+import { adminAccessResponseSchema, assistantPromptResponseSchema, availabilityRuleSchema, availableSlotsRequestSchema, botSettingsResponseSchema, createBookingRequestSchema, patchConversationSchema, rescheduleBookingRequestSchema, scheduleExceptionSchema, servicePhotoUploadSchema, serviceSchema, updateAdminAccessSchema, updateAssistantPromptSchema, updateBotSettingsSchema, knowledgeBaseResponseSchema, updateKnowledgeBaseSchema, updateBookingRequestSchema, humanAssistanceSettingsResponseSchema, humanReplySchema, updateHumanAssistanceSettingsSchema } from '@booking/contracts';
 import { AdminGuard, AdminOwnerGuard, type AdminRequest } from './auth.js'; import { AvailabilityService } from './availability.service.js'; import { BookingService } from './booking.service.js'; import { BookingRepository } from './repository.js'; import { SpecService } from './spec.service.js'; import { TelegramService } from './telegram.service.js'; import { ASSISTANT_SYSTEM_PROMPT } from './assistant-prompt.js';
 import { DEFAULT_BOT_SETTINGS } from './bot-settings.js';
 import { DEFAULT_KNOWLEDGE_BASE } from './default-knowledge-base.js';
 import { ServicePhotoService } from './service-photo.service.js';
+import { HumanAssistanceService } from './human-assistance.service.js';
 @Controller()
 export class HealthController { @Get('health') health() { return { status: 'ok' }; } }
 @Controller('telegram')
 export class TelegramController { constructor(private readonly telegram: TelegramService) {} @Post('webhook') @HttpCode(200) async webhook(@Headers('x-telegram-bot-api-secret-token') secret: string | undefined, @Body() body: unknown) { await this.telegram.handle(secret, body); return { ok: true }; } }
 @UseGuards(AdminGuard) @Controller('admin')
 export class AdminController {
-  constructor(private readonly repository: BookingRepository, private readonly bookings: BookingService, private readonly availability: AvailabilityService, private readonly specService: SpecService, private readonly servicePhotos: ServicePhotoService) {}
+  constructor(private readonly repository: BookingRepository, private readonly bookings: BookingService, private readonly availability: AvailabilityService, private readonly specService: SpecService, private readonly servicePhotos: ServicePhotoService, private readonly human: HumanAssistanceService) {}
   @Get('spec') spec() { return this.specService.getSpec(); }
   @Get('assistant-prompt') async assistantPrompt() { return this.promptResponse(await this.repository.getAssistantPromptOverride()); }
   @Put('assistant-prompt') async updateAssistantPrompt(@Body() body: unknown) { const { prompt } = updateAssistantPromptSchema.parse(body); return this.promptResponse(await this.repository.saveAssistantPromptOverride(prompt)); }
@@ -20,6 +21,11 @@ export class AdminController {
   @Delete('knowledge-base') async resetKnowledgeBase() { await this.repository.deleteKnowledgeBaseOverride(); return this.knowledgeBaseResponse(undefined, (await this.repository.listServices()).filter((service) => service.enabled)); }
   @Get('bot-settings') async botSettings() { return this.botSettingsResponse(await this.repository.getBotSettingsOverride()); }
   @Put('bot-settings') async updateBotSettings(@Body() body: unknown) { const settings = updateBotSettingsSchema.parse(body); return this.botSettingsResponse(await this.repository.saveBotSettingsOverride(settings)); }
+  @Get('human-assistance-settings') async humanAssistanceSettings() { return humanAssistanceSettingsResponseSchema.parse(await this.human.settingsView()); }
+  @Put('human-assistance-settings') async updateHumanAssistanceSettings(@Body() body: unknown) { await this.human.saveSettings(updateHumanAssistanceSettingsSchema.parse(body)); return this.humanAssistanceSettings(); }
+  @Get('human-requests') humanRequests() { return this.human.listOpen(); }
+  @Post('human-requests/:id/reply') replyHumanRequest(@Param('id') id: string, @Body() body: unknown, @Req() request: AdminRequest) { return this.human.reply(id, humanReplySchema.parse(body).text, `admin:${request.admin!.uid}`); }
+  @Post('human-requests/:id/release') releaseHumanRequest(@Param('id') id: string, @Req() request: AdminRequest) { return this.human.release(id, `admin:${request.admin!.uid}`); }
   @Get('admin-access') async adminAccess(@Req() request: AdminRequest) { const override = await this.repository.getAdminAccessOverride(); return adminAccessResponseSchema.parse({ emails: override?.emails ?? [], canManage: request.admin?.isOwner ?? false, ...(override?.updatedAt ? { updatedAt: override.updatedAt } : {}) }); }
   @Put('admin-access') @UseGuards(AdminOwnerGuard) async updateAdminAccess(@Body() body: unknown) { const { emails } = updateAdminAccessSchema.parse(body); const saved = await this.repository.saveAdminAccessOverride(emails); return adminAccessResponseSchema.parse({ ...saved, canManage: true }); }
   @Get('dashboard') async dashboard() { const [all, conversations] = await Promise.all([this.repository.listBookings(), this.repository.listConversations()]); const now = new Date(); const today = now.toISOString().slice(0, 10); const weekEnd = new Date(now); weekEnd.setDate(now.getDate() + 7); return { bookingsToday: all.filter((booking) => booking.startAt.startsWith(today)).length, bookingsThisWeek: all.filter((booking) => new Date(booking.startAt) >= now && new Date(booking.startAt) <= weekEnd).length, upcomingBookings: all.filter((booking) => new Date(booking.startAt) >= now), assistantEnabled: conversations.every((conversation) => conversation.assistantEnabled), calendarSyncFailures: all.filter((booking) => booking.calendarSyncStatus === 'failed').length }; }

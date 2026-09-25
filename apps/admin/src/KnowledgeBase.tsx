@@ -30,7 +30,7 @@ export const KnowledgeBase = () => {
     onSuccess: (value) => {
       queryClient.setQueryData(queryKey, value);
       setContent(value.content);
-      setMessage('Reset to the empty default knowledge base.');
+      setMessage('Reset to the default knowledge base.');
     },
   });
 
@@ -42,7 +42,7 @@ export const KnowledgeBase = () => {
 
   return <Stack spacing={2}>
     <Stack direction="row" alignItems="center" spacing={1}>
-      <Chip size="small" color={query.data.isCustom ? 'primary' : 'default'} label={query.data.isCustom ? 'Custom knowledge base' : 'Empty knowledge base'} />
+      <Chip size="small" color={query.data.isCustom ? 'primary' : 'default'} label={query.data.isCustom ? 'Custom knowledge base' : 'Default knowledge base'} />
       <Typography variant="body2" color="text.secondary">Changes apply to the next assistant request.</Typography>
     </Stack>
     <Typography color="text.secondary">Add business facts and guidance here. Keep response rules in Assistant prompt. Current enabled services, descriptions, durations, and prices are appended automatically from the booking catalog.</Typography>

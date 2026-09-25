@@ -25,7 +25,7 @@ describe('admin knowledge base page', () => {
 
   it('resets saved knowledge and disallows whitespace-only drafts', async () => {
     vi.mocked(adminApi.knowledgeBase).mockResolvedValue({ content: 'Custom notes.', isCustom: true, services: [] });
-    vi.mocked(adminApi.resetKnowledgeBase).mockResolvedValue({ content: '', isCustom: false, services: [] });
+    vi.mocked(adminApi.resetKnowledgeBase).mockResolvedValue({ content: 'Default facts.', isCustom: false, services: [] });
     show();
     const editor = await screen.findByRole('textbox', { name: 'Additional business knowledge' });
     fireEvent.change(editor, { target: { value: '   ' } });
@@ -33,6 +33,7 @@ describe('admin knowledge base page', () => {
     fireEvent.change(editor, { target: { value: 'Custom notes.' } });
     fireEvent.click(screen.getByRole('button', { name: 'RESET' }));
     await waitFor(() => expect(adminApi.resetKnowledgeBase).toHaveBeenCalledOnce());
-    expect(await screen.findByText('Reset to the empty default knowledge base.')).toBeTruthy();
+    expect(await screen.findByText('Reset to the default knowledge base.')).toBeTruthy();
+    expect((editor as HTMLTextAreaElement).value).toBe('Default facts.');
   });
 });

@@ -5,9 +5,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BotSettings } from './BotSettings.js';
 import { adminApi } from './api.js';
 
-vi.mock('./api.js', () => ({ adminApi: { botSettings: vi.fn(), saveBotSettings: vi.fn(), adminAccess: vi.fn(), saveAdminAccess: vi.fn(), telegramAccount: vi.fn(), telegramAccountAction: vi.fn() } }));
+vi.mock('./api.js', () => ({ adminApi: { botSettings: vi.fn(), saveBotSettings: vi.fn(), humanAssistanceSettings: vi.fn(), saveHumanAssistanceSettings: vi.fn(), adminAccess: vi.fn(), saveAdminAccess: vi.fn(), telegramAccount: vi.fn(), telegramAccountAction: vi.fn() } }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
-beforeEach(() => { vi.mocked(adminApi.adminAccess).mockResolvedValue({ emails: [], canManage: false }); vi.mocked(adminApi.telegramAccount).mockResolvedValue({ configured: false, phase: 'disconnected' }); });
+beforeEach(() => { vi.mocked(adminApi.adminAccess).mockResolvedValue({ emails: [], canManage: false }); vi.mocked(adminApi.humanAssistanceSettings).mockResolvedValue({ thresholdPercent: 60, responders: [] }); vi.mocked(adminApi.telegramAccount).mockResolvedValue({ configured: false, phase: 'disconnected' }); });
 const show = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } })}><BotSettings /></QueryClientProvider>);
 
 describe('admin bot settings page', () => {
