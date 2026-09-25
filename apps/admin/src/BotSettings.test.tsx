@@ -11,6 +11,20 @@ beforeEach(() => { vi.mocked(adminApi.adminAccess).mockResolvedValue({ emails: [
 const show = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } })}><BotSettings /></QueryClientProvider>);
 
 describe('admin bot settings page', () => {
+  it('prevents pointer-wheel changes to timing fields', async () => {
+    vi.mocked(adminApi.botSettings).mockResolvedValue({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, isCustom: false });
+    show();
+    await screen.findByRole('spinbutton', { name: 'Maximum read delay (seconds)' });
+    for (const name of ['Maximum read delay (seconds)', 'Typing delay per symbol (ms)']) {
+      const input = screen.getByRole('spinbutton', { name }) as HTMLInputElement;
+      input.focus();
+      const before = input.value;
+      fireEvent.wheel(input, { deltaY: -100 });
+      expect(input.value).toBe(before);
+      expect(document.activeElement).not.toBe(input);
+    }
+  });
+
   it('loads current values and saves timing changes', async () => {
     vi.mocked(adminApi.botSettings).mockResolvedValue({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, isCustom: false });
     vi.mocked(adminApi.saveBotSettings).mockResolvedValue({ maxReadDelayMs: 900, typingDelayPerSymbolMs: 350, isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z' });

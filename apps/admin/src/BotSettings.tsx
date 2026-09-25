@@ -77,6 +77,7 @@ export const BotSettings = () => {
     <TextField
       label="Maximum read delay (seconds)"
       type="number"
+      onWheel={(event) => { if (event.target instanceof HTMLInputElement) event.target.blur(); }}
       value={draft.maxReadDelaySeconds}
       onChange={(event) => { setDraft((current) => ({ ...current, maxReadDelaySeconds: event.target.value })); setMessage(''); }}
       inputProps={{ min: 0, max: 3540, step: 0.001, 'aria-label': 'Maximum read delay (seconds)' }}
@@ -87,6 +88,7 @@ export const BotSettings = () => {
     <TextField
       label="Typing delay per symbol (ms)"
       type="number"
+      onWheel={(event) => { if (event.target instanceof HTMLInputElement) event.target.blur(); }}
       value={draft.typingDelayPerSymbolMs}
       onChange={(event) => { setDraft((current) => ({ ...current, typingDelayPerSymbolMs: event.target.value })); setMessage(''); }}
       inputProps={{ min: 0, max: 800, step: 1, 'aria-label': 'Typing delay per symbol (ms)' }}

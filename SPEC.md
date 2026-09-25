@@ -378,7 +378,7 @@ assistantSettings
   name: "Масаж 60 хв",
   description: "Класичний масаж",
   durationMinutes: 60,
-  bufferMinutes: 15,
+  bufferMinutes: 30,
   price: 1500,
   durationOptions: [{ durationMinutes: 90, price: 2000 }],
   currency: "UAH",
@@ -397,6 +397,7 @@ Admin повинен підтримувати:
 - зміну buffer;
 - окремий Telegram client message: photo, rich caption and inline URL buttons;
 - preview the exact Telegram message before saving.
+- numeric inputs must not change when the pointer wheel scrolls over them.
 
 Негативні ціни та некоректна тривалість заборонені.
 
@@ -568,7 +569,7 @@ Firestore transaction:
 bufferMinutes
 ```
 
-У MVP buffer застосовується **після запису**.
+У MVP buffer застосовується **після запису**. Нові послуги за замовчуванням мають `bufferMinutes: 30`; значення можна змінити в адмінці. Зміна default не оновлює вже збережені послуги.
 
 Створений booking зберігає застосований `bufferMinutes` як внутрішнє поле, щоб подальша зміна налаштувань послуги не скорочувала зайнятий інтервал вже існуючого запису.
 
@@ -576,7 +577,7 @@ bufferMinutes
 
 ```text
 duration = 60
-buffer = 15
+buffer = 30 (default)
 ```
 
 Наступний запис не може початися раніше завершення booking + buffer.
@@ -1025,12 +1026,12 @@ Development seed має бути ідемпотентним.
 ```text
 Масаж 60 хв
 duration: 60
-buffer: 15
+buffer: 30
 price: 1500 UAH
 
 Масаж 90 хв
 duration: 90
-buffer: 15
+buffer: 30
 price: 2000 UAH
 ```
 

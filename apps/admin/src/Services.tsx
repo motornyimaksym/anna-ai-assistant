@@ -16,7 +16,7 @@ const newId = () => globalThis.crypto?.randomUUID?.() ?? `service-${Date.now()}-
 const numberFromDraft = (value: string) => value.trim() === '' ? Number.NaN : Number(value);
 const toForm = (service?: ServiceDto): FormState => ({
   id: service?.id ?? newId(), name: service?.name ?? '', description: service?.description ?? '', options: service ? serviceDurationOptions(service).map((option) => ({ durationMinutes: String(option.durationMinutes), price: String(option.price) })) : [{ durationMinutes: '60', price: '' }],
-  bufferMinutes: String(service?.bufferMinutes ?? 0), currency: service?.currency ?? 'UAH', enabled: service?.enabled ?? true,
+  bufferMinutes: String(service?.bufferMinutes ?? 30), currency: service?.currency ?? 'UAH', enabled: service?.enabled ?? true,
   photoUrl: service?.photoUrl ?? '', captionText: service?.telegramCaption?.text ?? '', entities: service?.telegramCaption?.entities ?? [], buttons: service?.telegramButtons?.map((row) => row.map((button) => ({ ...button }))) ?? [],
 });
 const toService = (form: FormState): unknown => ({
@@ -171,14 +171,14 @@ export const Services = () => {
                 <Typography variant="body2" color="text.secondary">Offer different session lengths under this service. Each duration needs its own price; currency and buffer apply to every option.</Typography>
                 {form.options.map((option, index) => <Paper key={index} variant="outlined" sx={{ p: 1.5 }}>
                   <Stack direction="row" spacing={1} alignItems="center">
-                    <TextField label={index === 0 ? 'Duration (minutes)' : `Option ${index + 1} duration (minutes)`} type="number" required value={option.durationMinutes} onChange={(event) => update('options', form.options.map((item, position) => position === index ? { ...item, durationMinutes: event.target.value } : item))} inputProps={{ min: 15, max: 480, step: 1 }} fullWidth />
-                    <TextField label={index === 0 ? 'Price' : `Option ${index + 1} price`} type="number" required value={option.price} onChange={(event) => update('options', form.options.map((item, position) => position === index ? { ...item, price: event.target.value } : item))} inputProps={{ min: 0, step: 'any' }} fullWidth />
+                    <TextField label={index === 0 ? 'Duration (minutes)' : `Option ${index + 1} duration (minutes)`} type="number" onWheel={(event) => { if (event.target instanceof HTMLInputElement) event.target.blur(); }} required value={option.durationMinutes} onChange={(event) => update('options', form.options.map((item, position) => position === index ? { ...item, durationMinutes: event.target.value } : item))} inputProps={{ min: 15, max: 480, step: 1 }} fullWidth />
+                    <TextField label={index === 0 ? 'Price' : `Option ${index + 1} price`} type="number" onWheel={(event) => { if (event.target instanceof HTMLInputElement) event.target.blur(); }} required value={option.price} onChange={(event) => update('options', form.options.map((item, position) => position === index ? { ...item, price: event.target.value } : item))} inputProps={{ min: 0, step: 'any' }} fullWidth />
                     <IconButton aria-label={`Remove duration option ${index + 1}`} disabled={form.options.length === 1} onClick={() => update('options', form.options.filter((_, position) => position !== index))}>×</IconButton>
                   </Stack>
                 </Paper>)}
                 <Button variant="outlined" onClick={() => update('options', [...form.options, { durationMinutes: '', price: '' }])} disabled={form.options.length >= 10}>Add duration option</Button>
                 <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                  <TextField label="Buffer (minutes)" type="number" required value={form.bufferMinutes} onChange={(event) => update('bufferMinutes', event.target.value)} inputProps={{ min: 0, max: 120, step: 5 }} />
+                  <TextField label="Buffer (minutes)" type="number" onWheel={(event) => { if (event.target instanceof HTMLInputElement) event.target.blur(); }} required value={form.bufferMinutes} onChange={(event) => update('bufferMinutes', event.target.value)} inputProps={{ min: 0, max: 120, step: 5 }} />
                   <TextField label="Currency" required value={form.currency} onChange={(event) => update('currency', event.target.value)} inputProps={{ maxLength: 3 }} />
                 </Box>
                 <FormControlLabel control={<Switch checked={form.enabled} onChange={(event) => update('enabled', event.target.checked)} />} label="Offer this service in Telegram" />

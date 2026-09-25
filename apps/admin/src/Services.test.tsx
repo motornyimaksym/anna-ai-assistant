@@ -11,6 +11,30 @@ afterEach(() => { cleanup(); vi.clearAllMocks(); });
 const show = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } })}><Services /></QueryClientProvider>);
 
 describe('admin service catalog editor', () => {
+  it('defaults new services to a 30-minute buffer and preserves an existing buffer', async () => {
+    vi.mocked(adminApi.services).mockResolvedValue([service]);
+    show();
+    fireEvent.click(await screen.findByRole('button', { name: 'Add service' }));
+    expect((screen.getByRole('spinbutton', { name: 'Buffer (minutes)' }) as HTMLInputElement).value).toBe('30');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit Massage 60 min' }));
+    expect((screen.getByRole('spinbutton', { name: 'Buffer (minutes)' }) as HTMLInputElement).value).toBe('15');
+  });
+
+  it('does not change numeric inputs when the pointer wheel scrolls over them', async () => {
+    vi.mocked(adminApi.services).mockResolvedValue([service]);
+    show();
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit Massage 60 min' }));
+    for (const name of ['Duration (minutes)', 'Price', 'Buffer (minutes)']) {
+      const input = screen.getByRole('spinbutton', { name }) as HTMLInputElement;
+      input.focus();
+      const before = input.value;
+      fireEvent.wheel(input, { deltaY: -100 });
+      expect(input.value).toBe(before);
+      expect(document.activeElement).not.toBe(input);
+    }
+  });
+
   it('adds, validates and removes duration/price options on one service', async () => {
     vi.mocked(adminApi.services).mockResolvedValue([service]);
     vi.mocked(adminApi.saveService).mockImplementation(async (value) => value);
