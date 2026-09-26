@@ -287,6 +287,8 @@ VITE_FIREBASE_APP_ID
 
 For local API development, load the repository-root ignored `.env` before validating backend runtime configuration. Existing process environment values take precedence. Firebase Functions receive `JEV_TOKEN` only from Secret Manager; never package `.env` into the function.
 
+Before building Firebase release artifacts, validate any locally supplied `GOOGLE_CALENDAR_ENCRYPTION_KEY` and `TELEGRAM_SESSION_ENCRYPTION_KEY` from the shell or repository-root ignored `.env` (shell takes precedence). Each must be canonical base64 encoding of exactly 32 bytes; reject malformed values with the variable name and generation instructions, never the value. Missing local keys are allowed because production may already supply them through Secret Manager. This preflight does not upload secrets or change production secret versions; runtime validation remains strict. A corrected local key must also be provisioned in Secret Manager and the affected function explicitly redeployed before production uses it.
+
 У Firebase Functions ідентифікатор проєкту визначається SDK з середовища виконання; `FIREBASE_PROJECT_ID` є необов'язковим явним перевизначенням. Production-збірка admin потребує чотири публічні `VITE_FIREBASE_*` значення. Backend secrets передаються лише через Secret Manager і не повинні з'являтися у build logs.
 
 Порт `PORT` валідується для самостійного локального HTTP-сервера. Firebase Functions керує власним портом; службова конфігурація функції не залежить від значення `PORT` у її середовищі.

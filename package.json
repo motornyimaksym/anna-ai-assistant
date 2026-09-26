@@ -14,7 +14,7 @@
     "format:check": "prettier --check .",
     "seed": "pnpm --filter api seed",
     "firebase:emulators": "firebase emulators:start --config firebase/firebase.json",
-    "firebase:prepare": "node scripts/check-firebase-web-config.mjs && pnpm exec turbo run build --force && node scripts/prepare-firebase.mjs",
+    "firebase:prepare": "node scripts/check-firebase-secrets.mjs && node scripts/check-firebase-web-config.mjs && pnpm exec turbo run build --force && node scripts/prepare-firebase.mjs",
     "firebase:deploy": "pnpm firebase:prepare && npx -y firebase-tools@latest deploy --config firebase/firebase.json",
     "firebase:deploy:code": "pnpm firebase:prepare && npx -y firebase-tools@latest deploy --only hosting,functions:api --config firebase/firebase.json --project anna-ai-assistant"
   },
