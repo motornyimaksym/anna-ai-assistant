@@ -12,6 +12,7 @@ const secrets = [
   defineSecret('OPENAI_API_KEY'),
   defineSecret('JEV_TOKEN'),
   defineSecret('GOOGLE_CLIENT_SECRET'),
+  defineSecret('GOOGLE_CALENDAR_ENCRYPTION_KEY'),
   defineSecret('GOOGLE_REFRESH_TOKEN'),
   defineSecret('ADMIN_UIDS'),
 ];

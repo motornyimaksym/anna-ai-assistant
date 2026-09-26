@@ -19,7 +19,7 @@ describe('imported schedule slots', () => {
     expect(await screen.findByText('Сьогодні 15:00')).toBeTruthy();
     expect(screen.getByText(/Календар та планування часу/)).toBeTruthy();
     expect(screen.getByText(/Last synced/)).toBeTruthy();
-    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Refresh now' })).toBeTruthy();
     expect(screen.queryByRole('textbox')).toBeNull();
   });
 

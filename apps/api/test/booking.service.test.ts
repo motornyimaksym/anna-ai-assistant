@@ -18,7 +18,7 @@ describe.skipIf(!withEmulator)('Firestore booking transactions', () => {
   const setup = async () => {
     const repository = new BookingRepository(new FirebaseAdminService());
     await repository.saveService({ id: 'massage-60', name: 'Massage', description: '', durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH', enabled: true });
-    return { repository, service: new BookingService(repository, new CalendarService()) };
+    return { repository, service: new BookingService(repository, new CalendarService({ credentials: async () => undefined } as never)) };
   };
 
   it('allows only one concurrent reservation for a locked slot', async () => {

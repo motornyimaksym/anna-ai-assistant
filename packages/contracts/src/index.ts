@@ -45,7 +45,7 @@ export const scheduleExceptionSchema = z.object({ id: z.string().min(1), date: z
 export const bookingSchema = z.object({
   durationMinutes: z.number().int().min(15).max(480).optional(), price: z.number().finite().nonnegative().optional(), currency: z.string().length(3).optional(),
   id: z.string().min(1), clientId: z.string().min(1), serviceId: z.string().min(1), startAt: z.string().datetime(), endAt: z.string().datetime(), status: bookingStatusSchema,
-  telegramChatId: z.string().min(1), businessConnectionId: z.string().optional(), googleCalendarEventId: z.string().optional(), calendarSyncStatus: calendarSyncStatusSchema,
+  telegramChatId: z.string().min(1), businessConnectionId: z.string().optional(), googleCalendarEventId: z.string().optional(), googleCalendarId: z.string().optional(), calendarSyncStatus: calendarSyncStatusSchema,
   createdAt: z.string().datetime(), updatedAt: z.string().datetime()
 });
 export const clientSchema = z.object({ telegramUserId: z.string().min(1), username: z.string().optional(), firstName: z.string().min(1), lastName: z.string().optional(), phone: z.string().optional(), createdAt: z.string().datetime(), updatedAt: z.string().datetime() });
@@ -89,3 +89,7 @@ export * from './media.js';
 export * from './knowledge-base.js';
 export * from './human-assistance.js';
 export * from './telegram-schedule-import.js';
+
+export * from './ai-chat.js';
+
+export * from './google-calendar.js';

@@ -1,3 +1,10 @@
+import { GoogleCalendarController } from './google-calendar.controller.js';
+import { GoogleCalendarConnection } from './google-calendar.connection.js';
+import { GoogleCalendarStore } from './google-calendar.store.js';
+import { AiChatController } from './ai-chat.controller.js';
+import { AiChatStore } from './ai-chat.store.js';
+import { AiChatService } from './ai-chat.service.js';
+import { TelegramMcpService } from './telegram-mcp.service.js';
 import { MediaStoreController } from './media-store.controller.js';
 import { MediaStoreService } from './media-store.service.js';
 import { TelegramAccountController } from './telegram-account.controller.js';
@@ -12,4 +19,4 @@ import { Module } from '@nestjs/common';
 import { AssistantToolsService } from './assistant-tools.service.js'; import { AdminAuthService, AdminGuard, AdminOwnerGuard } from './auth.js'; import { AvailabilityService } from './availability.service.js'; import { BookingService } from './booking.service.js'; import { CalendarService } from './calendar.js'; import { AdminController, HealthController, TelegramController } from './controllers.js'; import { FirebaseAdminService } from './firebase-admin.js'; import { BookingRepository } from './repository.js'; import { ServicePhotoService } from './service-photo.service.js'; import { SpecService } from './spec.service.js'; import { TelegramService } from './telegram.service.js';
 import { HumanAssistanceStore } from './human-assistance.store.js';
 import { HumanAssistanceService } from './human-assistance.service.js';
-@Module({ controllers: [MediaStoreController, TelegramAccountController, TelegramScheduleImportController, HealthController, TelegramController, AdminController], providers: [MediaStoreService, TelegramAccountService, TelegramAccountStore, TelegramAccountTransport, TelegramScheduleImportService, TelegramScheduleImportStore, OpenAiService, FirebaseAdminService, AdminAuthService, AdminGuard, AdminOwnerGuard, BookingRepository, CalendarService, BookingService, AvailabilityService, TelegramService, AssistantToolsService, ServicePhotoService, SpecService, HumanAssistanceStore, HumanAssistanceService] }) export class AppModule {}
+@Module({ controllers: [GoogleCalendarController, AiChatController, MediaStoreController, TelegramAccountController, TelegramScheduleImportController, HealthController, TelegramController, AdminController], providers: [GoogleCalendarConnection, GoogleCalendarStore, AiChatStore, AiChatService, TelegramMcpService, MediaStoreService, TelegramAccountService, TelegramAccountStore, TelegramAccountTransport, TelegramScheduleImportService, TelegramScheduleImportStore, OpenAiService, FirebaseAdminService, AdminAuthService, AdminGuard, AdminOwnerGuard, BookingRepository, CalendarService, BookingService, AvailabilityService, TelegramService, AssistantToolsService, ServicePhotoService, SpecService, HumanAssistanceStore, HumanAssistanceService] }) export class AppModule {}

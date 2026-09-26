@@ -1,3 +1,4 @@
+import { ScheduleSourceSettings } from './ScheduleSourceSettings.js';
 import { Alert, Button, Checkbox, FormControlLabel, Stack, TextField, Typography } from '@mui/material';
 import { telegramAccountCodeSchema, telegramAccountPasswordSchema, telegramAccountStartSchema, type TelegramAccountStatus } from '@booking/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -33,7 +34,7 @@ export function TelegramAccountSettings() {
   };
   return <Stack spacing={1.5}>
     <Typography variant="h6">Telegram account</Typography>
-    <Typography variant="body2">Connect your account for a read-only schedule import. On incoming Telegram messages, the app reads the five newest text messages from the matching schedule group at most once every five minutes. This is separate from the Business bot; it never sends messages or marks chats read.</Typography>
+    <Typography variant="body2">Connect your account for a read-only schedule import. On incoming Telegram messages, the app reads the five newest text messages from the selected schedule chat at most once every five minutes. This is separate from the Business bot; it never sends messages or marks chats read.</Typography>
     {query.isPending && <Typography>Loading Telegram connection…</Typography>}
     {query.isError && <Alert severity="error">Could not load Telegram connection. <Button onClick={() => void query.refetch()}>Retry</Button></Alert>}
     {query.data && <>
@@ -55,6 +56,7 @@ export function TelegramAccountSettings() {
       {query.data.configured && query.data.phase === 'connected' && <Button disabled={busy} onClick={() => void act('check')}>Check connection</Button>}
       {query.data.configured && query.data.phase !== 'disconnected' && <Button color="warning" disabled={busy} onClick={() => void act('disconnect')}>{query.data.phase === 'connected' ? 'Disconnect Telegram account' : 'Cancel login'}</Button>}
     </>}
+    {query.data?.phase === 'connected' && <ScheduleSourceSettings />}
     {busy && <Typography>Contacting Telegram…</Typography>}
     {error && <Alert severity="error">{error}</Alert>}
     {notice && <Alert severity="success">{notice}</Alert>}

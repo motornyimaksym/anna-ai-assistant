@@ -17,3 +17,10 @@ describe('Telegram schedule import response', () => {
     expect(telegramScheduleSlotsResponseSchema.safeParse({ slots: [{ ...slot, createdAt: 'yesterday' }] }).success).toBe(false);
   });
 });
+
+it('validates source IDs without accepting caller supplied titles', async () => {
+  const { telegramScheduleSourceSchema } = await import('./telegram-schedule-import.js');
+  expect(telegramScheduleSourceSchema.safeParse({ chatId: '-10042' }).success).toBe(true);
+  expect(telegramScheduleSourceSchema.safeParse({ chatId: '@name' }).success).toBe(false);
+  expect(telegramScheduleSourceSchema.safeParse({ chatId: '42', title: 'Spoofed' }).success).toBe(false);
+});

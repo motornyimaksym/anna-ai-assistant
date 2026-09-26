@@ -22,3 +22,10 @@ describe('schedule source chat matching', () => {
     expect(findScheduleDialog([dialog('7', 'Календар студії'), dialog('8', 'Планування студії')])).toBeUndefined();
   });
 });
+
+
+it('uses a bound private chat and never falls back to a different named group', () => {
+  const privateChat = { id: '99', title: 'Personal calendar' };
+  expect(findScheduleDialog([privateChat], '99')).toBe(privateChat);
+  expect(findScheduleDialog([{ id: '42', title: 'Календар та планування часу', isGroup: true }], '99')).toBeUndefined();
+});

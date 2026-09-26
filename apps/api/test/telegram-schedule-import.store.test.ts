@@ -25,23 +25,42 @@ const fixture = () => {
 describe('Telegram schedule import storage', () => {
   it('claims sync at most once per five minutes across transactions', async () => {
     const { store, get } = fixture();
-    expect(await store.claimSync(1_000)).toEqual({ allowed: true, sourcePeerId: undefined });
+    expect(await store.claimSync(1_000)).toMatchObject({ allowed: true, sourcePeerId: undefined, attemptId: expect.any(String) });
     expect(get()?.nextAttemptAt).toBe(301_000);
     expect(await store.claimSync(300_999)).toEqual({ allowed: false, sourcePeerId: undefined });
-    expect(await store.claimSync(301_000)).toEqual({ allowed: true, sourcePeerId: undefined });
+    expect(await store.claimSync(301_000)).toMatchObject({ allowed: true, sourcePeerId: undefined, attemptId: expect.any(String) });
   });
 
   it('preserves the resolved peer ID and exposes only a parsed read snapshot', async () => {
     const { store, get } = fixture();
-    await store.claimSync(1_000);
-    await store.saveSnapshot({
+    const claim = await store.claimSync(1_000);
+    await store.complete(claim.attemptId!, 'success', {
       sourcePeerId: '42', sourceChatTitle: 'Календар та планування часу', syncedAt: '2026-09-25T10:00:00.000Z',
       slots: [{ messageId: '17', text: 'Сьогодні 15:00', createdAt: '2026-09-25T09:30:00.000Z' }],
     });
     expect(get()).toMatchObject({ sourcePeerId: '42', nextAttemptAt: 301_000 });
-    expect(await store.readSnapshot()).toEqual({
+    expect(await store.readSnapshot()).toMatchObject({
       sourceChatTitle: 'Календар та планування часу', syncedAt: '2026-09-25T10:00:00.000Z',
       slots: [{ messageId: '17', text: 'Сьогодні 15:00', createdAt: '2026-09-25T09:30:00.000Z' }],
     });
   });
+});
+
+
+it('invalidates in-flight results when the owner changes source and preserves cooldown', async () => {
+  const { store, get } = fixture();
+  const claim = await store.claimSync(1000);
+  await store.selectSource('99', 'Selected private chat');
+  await store.complete(claim.attemptId!, 'success', { sourcePeerId: '42', sourceChatTitle: 'Old', slots: [], syncedAt: new Date().toISOString() });
+  expect(get()).toMatchObject({ sourcePeerId: '99', status: 'idle', nextAttemptAt: 301000, slots: [] });
+  expect(get()).not.toHaveProperty('syncedAt');
+  expect((await store.claimSync(1001)).allowed).toBe(false);
+});
+
+it('exposes stale attempts as timed out without exposing claim IDs', async () => {
+  const { store } = fixture();
+  await store.claimSync(Date.now() - 61000);
+  const result = await store.readSnapshot();
+  expect(result.status).toBe('timeout');
+  expect(result).not.toHaveProperty('attemptId');
 });

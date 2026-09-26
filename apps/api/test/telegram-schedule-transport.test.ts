@@ -77,6 +77,15 @@ describe('Telegram schedule history transport', () => {
     connected();
     await vi.advanceTimersByTimeAsync(0);
     expect(client.getDialogs).not.toHaveBeenCalled();
-    expect(client.destroy).toHaveBeenCalledOnce();
+    expect(client.destroy).toHaveBeenCalledTimes(2);
   });
+});
+
+
+it('lists private chats alongside groups using stable IDs', async () => {
+  client.getDialogs.mockResolvedValue([dialog, { id: '99', title: 'Personal schedule' }]);
+  const result = await new TelegramAccountTransport().listScheduleChats(credentials, { session: '' });
+  expect(result.chats).toEqual([{ id: '-10042', title: dialog.title, kind: 'group' }, { id: '99', title: 'Personal schedule', kind: 'private' }]);
+  expect(client.getMessages).not.toHaveBeenCalled();
+  expect(client.destroy).toHaveBeenCalledOnce();
 });

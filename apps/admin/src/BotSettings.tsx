@@ -1,3 +1,4 @@
+import { GoogleCalendarSettings } from './GoogleCalendarSettings.js';
 import { TelegramAccountSettings } from './TelegramAccountSettings.js';
 import { HumanAssistanceSettings } from './HumanAssistanceSettings.js';
 import { Alert, Box, Button, Chip, Divider, Stack, TextField, Typography } from '@mui/material';
@@ -70,7 +71,7 @@ export const BotSettings = () => {
   };
 
   return <Stack spacing={2}>
-    {accessQuery.data?.canManage && <><TelegramAccountSettings /><Divider /></>}
+    {accessQuery.data?.canManage && <><GoogleCalendarSettings /><Divider /><TelegramAccountSettings /><Divider /></>}
     <HumanAssistanceSettings />
     <Divider />
     <Stack direction="row" alignItems="center" spacing={1}>

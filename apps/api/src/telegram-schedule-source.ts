@@ -20,11 +20,8 @@ const titleScore = (title: string) => {
 };
 
 export function findScheduleDialog<T extends ScheduleDialogCandidate>(dialogs: readonly T[], sourcePeerId?: string): T | undefined {
+  if (sourcePeerId) return dialogs.find((dialog) => peerId(dialog) === sourcePeerId);
   const groupDialogs = dialogs.filter((dialog) => dialog.isGroup || dialog.isChannel);
-  if (sourcePeerId) {
-    const bound = groupDialogs.find((dialog) => peerId(dialog) === sourcePeerId);
-    if (bound) return bound;
-  }
   const candidates = groupDialogs.map((dialog) => ({ dialog, score: titleScore(dialog.title ?? dialog.name ?? '') })).filter(({ score }) => score >= 2);
   if (!candidates.length) return undefined;
   candidates.sort((left, right) => right.score - left.score);

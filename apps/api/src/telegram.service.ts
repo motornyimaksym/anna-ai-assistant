@@ -10,6 +10,23 @@ import { HumanAssistanceService } from './human-assistance.service.js';
 import { TelegramScheduleImportService } from './telegram-schedule-import.service.js';
 const messageSchema = z.object({ message_id: z.number().int(), chat: z.object({ id: z.union([z.string(), z.number()]), type: z.string().optional() }), from: z.object({ id: z.union([z.string(), z.number()]), username: z.string().optional(), is_bot: z.boolean().optional() }).optional(), text: z.string().optional(), business_connection_id: z.string().optional() });
 const updateSchema = z.object({ update_id: z.number().int(), business_message: messageSchema.optional(), message: messageSchema.optional() });
+const escapeHtml = (value: string) => value.replace(/&(?!(?:amp|lt|gt|quot|#39|#\d+|#x[\da-f]+);)/gi, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+export const formatTelegramHtml = (value: string): string => {
+  const markdown = value.replace(/\*\*([^*\n]+)\*\*|__([^_\n]+)__/g, (_match, a: string | undefined, b: string | undefined) => `<b>${a ?? b}</b>`).replace(/\*\*|__/g, '').replace(/[—–]/g, '-');
+  let result = ''; let openTag: 'b' | 'i' | 'code' | undefined; let cursor = 0;
+  const token = /<\/?(?:b|i|code)>/gi;
+  for (const match of markdown.matchAll(token)) {
+    const index = match.index!; const rawTag = match[0]!;
+    result += escapeHtml(markdown.slice(cursor, index)); cursor = index + rawTag.length;
+    const closing = rawTag.startsWith('</'); const tag = rawTag.replace(/[</>]/g, '').toLowerCase() as 'b' | 'i' | 'code';
+    if (closing && openTag === tag) { result += `</${tag}>`; openTag = undefined; }
+    else if (!closing && !openTag) { result += `<${tag}>`; openTag = tag; }
+    else result += escapeHtml(rawTag);
+  }
+  result += escapeHtml(markdown.slice(cursor));
+  if (openTag) result += `</${openTag}>`;
+  return result;
+};
 @Injectable()
 export class TelegramService {
   private readonly logger = new Logger(TelegramService.name);
@@ -77,7 +94,7 @@ export class TelegramService {
     try {
       const answer = await this.assistant.respond(conversation, { clientId: String(message.from!.id), telegramChatId: chatId, businessConnectionId: message.business_connection_id }, message.text);
       if (answer.fromOpenAI) await waitForResponsePacing(answer.text, settings.typingDelayPerSymbolMs);
-      reply = answer.text;
+      reply = answer.fromOpenAI ? formatTelegramHtml(answer.text) : answer.text;
       if (answer.fromOpenAI) parseMode = 'HTML';
     } finally {
       stopTyping();

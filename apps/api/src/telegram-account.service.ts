@@ -27,6 +27,18 @@ export class TelegramAccountService {
     const record = await this.store.read();
     return record.phase === 'connected' && !!record.encrypted;
   }
+  async listScheduleChats() {
+    const config = this.config();
+    if (!config) throw new ServiceUnavailableException('Telegram account is not configured.');
+    const lease = await this.store.acquire();
+    try {
+      if (lease.record.phase !== 'connected' || !lease.record.encrypted) throw new ServiceUnavailableException('Connect the Telegram account first.');
+      return await this.transport.listScheduleChats(config, decryptSession(lease.record.encrypted, config.key));
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException) throw error;
+      throw new ServiceUnavailableException('Could not list Telegram chats. Check the connection and try again.');
+    } finally { await this.store.finish(lease.id, lease.record); }
+  }
   async readScheduleMessages(sourcePeerId?: string): Promise<Omit<ScheduleHistoryResult, 'session'> | undefined> {
     const config = this.config();
     if (!config) return undefined;

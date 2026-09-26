@@ -1,15 +1,38 @@
 import { Injectable } from '@nestjs/common';
+import { z } from 'zod';
 import type { BookingDto } from '@booking/contracts';
-import { loadBackendRuntimeEnv } from '@booking/config';
+import { GoogleCalendarConnection } from './google-calendar.connection.js';
 export type BusyInterval = { start: string; end: string };
 @Injectable()
 export class CalendarService {
-  private readonly env = loadBackendRuntimeEnv(process.env);
-  isConfigured(): boolean { return Boolean(this.env.GOOGLE_CLIENT_ID && this.env.GOOGLE_CLIENT_SECRET && this.env.GOOGLE_REFRESH_TOKEN && this.env.GOOGLE_CALENDAR_ID); }
-  private async token(): Promise<string> { if (!this.isConfigured()) throw new Error('Google Calendar is not configured'); const response = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: this.env.GOOGLE_CLIENT_ID!, client_secret: this.env.GOOGLE_CLIENT_SECRET!, refresh_token: this.env.GOOGLE_REFRESH_TOKEN!, grant_type: 'refresh_token' }) }); const data = await response.json() as { access_token?: string }; if (!response.ok || !data.access_token) throw new Error('Google OAuth refresh failed'); return data.access_token; }
-  private async request(path: string, init: RequestInit): Promise<Response> { const token = await this.token(); const response = await fetch(`https://www.googleapis.com/calendar/v3${path}`, { ...init, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...init.headers } }); if (!response.ok) throw new Error(`Google Calendar request failed (${response.status})`); return response; }
-  async getBusyIntervals(start: string, end: string): Promise<BusyInterval[]> { if (!this.isConfigured()) return []; const response = await this.request('/freeBusy', { method: 'POST', body: JSON.stringify({ timeMin: start, timeMax: end, items: [{ id: this.env.GOOGLE_CALENDAR_ID }] }) }); const data = await response.json() as { calendars?: Record<string, { busy?: BusyInterval[] }> }; return data.calendars?.[this.env.GOOGLE_CALENDAR_ID!]?.busy ?? []; }
-  async createBookingEvent(booking: BookingDto): Promise<string> { const response = await this.request(`/calendars/${encodeURIComponent(this.env.GOOGLE_CALENDAR_ID!)}/events`, { method: 'POST', body: JSON.stringify({ summary: `Massage: ${booking.serviceId}`, description: `Booking ID: ${booking.id}\nTelegram chat: ${booking.telegramChatId}`, start: { dateTime: booking.startAt }, end: { dateTime: booking.endAt } }) }); const data = await response.json() as { id?: string }; if (!data.id) throw new Error('Google Calendar did not return an event ID'); return data.id; }
-  async updateBookingEvent(booking: BookingDto): Promise<void> { if (!booking.googleCalendarEventId || !this.isConfigured()) return; await this.request(`/calendars/${encodeURIComponent(this.env.GOOGLE_CALENDAR_ID!)}/events/${encodeURIComponent(booking.googleCalendarEventId)}`, { method: 'PATCH', body: JSON.stringify({ start: { dateTime: booking.startAt }, end: { dateTime: booking.endAt } }) }); }
-  async deleteBookingEvent(eventId: string): Promise<void> { if (!this.isConfigured()) return; await this.request(`/calendars/${encodeURIComponent(this.env.GOOGLE_CALENDAR_ID!)}/events/${encodeURIComponent(eventId)}`, { method: 'DELETE' }); }
+  constructor(private readonly connection: GoogleCalendarConnection) {}
+  async isConfigured(): Promise<boolean> { return !!(await this.connection.credentials())?.calendarId; }
+  async getBusyIntervals(start: string, end: string): Promise<BusyInterval[]> {
+    const credentials = await this.connection.credentials();
+    if (!credentials?.calendarId) return [];
+    const response = await this.connection.request(credentials, '/freeBusy', { method: 'POST', body: JSON.stringify({ timeMin: start, timeMax: end, items: [{ id: credentials.calendarId }] }) });
+    const data = z.object({ calendars: z.record(z.object({ busy: z.array(z.object({ start: z.string().datetime({ offset: true }), end: z.string().datetime({ offset: true }) })).optional(), errors: z.array(z.unknown()).optional() })) }).parse(await response.json());
+    const calendar = data.calendars[credentials.calendarId];
+    if (!calendar?.busy || calendar.errors?.length) throw new Error('Google Calendar availability could not be read');
+    return calendar.busy;
+  }
+  async createBookingEvent(booking: BookingDto): Promise<{ eventId: string; calendarId: string }> {
+    const credentials = await this.connection.credentials();
+    if (!credentials?.calendarId) throw new Error('Google Calendar is not configured');
+    const response = await this.connection.request(credentials, `/calendars/${encodeURIComponent(credentials.calendarId)}/events`, { method: 'POST', body: JSON.stringify({ summary: `Massage: ${booking.serviceId}`, description: `Booking ID: ${booking.id}\nTelegram chat: ${booking.telegramChatId}`, start: { dateTime: booking.startAt }, end: { dateTime: booking.endAt } }) });
+    const data = z.object({ id: z.string().min(1) }).parse(await response.json());
+    return { eventId: data.id, calendarId: credentials.calendarId };
+  }
+  async updateBookingEvent(booking: BookingDto): Promise<void> {
+    const credentials = await this.connection.credentials();
+    const calendarId = booking.googleCalendarId ?? credentials?.calendarId;
+    if (!credentials || !calendarId || !booking.googleCalendarEventId) throw new Error('Google Calendar event is unavailable');
+    await this.connection.request(credentials, `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(booking.googleCalendarEventId)}`, { method: 'PATCH', body: JSON.stringify({ start: { dateTime: booking.startAt }, end: { dateTime: booking.endAt } }) });
+  }
+  async deleteBookingEvent(eventId: string, originalCalendarId?: string): Promise<void> {
+    const credentials = await this.connection.credentials();
+    const calendarId = originalCalendarId ?? credentials?.calendarId;
+    if (!credentials || !calendarId) throw new Error('Google Calendar is not configured');
+    await this.connection.request(credentials, `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, { method: 'DELETE' });
+  }
 }

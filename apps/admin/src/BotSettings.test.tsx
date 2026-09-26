@@ -85,3 +85,5 @@ describe('admin bot settings page', () => {
     expect(screen.queryByRole('button', { name: 'Save stakeholder access' })).toBeNull();
   });
 });
+
+vi.mock('./GoogleCalendarSettings.js', () => ({ GoogleCalendarSettings: () => <div>Calendar owner settings</div> }));

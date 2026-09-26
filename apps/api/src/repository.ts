@@ -133,8 +133,8 @@ export class BookingRepository {
       return bookingSchema.parse(changed);
     });
   }
-  async setCalendarSync(id: string, status: BookingDto['calendarSyncStatus'], eventId?: string): Promise<void> {
-    await this.db.collection('bookings').doc(id).update(withoutUndefined({ calendarSyncStatus: status, googleCalendarEventId: eventId, updatedAt: new Date().toISOString() }));
+  async setCalendarSync(id: string, status: BookingDto['calendarSyncStatus'], eventId?: string, calendarId?: string): Promise<void> {
+    await this.db.collection('bookings').doc(id).update(withoutUndefined({ calendarSyncStatus: status, googleCalendarEventId: eventId, googleCalendarId: calendarId, updatedAt: new Date().toISOString() }));
   }
   async listLockedIntervals(excludeBookingId?: string): Promise<{ start: string; end: string }[]> {
     const snapshot = await this.db.collection('bookings').get();
