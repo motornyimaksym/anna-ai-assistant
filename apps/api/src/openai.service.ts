@@ -3,7 +3,7 @@ import { selectServiceOption } from './service-options.js';
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { type ConversationDto } from '@booking/contracts';
-import { ASSISTANT_SYSTEM_PROMPT, TELEGRAM_FORMAT_GUIDANCE } from './assistant-prompt.js';
+import { ASSISTANT_SYSTEM_PROMPT, TELEGRAM_FORMAT_GUIDANCE, THERAPIST_FIRST_PERSON_GUIDANCE } from './assistant-prompt.js';
 import { DEFAULT_KNOWLEDGE_BASE } from './default-knowledge-base.js';
 import { AssistantToolsService, assistantToolSchema, type AssistantContext } from './assistant-tools.service.js';
 import { BookingRepository } from './repository.js';
@@ -57,7 +57,7 @@ export class OpenAiService {
       this.repository.getKnowledgeBaseOverride(),
       this.repository.listServices(),
     ]);
-    const systemPrompt = promptOverride?.prompt ? `${promptOverride.prompt}\n\n${TELEGRAM_FORMAT_GUIDANCE}` : ASSISTANT_SYSTEM_PROMPT;
+    const systemPrompt = promptOverride?.prompt ? `${promptOverride.prompt}\n\n${THERAPIST_FIRST_PERSON_GUIDANCE}\n\n${TELEGRAM_FORMAT_GUIDANCE}` : ASSISTANT_SYSTEM_PROMPT;
     const businessFacts = JSON.stringify({
       additionalKnowledge: knowledgeBaseOverride?.content ?? DEFAULT_KNOWLEDGE_BASE,
       currentEnabledServices: configuredServices.filter((service) => service.enabled).map(({ id, name, description, durationMinutes, durationOptions, price, currency }) => ({ id, name, description, durationMinutes, ...(durationOptions ? { durationOptions } : {}), price, currency })),

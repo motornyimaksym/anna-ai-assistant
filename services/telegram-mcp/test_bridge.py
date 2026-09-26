@@ -53,6 +53,16 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json(), {"text": "Fixture chat history"})
 
+    def test_bridge_logs_only_safe_failure_stage_and_type(self):
+        with patch("bridge.stdio_client", side_effect=RuntimeError("private session detail")):
+            with self.assertLogs("telegram-mcp-bridge", level="ERROR") as captured:
+                response = TestClient(app).post("/call", json={"name": "get_chats", "arguments": {}, "session": gramjs(), "api_id": 123, "api_hash": "a" * 32})
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json(), {"error": "Telegram operation could not be verified"})
+        self.assertIn("stage=mcp_stdio", captured.output[0])
+        self.assertIn("error_type=RuntimeError", captured.output[0])
+        self.assertNotIn("private session detail", captured.output[0])
+
     def test_real_upstream_import_registers_only_allowed_mcp_tools(self):
         env = {**os.environ, "TELEGRAM_API_ID": "123", "TELEGRAM_API_HASH": "a" * 32, "TELEGRAM_SESSION_STRING": telethon_session(gramjs()), "TELEGRAM_TRANSCRIBE": "off"}
         result = subprocess.run([sys.executable, "-c", "import runner; print(','.join(sorted(t.name for t in runner.runtime.mcp._tool_manager.list_tools())))"], cwd=Path(__file__).parent, env=env, capture_output=True, text=True, timeout=20)

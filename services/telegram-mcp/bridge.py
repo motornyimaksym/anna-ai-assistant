@@ -1,5 +1,6 @@
 """Private Cloud Run bridge. Invocation is restricted by Cloud Run IAM."""
 import asyncio
+import logging
 import os
 import sys
 import tempfile
@@ -15,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from session import telethon_session
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+logger = logging.getLogger("telegram-mcp-bridge")
 
 
 class Call(BaseModel):
@@ -62,8 +64,10 @@ async def invalid_request(_request, _error):
 
 @app.post("/call")
 async def call(request: Call):
+    stage = "arguments"
     try:
         arguments = validate_arguments(request.name, request.arguments)
+        stage = "session_conversion"
         session = telethon_session(request.session)
         with tempfile.TemporaryDirectory(prefix="telegram-mcp-") as directory, open(os.devnull, "w") as errors:
             env = {
@@ -73,10 +77,13 @@ async def call(request: Call):
                 "PYTHONDONTWRITEBYTECODE": "1",
             }
             server = StdioServerParameters(command=sys.executable, args=[str(Path(__file__).with_name("runner.py"))], env=env, cwd=directory)
+            stage = "mcp_stdio"
             async with asyncio.timeout(30):
                 async with stdio_client(server, errlog=errors) as (read, write):
                     async with ClientSession(read, write) as client:
+                        stage = "mcp_initialize"
                         await client.initialize()
+                        stage = "mcp_tool"
                         result = await client.call_tool(request.name, arguments)
                         if result.isError:
                             raise RuntimeError("Tool failed")
@@ -85,5 +92,6 @@ async def call(request: Call):
                             # Avoid silently truncated JSON/metadata and ask for smaller reads.
                             return JSONResponse({"error": "Result too large; request fewer messages"}, status_code=422)
                         return {"text": text}
-    except Exception:
+    except Exception as error:
+        logger.error("Telegram MCP bridge failed: stage=%s error_type=%s", stage, type(error).__name__)
         return JSONResponse({"error": "Telegram operation could not be verified"}, status_code=502)

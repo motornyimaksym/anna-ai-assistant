@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OpenAiService } from '../src/openai.service.js';
+import { THERAPIST_FIRST_PERSON_GUIDANCE } from '../src/assistant-prompt.js';
 import { DEFAULT_KNOWLEDGE_BASE } from '../src/default-knowledge-base.js';
 import type { AssistantToolsService } from '../src/assistant-tools.service.js';
 import type { BookingRepository } from '../src/repository.js';
@@ -39,6 +40,7 @@ describe('OpenAI conversation', () => {
     await service.respond(conversation, context, 'Hi');
     const instructions = JSON.parse(fetch.mock.calls[0]![1]!.body as string).instructions as string;
     expect(instructions).toContain('Speak only in short sentences.');
+    expect(instructions).toContain(THERAPIST_FIRST_PERSON_GUIDANCE);
     expect(instructions).toContain('TELEGRAM FORMATTING');
     expect(instructions).toContain('Never use Markdown markers');
   });
@@ -49,6 +51,7 @@ describe('OpenAI conversation', () => {
     await service.respond(conversation, context, 'Hi');
     const instructions = JSON.parse(fetch.mock.calls[0]![1]!.body as string).instructions as string;
     expect(instructions).toContain('TELEGRAM FORMATTING');
+    expect(instructions).toContain(THERAPIST_FIRST_PERSON_GUIDANCE);
     expect(instructions).toContain('<b>');
     expect(instructions).toContain('&amp;, &lt;, and &gt;');
     expect(instructions).toContain('Never use Markdown markers');
@@ -78,7 +81,13 @@ describe('OpenAI conversation', () => {
     await service.respond(conversation, context, 'Hi');
     const request = JSON.parse(fetch.mock.calls[0]![1]!.body as string);
     const match = request.instructions.match(/Business knowledge base JSON: (.*)\nServices may/);
-    expect(JSON.parse(match![1]).additionalKnowledge).toBe(DEFAULT_KNOWLEDGE_BASE);
+    const knowledge = JSON.parse(match![1]).additionalKnowledge as string;
+    expect(knowledge).toBe(DEFAULT_KNOWLEDGE_BASE);
+    expect(knowledge).toContain('Для мене «вихідний» — календарний день, який я позначила вихідним у робочому графіку.');
+    expect(knowledge).toContain('Субота чи неділя самі по собі не є вихідними.');
+    expect(knowledge).toContain('якщо в мене є вільний час і я готова його прийняти');
+    expect(knowledge).toContain('я передплату не беру');
+    expect(knowledge).not.toContain('терапевт');
   });
 
   it('stages mutation without executing and consumes it only on explicit confirmation', async () => {

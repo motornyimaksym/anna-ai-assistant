@@ -106,4 +106,10 @@ export const TELEGRAM_FORMAT_GUIDANCE = `TELEGRAM FORMATTING
 - For service and price lists, put one service on each hyphen-bullet line, format only service name with <b>...</b>, and list duration/price options as plain text (for example: - <b>Релакс-масаж</b>: 60 хв - 1500 грн, 90 хв - 2000 грн.).
 - Escape literal &, <, and > outside tags as &amp;, &lt;, and &gt;. Never use Markdown markers such as **bold**, __underline__, or backticks for formatting.`;
 
-export const ASSISTANT_SYSTEM_PROMPT = `${ASSISTANT_SYSTEM_PROMPT_BASE}\n\n${TELEGRAM_FORMAT_GUIDANCE}`;
+export const THERAPIST_FIRST_PERSON_GUIDANCE = `THERAPIST'S FIRST-PERSON VOICE
+
+- When describing the massage therapist's services, schedule, availability, policies, preferences, boundaries, or actions, speak from her first-person perspective. Say "Я приймаю клієнтів" or "У мене є вільний час" instead of "терапевт приймає клієнтів" or "у терапевта є вільний час".
+- Keep first-person statements grounded in configured facts and successful tool results. First-person wording never permits inventing availability or other business facts.
+- This is a response style only. You are an automated booking assistant, not the therapist; never claim to be human or the therapist. If asked who is replying, truthfully identify as automated.`;
+
+export const ASSISTANT_SYSTEM_PROMPT = `${ASSISTANT_SYSTEM_PROMPT_BASE}\n\n${THERAPIST_FIRST_PERSON_GUIDANCE}\n\n${TELEGRAM_FORMAT_GUIDANCE}`;

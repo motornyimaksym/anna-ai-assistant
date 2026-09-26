@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ServiceUnavailableException } from '@nestjs/common';
 import { AiChatService } from '../src/ai-chat.service.js';
 import { aiChatThreadSchema } from '@booking/contracts';
 import type { StoredThread } from '../src/ai-chat.store.js';
@@ -29,6 +30,15 @@ describe('isolated AI conversation', () => {
     const body = request.mock.calls[0]![0];
     expect(body.tools.map((tool: { name: string }) => tool.name)).toEqual(['get_chats', 'get_chat', 'get_messages', 'search_messages', 'send_message', 'reply_to_message']);
     expect(body.instructions).not.toContain('MEDIA STORE');
+  });
+  it('returns safe connection guidance when a Telegram read fails', async () => {
+    request.mockResolvedValueOnce(output('get_chats', {}));
+    const f = fixture();
+    f.telegram.call.mockRejectedValueOnce(new ServiceUnavailableException('private provider detail'));
+    const result = await f.service.message('owner', id, 'Find my chats');
+    expect(request).toHaveBeenCalledOnce();
+    expect(result.messages.at(-1)?.text).toContain('Check connection');
+    expect(result.messages.at(-1)?.text).not.toContain('private provider detail');
   });
   it('proposes without sending, then consumes exact action before one confirmed send', async () => {
     request.mockResolvedValueOnce(output('send_message', { chat_id: '-10042', message: 'Hello team' }));
