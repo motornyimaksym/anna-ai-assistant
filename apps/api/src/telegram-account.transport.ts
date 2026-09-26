@@ -1,4 +1,4 @@
-import type { TelegramScheduleChats } from '@booking/contracts';
+import type { TelegramScheduleChats, TelegramScheduleTopics } from '@booking/contracts';
 import { Injectable } from '@nestjs/common';
 import { Api, TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
@@ -11,17 +11,58 @@ export type TelegramOperation = 'start' | 'code' | 'password' | 'check' | 'disco
 export type TransportResult = { session: string; phoneCodeHash?: string; passwordNeeded?: boolean; username?: string; phone?: string };
 export type TelegramCredentials = { apiId: number; apiHash: string };
 export type ScheduleMessage = { messageId: string; text: string; createdAt: string };
-export type ScheduleHistoryResult = { session: string; sourcePeerId: string; sourceChatTitle: string; slots: ScheduleMessage[] };
+export type ScheduleHistoryResult = { session: string; sourcePeerId: string; sourceChatTitle: string; sourceTopicId?: number; sourceTopicTitle?: string; slots: ScheduleMessage[] };
+const topicTitle = (topic: Api.ForumTopic) => (topic.title.trim() || `Telegram topic ${topic.id}`).slice(0, 255);
+const displayTitle = (dialog: { title?: string; name?: string }, peerId: string): string =>
+  (dialog.title?.trim() || dialog.name?.trim() || `Telegram chat ${peerId}`).slice(0, 255);
 @Injectable()
 export class TelegramAccountTransport {
   async listScheduleChats(credentials: TelegramCredentials, payload: SessionPayload): Promise<TelegramScheduleChats> {
     return this.withScheduleClient(credentials, payload, async (client) => {
       const dialogs = await client.getDialogs({ limit: 1000 });
       return { chats: dialogs.filter((dialog) => !!dialog.id).map((dialog) => ({
-        id: dialog.id!.toString(), title: (dialog.title ?? dialog.name ?? 'Telegram chat').slice(0, 255),
+        id: dialog.id!.toString(), title: displayTitle(dialog, dialog.id!.toString()),
+        ...(dialog.entity instanceof Api.Channel && dialog.entity.forum ? { isForum: true } : {}),
         kind: dialog.isGroup ? 'group' as const : dialog.isChannel ? 'channel' as const : 'private' as const,
       })), truncated: dialogs.length >= 1000 };
     });
+  }
+
+  async listScheduleTopics(credentials: TelegramCredentials, payload: SessionPayload, chatId: string, q?: string, topicId?: number): Promise<TelegramScheduleTopics> {
+    return this.withScheduleClient(credentials, payload, async (client) => {
+      const dialogs = await client.getDialogs({ limit: 1000 });
+      const dialog = findScheduleDialog(dialogs, chatId);
+      if (!dialog?.inputEntity || !(dialog.entity instanceof Api.Channel) || !dialog.entity.forum) return { topics: [], truncated: false };
+      const result = topicId !== undefined
+        ? await client.invoke(new Api.channels.GetForumTopicsByID({ channel: dialog.inputEntity, topics: [topicId] }))
+        : await client.invoke(new Api.channels.GetForumTopics({ channel: dialog.inputEntity, q: q || undefined, offsetDate: 0, offsetId: 0, offsetTopic: 0, limit: 100 }));
+      const topics = result.topics.filter((topic): topic is Api.ForumTopic => topic instanceof Api.ForumTopic)
+        .filter((topic) => topicId === undefined || topic.id === topicId)
+        .slice(0, 100).map((topic) => ({ id: topic.id, title: topicTitle(topic) }));
+      return { topics, truncated: topicId === undefined && result.count > topics.length };
+    });
+  }
+
+  private async generalHistory(client: TelegramClient, peer: Api.TypeInputPeer): Promise<Api.TypeMessage[]> {
+    const history: Api.TypeMessage[] = [];
+    let offsetId = 0;
+    for (let page = 0; page < 10; page++) {
+      const messages = await client.getMessages(peer, { limit: 100, offsetId });
+      if (!messages.length) return history;
+      for (const message of messages) {
+        if (message instanceof Api.MessageEmpty) continue;
+        const reply = message.replyTo;
+        const topic = reply instanceof Api.MessageReplyHeader && reply.forumTopic ? (reply.replyToTopId ?? reply.replyToMsgId) : 1;
+        const createsTopic = message.action instanceof Api.MessageActionTopicCreate;
+        if (topic === 1 && !createsTopic) history.push(message);
+        if (history.length === 5) return history;
+      }
+      const next = messages[messages.length - 1]!.id;
+      if (next <= 0 || (offsetId && next >= offsetId)) throw new Error('TELEGRAM_HISTORY_LIMIT');
+      offsetId = next;
+      if (messages.length < 100) return history;
+    }
+    throw new Error('TELEGRAM_HISTORY_LIMIT');
   }
 
   private async withScheduleClient<T>(credentials: TelegramCredentials, payload: SessionPayload, operation: (client: TelegramClient, session: StringSession) => Promise<T>): Promise<T> {
@@ -51,17 +92,30 @@ export class TelegramAccountTransport {
     }
   }
 
-  async readScheduleMessages(credentials: TelegramCredentials, payload: SessionPayload, sourcePeerId?: string): Promise<ScheduleHistoryResult | undefined> {
+  async readScheduleMessages(credentials: TelegramCredentials, payload: SessionPayload, sourcePeerId?: string, sourceTopicId?: number): Promise<ScheduleHistoryResult | undefined> {
     return this.withScheduleClient(credentials, payload, async (client, session) => {
       const dialogs = await client.getDialogs({ limit: 1000 });
       const dialog = findScheduleDialog(dialogs, sourcePeerId);
       if (!dialog?.inputEntity || !dialog.id) return undefined;
-      const history = await client.getMessages(dialog.inputEntity, { limit: 5 });
+      let topic: Api.ForumTopic | undefined;
+      if (sourceTopicId !== undefined) {
+        if (!sourcePeerId || !(dialog.entity instanceof Api.Channel) || !dialog.entity.forum) return undefined;
+        try {
+          const result = await client.invoke(new Api.channels.GetForumTopicsByID({ channel: dialog.inputEntity, topics: [sourceTopicId] }));
+          topic = result.topics.find((candidate): candidate is Api.ForumTopic => candidate instanceof Api.ForumTopic && candidate.id === sourceTopicId);
+          if (!topic) return undefined;
+        } catch (error) {
+          if (['TOPIC_DELETED', 'TOPIC_ID_INVALID', 'CHANNEL_PRIVATE', 'CHANNEL_INVALID'].includes((error as { errorMessage?: string }).errorMessage ?? '')) return undefined;
+          throw error;
+        }
+      }
+      const history = sourceTopicId === 1 ? await this.generalHistory(client, dialog.inputEntity)
+        : await client.getMessages(dialog.inputEntity, { limit: 5, ...(sourceTopicId !== undefined ? { replyTo: sourceTopicId } : {}) });
       const slots = history
         .filter((message): message is Api.Message => message instanceof Api.Message && !!message.message?.trim())
         .map((message) => ({ messageId: String(message.id), text: message.message.slice(0, 4_000), createdAt: new Date(message.date * 1000).toISOString() }))
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-      return { session: session.save(), sourcePeerId: dialog.id.toString(), sourceChatTitle: dialog.title ?? dialog.name ?? 'Telegram chat', slots };
+      return { session: session.save(), sourcePeerId: dialog.id.toString(), sourceChatTitle: displayTitle(dialog, dialog.id.toString()), ...(topic ? { sourceTopicId: topic.id, sourceTopicTitle: topicTitle(topic) } : {}), slots };
     });
   }
 

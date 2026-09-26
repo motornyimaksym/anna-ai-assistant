@@ -18,7 +18,7 @@ const fixture = () => {
     }),
     finish: vi.fn(async (_id: string, next: AccountRecord) => { record = next; leased = false; }),
   };
-  const transport = { execute: vi.fn(), readScheduleMessages: vi.fn() };
+  const transport = { listScheduleTopics: vi.fn(), execute: vi.fn(), readScheduleMessages: vi.fn() };
   const service = new TelegramAccountService(store as unknown as TelegramAccountStore, transport as unknown as TelegramAccountTransport);
   return { service, store, transport, get: () => record, set: (value: AccountRecord) => { record = value; } };
 };
@@ -105,9 +105,28 @@ describe('Telegram account login', () => {
 
     await expect(service.readScheduleMessages('42')).resolves.toEqual({ sourcePeerId: '42', sourceChatTitle: 'Календар та планування часу', slots: [] });
     expect(transport.readScheduleMessages).toHaveBeenCalledWith(
-      expect.objectContaining({ apiId: 123456, apiHash: 'a'.repeat(32) }), { session: 'authorized' }, '42',
+      expect.objectContaining({ apiId: 123456, apiHash: 'a'.repeat(32) }), { session: 'authorized' }, '42', undefined,
     );
     expect(decryptSession(get().encrypted!, key)).toEqual({ session: 'refreshed-session' });
     expect(get().leaseId).toBeUndefined();
   });
+});
+
+it('lists topics under the account lease and releases it after safe failures', async () => {
+  const { service, transport, set, store } = fixture();
+  set({ phase: 'connected', encrypted: encryptSession({ session: 'authorized' }, key) });
+  transport.listScheduleTopics.mockResolvedValueOnce({ topics: [{ id: 42, title: 'Topic' }], truncated: false });
+  expect(await service.listScheduleTopics('-10042', 'Topic')).toMatchObject({ topics: [{ id: 42 }] });
+  expect(store.finish).toHaveBeenCalledOnce();
+  transport.listScheduleTopics.mockRejectedValueOnce(new Error('secret provider details'));
+  await expect(service.listScheduleTopics('-10042')).rejects.toThrow('Could not load Telegram topics');
+  expect(store.finish).toHaveBeenCalledTimes(2);
+});
+
+it('preserves verified topic metadata while refreshing the encrypted session', async () => {
+  const { service, transport, set } = fixture();
+  set({ phase: 'connected', encrypted: encryptSession({ session: 'authorized' }, key) });
+  transport.readScheduleMessages.mockResolvedValue({ session: 'updated', sourcePeerId: '-10042', sourceChatTitle: 'Forum', sourceTopicId: 42, sourceTopicTitle: 'Topic', slots: [] });
+  expect(await service.readScheduleMessages('-10042', 42)).toEqual({ sourcePeerId: '-10042', sourceChatTitle: 'Forum', sourceTopicId: 42, sourceTopicTitle: 'Topic', slots: [] });
+  expect(transport.readScheduleMessages).toHaveBeenCalledWith(expect.anything(), { session: 'authorized' }, '-10042', 42);
 });

@@ -64,3 +64,43 @@ it('exposes stale attempts as timed out without exposing claim IDs', async () =>
   expect(result.status).toBe('timeout');
   expect(result).not.toHaveProperty('attemptId');
 });
+
+it('binds topics, invalidates same-group stale results, and removes topics for whole-chat sources', async () => {
+  const { store, get } = fixture();
+  await store.selectSource('-10042', 'Forum', { id: 42, title: 'Old topic' });
+  const claim = await store.claimSync(1000);
+  expect(claim.sourceTopicId).toBe(42);
+  await store.selectSource('-10042', 'Forum', { id: 99, title: 'New topic' });
+  await store.complete(claim.attemptId!, 'success', { sourcePeerId: '-10042', sourceChatTitle: 'Forum', sourceTopicId: 42, sourceTopicTitle: 'Old topic', slots: [], syncedAt: new Date().toISOString() });
+  expect(await store.readSnapshot()).toMatchObject({ sourceTopicId: 99, sourceTopicTitle: 'New topic', status: 'idle' });
+  expect(get()?.nextAttemptAt).toBe(301000);
+  await store.selectSource('-10042', 'Forum');
+  expect(get()).not.toHaveProperty('sourceTopicId');
+  expect(get()).not.toHaveProperty('sourceTopicTitle');
+});
+
+it('allows manual refresh after failure during cooldown, while serializing runs and retaining cooldown after success', async () => {
+  const { store, get, set } = fixture();
+  set({ status: 'connection_failed', nextAttemptAt: 301_000, sourcePeerId: '42' });
+  const claim = await store.claimManualSync(2_000);
+  expect(claim).toMatchObject({ allowed: true, sourcePeerId: '42', runId: expect.any(String), attemptId: expect.any(String) });
+  expect(get()).toMatchObject({ status: 'syncing', manualRetryRunId: claim.runId, manualRetryUntil: 302_000, nextAttemptAt: 302_000 });
+  await expect(store.claimManualSync(2_001)).resolves.toMatchObject({ allowed: false });
+  await store.complete(claim.attemptId!, 'account_busy');
+  const retry = await store.claimManualRetry(claim.runId!, 12_000);
+  expect(retry).toMatchObject({ allowed: true, attemptId: expect.any(String), sourcePeerId: '42' });
+  await store.complete(retry.attemptId!, 'success', { sourcePeerId: '42', sourceChatTitle: 'Calendar', slots: [], syncedAt: new Date(12_000).toISOString() });
+  await store.finishManualRetryRun(claim.runId!, 13_000);
+  expect(get()).toMatchObject({ status: 'success', nextAttemptAt: 312_000, manualRetryRunId: '', manualRetryUntil: 13_000 });
+  expect((await store.claimManualSync(13_001)).allowed).toBe(false);
+});
+
+it('keeps successful refreshes on cooldown and rejects retry claims after a run ends or source changes', async () => {
+  const { store, set } = fixture();
+  set({ status: 'success', nextAttemptAt: 300_000, sourcePeerId: '42' });
+  expect((await store.claimManualSync(1_000)).allowed).toBe(false);
+  set({ status: 'timeout', nextAttemptAt: 300_000, sourcePeerId: '42' });
+  const claim = await store.claimManualSync(1_000);
+  await store.selectSource('99', 'New source');
+  expect((await store.claimManualRetry(claim.runId!, 2_000)).allowed).toBe(false);
+});

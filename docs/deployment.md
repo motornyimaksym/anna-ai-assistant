@@ -58,7 +58,7 @@ The Python MCP bridge must be provisioned separately before Telegram tools work;
 
 If a workspace read fails, open Bot Settings → Telegram account and use Check connection. A persisted `connected` phase does not verify that Telegram still accepts the session. Bridge logs include only failure stage and exception class; they exclude session material, request arguments, and Telegram content.
 
-Schedule source setup: in Bot Settings → Telegram account → Schedule source, choose Load Telegram chats, select the intended title/type/ID, and save. Then use Refresh now there or on `/schedule`. Manual refresh and incoming-message attempts share a five-minute cooldown, including failures. Source selection is owner-only; existing admins can view diagnostics and request refresh. A saved source never silently falls back to a similarly named chat.
+Schedule source setup: in Bot Settings → Telegram account → Schedule source, choose Load Telegram chats, select the intended title/type/ID, then choose Whole chat or an inner topic for forum groups, and save. Use Search topics if the initial topic list is truncated. Topic selection requires deploying both API and Hosting. Then use Refresh now there or on `/schedule`. Manual refresh and incoming-message attempts share a five-minute cooldown, including failures. Source selection is owner-only; existing admins can view diagnostics and request refresh. A saved source never silently falls back to a similarly named chat.
 
 ## Calendar authorization from the admin panel
 

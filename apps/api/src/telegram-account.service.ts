@@ -39,7 +39,19 @@ export class TelegramAccountService {
       throw new ServiceUnavailableException('Could not list Telegram chats. Check the connection and try again.');
     } finally { await this.store.finish(lease.id, lease.record); }
   }
-  async readScheduleMessages(sourcePeerId?: string): Promise<Omit<ScheduleHistoryResult, 'session'> | undefined> {
+  async listScheduleTopics(chatId: string, q?: string, topicId?: number) {
+    const config = this.config();
+    if (!config) throw new ServiceUnavailableException('Telegram account is not configured.');
+    const lease = await this.store.acquire();
+    try {
+      if (lease.record.phase !== 'connected' || !lease.record.encrypted) throw new ServiceUnavailableException('Connect the Telegram account first.');
+      return await this.transport.listScheduleTopics(config, decryptSession(lease.record.encrypted, config.key), chatId, q, topicId);
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException) throw error;
+      throw new ServiceUnavailableException('Could not load Telegram topics. Reload the chats and try again.');
+    } finally { await this.store.finish(lease.id, lease.record); }
+  }
+  async readScheduleMessages(sourcePeerId?: string, sourceTopicId?: number): Promise<Omit<ScheduleHistoryResult, 'session'> | undefined> {
     const config = this.config();
     if (!config) return undefined;
     const lease = await this.store.acquire();
@@ -47,10 +59,10 @@ export class TelegramAccountService {
     try {
       if (record.phase !== 'connected' || !record.encrypted) return undefined;
       const payload = decryptSession(record.encrypted, config.key);
-      const result = await this.transport.readScheduleMessages(config, payload, sourcePeerId);
+      const result = await this.transport.readScheduleMessages(config, payload, sourcePeerId, sourceTopicId);
       if (!result) return undefined;
       record.encrypted = encryptSession({ session: result.session }, config.key);
-      return { sourcePeerId: result.sourcePeerId, sourceChatTitle: result.sourceChatTitle, slots: result.slots };
+      return { sourcePeerId: result.sourcePeerId, sourceChatTitle: result.sourceChatTitle, ...(result.sourceTopicId !== undefined ? { sourceTopicId: result.sourceTopicId, sourceTopicTitle: result.sourceTopicTitle } : {}), slots: result.slots };
     } finally {
       await this.store.finish(lease.id, record);
     }

@@ -3,7 +3,7 @@ import { aiChatThreadSchema, aiChatSummarySchema } from '@booking/contracts';
 import { knowledgeBaseResponseSchema } from '@booking/contracts';
 import { mediaSchema, mediaDeleteResponseSchema, createMediaSchema, updateMediaSchema, type MediaDto } from '@booking/contracts';
 import { telegramAccountStatusSchema } from '@booking/contracts';
-import { telegramScheduleSlotsResponseSchema, telegramScheduleChatsSchema } from '@booking/contracts';
+import { telegramScheduleSlotsResponseSchema, telegramScheduleChatsSchema, telegramScheduleTopicsSchema } from '@booking/contracts';
 import { humanAssistanceSettingsResponseSchema, humanReleaseResponseSchema, humanRequestSchema, updateHumanAssistanceSettingsSchema, type HumanAssistanceSettings } from '@booking/contracts';
 import { adminAccessResponseSchema, assistantPromptResponseSchema, availableSlotsResponseSchema, bookingSchema, botSettingsResponseSchema, conversationSchema, servicePhotoUploadResponseSchema, servicePhotoUploadSchema, serviceSchema, specResponseSchema, updateAdminAccessSchema, type BotSettings, type ServiceDto } from '@booking/contracts';
 import { getAuth } from 'firebase/auth';
@@ -36,8 +36,9 @@ export const adminApi = {
   telegramAccount: () => request('/admin/telegram-account', telegramAccountStatusSchema, { cache: 'no-store' }),
   telegramAccountAction: (action: 'start' | 'code' | 'password' | 'check' | 'disconnect', data?: { phone?: string; code?: string; password?: string }) => request(action === 'disconnect' ? '/admin/telegram-account' : `/admin/telegram-account/${action}`, telegramAccountStatusSchema, { method: action === 'disconnect' ? 'DELETE' : 'POST', ...(data ? { body: JSON.stringify(data) } : {}) }),
   telegramScheduleChats: () => request('/admin/schedule/source-chats', telegramScheduleChatsSchema, { cache: 'no-store' }),
-  selectScheduleSource: (chatId: string) => request('/admin/schedule/source', telegramScheduleSlotsResponseSchema, { method: 'PUT', body: JSON.stringify({ chatId }) }),
-  refreshSchedule: () => request('/admin/schedule/refresh', telegramScheduleSlotsResponseSchema, { method: 'POST', body: '{}' }),
+  telegramScheduleTopics: (chatId: string, q = '') => request(`/admin/schedule/source-topics?${new URLSearchParams({ chatId, q })}`, telegramScheduleTopicsSchema, { cache: 'no-store' }),
+  selectScheduleSource: (chatId: string, topicId?: number) => request('/admin/schedule/source', telegramScheduleSlotsResponseSchema, { method: 'PUT', body: JSON.stringify({ chatId, topicId }) }),
+  refreshSchedule: (retryTransient = false) => request('/admin/schedule/refresh', telegramScheduleSlotsResponseSchema, { method: 'POST', body: JSON.stringify(retryTransient ? { retryTransient: true } : {}) }),
   telegramScheduleSlots: () => request('/admin/schedule/imported-slots', telegramScheduleSlotsResponseSchema, { cache: 'no-store' }),
   bookings: () => request('/admin/bookings', bookingSchema.array()),
   services: () => request('/admin/services', serviceSchema.array()),
