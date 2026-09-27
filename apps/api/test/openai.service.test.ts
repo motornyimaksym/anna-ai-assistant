@@ -13,7 +13,7 @@ const conversation = { telegramChatId: 'chat', clientId: 'alice', openaiConversa
 const context = { clientId: 'alice', telegramChatId: 'chat' };
 const setup = (promptId: SystemTwoPromptId = 'general') => {
   vi.stubEnv('OPENAI_API_KEY', 'test-key');
-  const repository = { getService: vi.fn(async () => ({ id: 'massage', name: 'Massage', durationMinutes: 60, price: 1500, durationOptions: [{ durationMinutes: 90, price: 2000 }], currency: 'UAH', enabled: true })), listMessages: vi.fn(async () => []), getAssistantPromptOverride: vi.fn(async () => undefined), getPromptOverride: vi.fn(async () => undefined as { prompt: string; updatedAt: string } | undefined), getKnowledgeBaseOverride: vi.fn(async () => undefined), listServices: vi.fn(async () => [] as ServiceDto[]), replacePendingAction: vi.fn(async () => true), ensureOpenAiConversation: vi.fn(async () => 'conv-created'), saveConversation: vi.fn(async (value: typeof conversation & { pendingAction?: unknown }) => value), appendMessage: vi.fn() };
+  const repository = { getService: vi.fn(async () => ({ id: 'massage', name: 'Massage', durationMinutes: 60, price: 1500, durationOptions: [{ durationMinutes: 90, price: 2000 }], currency: 'UAH', enabled: true })), listMessages: vi.fn(async () => []), getAssistantPromptOverride: vi.fn(async () => undefined), getPromptOverride: vi.fn(async () => undefined as { prompt: string; updatedAt: string } | undefined), getKnowledgeBaseOverride: vi.fn(async () => undefined), listServices: vi.fn(async () => [] as ServiceDto[]), replacePendingAction: vi.fn(async () => true), replaceOpenAiConversation: vi.fn(async () => {}), ensureOpenAiConversation: vi.fn(async () => 'conv-created'), saveConversation: vi.fn(async (value: typeof conversation & { pendingAction?: unknown }) => value), appendMessage: vi.fn() };
   const tools = { execute: vi.fn(async (): Promise<unknown> => ({ id: 'booking-1', startAt: '2099-01-01T10:00:00.000Z', status: 'confirmed', calendarSyncStatus: 'synced' })) };
   const planner = { plan: vi.fn(async () => ({ status: 'ready', serviceId: 'massage', startAt: '2099-01-01T10:00:00.000Z', durationMinutes: 90, candidateStarts: [], question: null })) };
   const debug = { record: vi.fn(async () => {}) };
@@ -23,6 +23,50 @@ const setup = (promptId: SystemTwoPromptId = 'general') => {
 };
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 describe('OpenAI conversation', () => {
+  it('recovers a poisoned conversation once without replaying historical tools', async () => {
+    const { service, repository, tools } = setup();
+    repository.listMessages.mockResolvedValue([{ role: 'user', content: 'Earlier question' }, { role: 'assistant', content: 'Earlier reply' }]);
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { param: 'input', message: 'No tool output found for function call call_broken.' } }), { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'conv-recovered' })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello' }] }] })));
+    vi.stubGlobal('fetch', fetch);
+    expect(await service.respond(conversation, context, 'Hi')).toEqual({ text: 'Hello', fromOpenAI: true });
+    expect(repository.replaceOpenAiConversation).toHaveBeenCalledWith('chat', 'alice', 'conv-existing', 'conv-recovered');
+    const retry = JSON.parse(fetch.mock.calls[2]![1].body);
+    expect(retry.conversation).toBe('conv-recovered');
+    expect(retry.input).toEqual([{ role: 'user', content: 'Earlier question' }, { role: 'assistant', content: 'Earlier reply' }, { role: 'user', content: 'Hi' }]);
+    expect(retry.instructions).toContain('Never replay');
+    expect(tools.execute).not.toHaveBeenCalled();
+  });
+  it.each(['other', 'repeated', 'after-tool'])('does not reset or replay on %s errors', async (kind) => {
+    const { service, repository, tools } = setup();
+    const failure = () => new Response(JSON.stringify({ error: { param: 'input', message: kind === 'other' ? 'Invalid schema' : 'No tool output found for function call call_broken.' } }), { status: 400 });
+    const fetch = vi.fn();
+    if (kind === 'after-tool') fetch.mockResolvedValueOnce(new Response(JSON.stringify({ output: [{ type: 'function_call', call_id: 'c1', name: 'get_services', arguments: '{}' }] })));
+    fetch.mockResolvedValueOnce(failure());
+    if (kind === 'repeated') fetch.mockResolvedValueOnce(new Response(JSON.stringify({ id: 'conv-recovered' }))).mockResolvedValueOnce(failure());
+    vi.stubGlobal('fetch', fetch);
+    expect((await service.respond(conversation, context, 'Hi')).needsHuman).toBe(true);
+    expect(repository.replaceOpenAiConversation).toHaveBeenCalledTimes(kind === 'repeated' ? 1 : 0);
+    expect(tools.execute).toHaveBeenCalledTimes(kind === 'after-tool' ? 1 : 0);
+    expect(fetch).toHaveBeenCalledTimes(kind === 'repeated' ? 3 : kind === 'after-tool' ? 2 : 1);
+  });
+  it.each([false, true])('closes fourth-round calls, including local replies: %s', async (local) => {
+    const { service, tools } = setup('booking');
+    tools.execute.mockResolvedValue([]);
+    const fetch = vi.fn();
+    for (let round = 0; round < 4; round++) fetch.mockResolvedValueOnce(new Response(JSON.stringify({ output: [{ type: 'function_call', call_id: `c${round}`, name: local && round === 3 ? 'plan_booking' : 'get_services', arguments: local && round === 3 ? JSON.stringify({ intent: 'create', bookingId: null }) : '{}' }] })));
+    fetch.mockResolvedValueOnce(new Response(JSON.stringify({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Done reading' }] }] })));
+    vi.stubGlobal('fetch', fetch);
+    const reply = await service.respond(conversation, context, 'Hi');
+    expect(reply.needsHuman).toBeUndefined();
+    expect(reply.text).toContain(local ? 'Новий запис' : 'Done reading');
+    const closeout = JSON.parse(fetch.mock.calls[4]![1].body);
+    expect(closeout.tools).toEqual([]);
+    expect(closeout.input[0]).toMatchObject({ type: 'function_call_output', call_id: 'c3' });
+    expect(tools.execute).toHaveBeenCalledTimes(local ? 3 : 4);
+  });
   it('creates a conversation for a legacy Telegram record and sends only the new message', async () => {
     const { service, repository } = setup();
     const fetch = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'conv-created' }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello' }] }] }) });

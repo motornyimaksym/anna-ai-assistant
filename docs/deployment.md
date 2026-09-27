@@ -73,3 +73,7 @@ Owners then use Bot Settings → Google Calendar → Connect Google Calendar, au
 Legacy environment refresh-token configuration remains supported until the owner begins managing the connection in Settings. Managed disconnect disables integration even if legacy secrets remain configured. Changing calendar does not move existing events; new events store their destination calendar ID. No deployment is authorized by configuration or implementation alone.
 
 Private debug access defaults to the sole UID in `ADMIN_UIDS`. When multiple owners exist, set nonsecret `DEBUG_OWNER_UID` to one of those UIDs; no debug access is granted until exactly one owner is selected. Diagnostic events begin after the code is deployed; this page does not expose historical Cloud Logging or provider payloads. Booking prompt changes in the admin panel take effect without redeployment.
+
+### Repeated missing-tool-output handoffs
+
+An OpenAI HTTP 400 `No tool output found for function call` can indicate an incomplete saved provider conversation. The Telegram backend recovers this exact error once on the first model request by replacing only the provider conversation ID and seeding bounded recent chat context. It never replays an in-flight tool sequence or resets booking operation state. Existing open human cases remain paused: review uncertain bookings/delivery, then explicitly release the case through the admin flow. A later eligible message can recover the provider conversation automatically. The recovery warning contains only the trace ID, not chat content.

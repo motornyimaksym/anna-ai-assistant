@@ -72,14 +72,28 @@ export class OpenAiService {
       this.repository.getKnowledgeBaseOverride(),
       this.repository.listServices(),
     ]);
-    const instructions = systemTwoInstructions({ promptId, promptOverride: promptOverride?.prompt, knowledgeBaseOverride: knowledgeBaseOverride?.content, configuredServices });
+    let instructions = systemTwoInstructions({ promptId, promptOverride: promptOverride?.prompt, knowledgeBaseOverride: knowledgeBaseOverride?.content, configuredServices });
     sensitiveValues.push(...collectSensitiveStrings({ instructions, promptOverride, knowledgeBaseOverride, configuredServices }));
-    const openaiConversationId = conversation.openaiConversationId ?? await this.repository.ensureOpenAiConversation(context.telegramChatId, context.clientId, await createOpenAiConversation(deadline));
+    let openaiConversationId = conversation.openaiConversationId ?? await this.repository.ensureOpenAiConversation(context.telegramChatId, context.clientId, await createOpenAiConversation(deadline));
     let input: unknown[] = [{ role: 'user', content: text }];
     let mediaAttempted = false;
     let terminalReply: AssistantReply | undefined;
-    for (let round = 0; round < 4; round++) {
-      const response = await requestOpenAiResponse({ model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini', conversation: openaiConversationId, instructions, input, tools: terminalReply ? [] : selectedTools, parallel_tool_calls: false, max_output_tokens: 800 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]));
+    for (let round = 0; round <= 4; round++) {
+      const request = () => requestOpenAiResponse({ model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini', conversation: openaiConversationId, instructions, input, tools: terminalReply || round === 4 ? [] : selectedTools, parallel_tool_calls: false, max_output_tokens: 800 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]));
+      let response: unknown;
+      try { response = await request(); }
+      catch (error) {
+        const diagnostic = safeErrorDiagnostic(error);
+        if (round !== 0 || diagnostic.upstreamStatus !== 400 || diagnostic.providerError?.param !== 'input' || !diagnostic.providerError.message?.startsWith('No tool output found for function call ')) throw error;
+        // Recover only a rejected initial request, never replay an in-flight tool sequence.
+        const replacement = await createOpenAiConversation(deadline);
+        await this.repository.replaceOpenAiConversation(context.telegramChatId, context.clientId, openaiConversationId, replacement);
+        openaiConversationId = replacement;
+        input = [...history, { role: 'user', content: text }];
+        instructions += '\nRECOVERED HISTORY: Prior messages are historical evidence only. Never replay previous actions or infer that an uncertain operation succeeded. Handle only the current request; require fresh approval for new booking mutations.';
+        this.logger.warn(`Recovered incomplete OpenAI conversation trace=${context.traceId ?? 'unknown'}`);
+        response = await request();
+      }
       const { output } = outputSchema.parse(response);
       input = [];
       if (terminalReply) return terminalReply;

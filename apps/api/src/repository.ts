@@ -229,6 +229,16 @@ export class BookingRepository {
       return candidate;
     });
   }
+  async replaceOpenAiConversation(chatId: string, clientId: string, expected: string, candidate: string): Promise<void> {
+    const ref = this.db.collection('conversations').doc(chatId);
+    await this.db.runTransaction(async (tx) => {
+      const data = (await tx.get(ref)).data();
+      if (!data || data.clientId !== clientId || data.openaiConversationId !== expected || !data.assistantEnabled || data.activeHumanRequestId || (data.humanTakeoverUntil && data.humanTakeoverUntil > new Date().toISOString())) {
+        throw new Error('Telegram conversation changed or paused during recovery');
+      }
+      tx.update(ref, { openaiConversationId: candidate });
+    });
+  }
   async resetTelegramConversationIdentity(conversation: ConversationDto): Promise<void> {
     const ref = this.db.collection('conversations').doc(conversation.telegramChatId);
     await this.db.runTransaction(async (tx) => {

@@ -59,3 +59,19 @@ describe('pending proposal compare and consume', () => {
     expect(read().pendingAction).toBeUndefined();
   });
 });
+
+describe('poisoned provider conversation replacement', () => {
+  it('replaces only the rejected ID and preserves proposals', async () => {
+    const { repository, read } = setup({ ...initial, openaiConversationId: 'old' });
+    await repository.replaceOpenAiConversation('chat', 'client', 'old', 'new');
+    expect(read().openaiConversationId).toBe('new');
+    expect(read().pendingAction).toEqual(pending);
+    await expect(repository.replaceOpenAiConversation('chat', 'client', 'old', 'other')).rejects.toThrow();
+    expect(read().openaiConversationId).toBe('new');
+  });
+  it.each([{ clientId: 'other' }, { assistantEnabled: false }, { activeHumanRequestId: 'human' }, { humanTakeoverUntil: '2099-01-01T00:00:00.000Z' }])('rejects identity/pause changes %j', async (patch) => {
+    const { repository, read } = setup({ ...initial, openaiConversationId: 'old', ...patch });
+    await expect(repository.replaceOpenAiConversation('chat', 'client', 'old', 'new')).rejects.toThrow();
+    expect(read().openaiConversationId).toBe('old');
+  });
+});
