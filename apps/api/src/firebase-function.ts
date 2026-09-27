@@ -10,6 +10,7 @@ const secrets = [
   defineSecret('TELEGRAM_BOT_TOKEN'),
   defineSecret('TELEGRAM_WEBHOOK_SECRET'),
   defineSecret('OPENAI_API_KEY'),
+  defineSecret('TYPESAFE_AI_TOKEN'),
   defineSecret('JEV_TOKEN'),
   defineSecret('GOOGLE_CLIENT_SECRET'),
   defineSecret('GOOGLE_CALENDAR_ENCRYPTION_KEY'),

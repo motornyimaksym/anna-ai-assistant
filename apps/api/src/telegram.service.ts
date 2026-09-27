@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { DebugLogService, safeErrorCategory } from './debug-log.service.js';
 import { waitForRandomReadDelay, waitForResponsePacing } from './response-pacing.js';
 import { OpenAiService } from './openai.service.js';
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
@@ -31,16 +33,18 @@ export const formatTelegramHtml = (value: string): string => {
 export class TelegramService {
   private readonly logger = new Logger(TelegramService.name);
   private readonly allowedUsername = loadBackendRuntimeEnv(process.env).TELEGRAM_ALLOWED_USERNAME?.toLowerCase();
-  constructor(private readonly repository: BookingRepository, private readonly assistant: OpenAiService, private readonly human: HumanAssistanceService, private readonly scheduleImport: TelegramScheduleImportService) {}
+  constructor(private readonly repository: BookingRepository, private readonly assistant: OpenAiService, private readonly human: HumanAssistanceService, private readonly scheduleImport: TelegramScheduleImportService, private readonly debug: DebugLogService) {}
   async handle(secret: string | undefined, body: unknown): Promise<void> {
     if (!process.env.TELEGRAM_WEBHOOK_SECRET || secret !== process.env.TELEGRAM_WEBHOOK_SECRET) throw new UnauthorizedException('Invalid webhook secret');
     const update = updateSchema.parse(body);
     if (!update.business_message && !update.message) return;
     const scheduleRefresh = this.scheduleImport.syncIfDue().catch(() => { this.logger.warn('Telegram schedule import failed; incoming message processing continues'); });
-    try { await this.processUpdate(update); } finally { await scheduleRefresh; }
+    await scheduleRefresh;
+    await this.processUpdate(update);
   }
   private async processUpdate(update: z.infer<typeof updateSchema>): Promise<void> {
     const message = update.business_message ?? (update.message?.chat.type === 'private' ? update.message : undefined);
+    const trace = { telegramChatId: String(message?.chat.id ?? 'unknown'), traceId: randomUUID() };
     const responder = update.message?.chat.type === 'private' ? update.message : undefined;
     const responderCommand = responder?.text?.trim();
     if (responder?.from?.username && !responder.from.is_bot && responderCommand && (responderCommand === '/start' || responderCommand.startsWith('/answer '))) {
@@ -64,44 +68,67 @@ export class TelegramService {
       }
     }
     if (responderCommand?.startsWith('/answer ')) return;
-    if (message?.from?.is_bot || (message?.chat.type && message.chat.type !== 'private') || !this.allowedUsername || message?.from?.username?.toLowerCase() !== this.allowedUsername || !message.text) return;
-    if (!await this.repository.claimTelegramUpdate(update.update_id)) return;
+    if (message?.from?.is_bot || (message?.chat.type && message.chat.type !== 'private') || !this.allowedUsername || message?.from?.username?.toLowerCase() !== this.allowedUsername || !message.text) { await this.debug.record(trace, 'ignored', { reason: 'sender_or_message_not_eligible' }); return; }
+    if (!await this.repository.claimTelegramUpdate(update.update_id)) { await this.debug.record(trace, 'ignored', { reason: 'duplicate_update' }); return; }
+    await this.debug.record(trace, 'received');
     const chatId = String(message.chat.id); const now = new Date().toISOString();
-    const current = await this.repository.getConversation(chatId); const conversation: ConversationDto = current ?? { telegramChatId: chatId, clientId: message.from ? String(message.from.id) : undefined, businessConnectionId: message.business_connection_id, assistantEnabled: true, state: 'active', summary: '', createdAt: now, updatedAt: now };
-    if (!conversation.assistantEnabled || (conversation.humanTakeoverUntil && conversation.humanTakeoverUntil > now)) { await this.repository.saveConversation({ ...conversation, updatedAt: now }); return; }
-    await this.repository.saveConversation({ ...conversation, updatedAt: now });
+    const current = await this.repository.getConversation(chatId); const clientId = message.from ? String(message.from.id) : undefined; const conversation: ConversationDto = current && current.clientId === clientId ? current : { telegramChatId: chatId, clientId, businessConnectionId: message.business_connection_id, assistantEnabled: true, state: 'active', summary: '', createdAt: now, updatedAt: now };
+    if (current && current.clientId !== clientId) await this.repository.resetTelegramConversationIdentity(conversation);
+    if (!conversation.assistantEnabled || (conversation.humanTakeoverUntil && conversation.humanTakeoverUntil > now)) { await this.debug.record(trace, 'ignored', { reason: conversation.assistantEnabled ? 'manual_takeover' : 'assistant_disabled' }); await this.repository.touchConversation({ ...conversation, updatedAt: now }); return; }
+    await this.repository.touchConversation({ ...conversation, updatedAt: now });
     const settings = await this.repository.getBotSettingsOverride() ?? DEFAULT_BOT_SETTINGS;
     if (update.business_message?.business_connection_id) {
       await waitForRandomReadDelay(settings.maxReadDelayMs);
       await this.markBusinessMessageRead(update.business_message.business_connection_id, message.chat.id, message.message_id);
     }
     if (conversation.activeHumanRequestId) {
+      await this.debug.record(trace, 'human_paused', { requestId: conversation.activeHumanRequestId });
       await this.repository.appendMessage(chatId, 'user', message.text.slice(0, 4000));
       await this.human.queueExisting(conversation.activeHumanRequestId, message.text, update.update_id);
       return;
     }
-    if (!['/confirm', '/cancel'].includes(message.text.trim().toLowerCase()) && message.text.length <= 4000) {
+    if (message.text.length <= 4000) {
       const decision = await this.human.decide(conversation, message.text);
+      await this.debug.record(trace, 'jev_decision', { status: decision.route, reason: process.env.JEV_ROUTING_ENABLED === 'true' ? 'enabled' : 'disabled' });
       if (decision.route === 'human') {
         await this.repository.appendMessage(chatId, 'user', message.text);
         await this.human.escalate(chatId, message.business_connection_id, update.update_id, message.text, decision);
+        await this.debug.record(trace, 'handoff', { reason: decision.reason });
         return;
       }
     }
+    await this.debug.record(trace, 'assistant_started');
     const stopTyping = await this.startTyping(chatId, message.business_connection_id);
     let reply: string;
     let parseMode: 'HTML' | undefined;
     try {
-      const answer = await this.assistant.respond(conversation, { clientId: String(message.from!.id), telegramChatId: chatId, businessConnectionId: message.business_connection_id }, message.text);
+      const answer = await this.assistant.respond(conversation, { clientId: String(message.from!.id), telegramChatId: chatId, businessConnectionId: message.business_connection_id, traceId: trace.traceId }, message.text);
+      if (answer.needsHuman) {
+        await this.debug.record(trace, 'handoff', { reason: 'assistant_requested_human' }, 'warn');
+        await this.repository.appendMessage(chatId, 'user', message.text.slice(0, 4000));
+        const action = conversation.pendingAction ? `Requested ${conversation.pendingAction.name}: ${JSON.stringify(conversation.pendingAction.arguments)}` : undefined;
+        await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, [answer.humanContext, action].filter(Boolean).join('\n'));
+        return;
+      }
       if (answer.fromOpenAI) await waitForResponsePacing(answer.text, settings.typingDelayPerSymbolMs);
       reply = answer.fromOpenAI ? formatTelegramHtml(answer.text) : answer.text;
       if (answer.fromOpenAI) parseMode = 'HTML';
+    } catch (error) {
+      await this.debug.record(trace, 'error', { reason: 'assistant_operation_failed', errorCategory: safeErrorCategory(error) }, 'error');
+      await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text);
+      return;
     } finally {
       stopTyping();
     }
     await this.repository.appendMessage(chatId, 'user', message.text.slice(0, 4000));
-    await this.reply(chatId, message.business_connection_id, reply, parseMode);
-    await this.repository.appendMessage(chatId, 'assistant', reply);
+    try {
+      await this.reply(chatId, message.business_connection_id, reply, parseMode);
+      await this.repository.appendMessage(chatId, 'assistant', reply);
+      await this.debug.record(trace, 'reply_sent');
+    } catch (error) {
+      await this.debug.record(trace, 'reply_failed', { reason: 'delivery_or_persistence_uncertain', errorCategory: safeErrorCategory(error) }, 'error');
+      await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, 'Client reply delivery or persistence is uncertain. Check before resending.');
+    }
   }
   private async startTyping(chatId: string, businessConnectionId: string | undefined): Promise<() => void> {
     if (!process.env.TELEGRAM_BOT_TOKEN) return () => undefined;
@@ -140,5 +167,5 @@ export class TelegramService {
       this.logger.warn('Telegram read receipt request failed');
     }
   }
-  private async reply(chatId: string, businessConnectionId: string | undefined, text: string, parseMode?: 'HTML'): Promise<void> { const token = process.env.TELEGRAM_BOT_TOKEN; if (!token) throw new Error('Telegram token not configured'); const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', signal: AbortSignal.timeout(10_000), headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text, ...(parseMode ? { parse_mode: parseMode } : {}), ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}) }) }); if (!response.ok) throw new Error('Telegram reply failed'); }
+  private async reply(chatId: string, businessConnectionId: string | undefined, text: string, parseMode?: 'HTML'): Promise<void> { const token = process.env.TELEGRAM_BOT_TOKEN; if (!token) throw new Error('Telegram token not configured'); const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', signal: AbortSignal.timeout(10_000), headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text, ...(parseMode ? { parse_mode: parseMode } : {}), ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}) }) }); if (!response.ok) throw new Error(`Telegram HTTP ${response.status}`); const result = await response.json().catch(() => undefined) as { ok?: boolean } | undefined; if (result?.ok !== true) throw new Error('Telegram message delivery was not confirmed'); }
 }

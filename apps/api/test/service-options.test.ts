@@ -7,6 +7,8 @@ import type { CalendarService } from '../src/calendar.js';
 const service = { id: 'massage', name: 'Massage', description: '', durationMinutes: 60, price: 1500, bufferMinutes: 15, currency: 'UAH', enabled: true, durationOptions: [{ durationMinutes: 90, price: 2000 }] };
 const setup = () => {
   const repository = {
+    claimOperation: vi.fn(async () => ({ booking: { id: 'booking' }, operation: { kind: 'create', leaseId: 'lease' } })),
+    finishOperation: vi.fn(async () => ({ id: 'booking' })),
     getService: vi.fn(async () => service),
     createBooking: vi.fn(async (value: CreateStoredBooking) => ({ ...value, id: 'booking' })),
     getBookingTiming: vi.fn(async () => ({ durationMinutes: 90, bufferMinutes: 15 })),
@@ -15,8 +17,8 @@ const setup = () => {
     getExceptions: vi.fn(async () => [{ id: 'day', date: '2099-01-01', type: 'working_interval', start: '09:00', end: '11:00' }]),
     listLockedIntervals: vi.fn(async () => []),
   };
-  const calendar = { isConfigured: () => false, getBusyIntervals: vi.fn(async () => []) };
-  return { repository, booking: new BookingService(repository as unknown as BookingRepository, calendar as unknown as CalendarService), availability: new AvailabilityService(repository as unknown as BookingRepository, calendar as unknown as CalendarService) };
+  const calendar = { destination: async () => 'calendar', verifyBookingEvent: async () => true, getBusyIntervals: vi.fn(async (): Promise<Array<{ start: string; end: string }>> => []) };
+  return { repository, calendar, booking: new BookingService(repository as unknown as BookingRepository, calendar as unknown as CalendarService), availability: new AvailabilityService(repository as unknown as BookingRepository, calendar as unknown as CalendarService) };
 };
 afterEach(() => vi.unstubAllEnvs());
 describe('selected service duration', () => {
@@ -25,6 +27,22 @@ describe('selected service duration', () => {
     await booking.create({ clientId: 'client', telegramChatId: 'chat', serviceId: 'massage', startAt: '2099-01-01T09:00:00.000Z', durationMinutes: 90 });
     expect(repository.createBooking).toHaveBeenCalledWith(expect.objectContaining({ durationMinutes: 90, price: 2000, currency: 'UAH', endAt: '2099-01-01T10:30:00Z', lockedSlots: expect.any(Array) }));
     expect(repository.createBooking.mock.calls[0]![0].lockedSlots).toHaveLength(7);
+  });
+  it('blocks Calendar conflicts during service buffer before writing a booking', async () => {
+    const { booking, calendar, repository } = setup();
+    calendar.getBusyIntervals.mockResolvedValueOnce([{ start: '2099-01-01T10:35:00.000Z', end: '2099-01-01T11:00:00.000Z' }]);
+    await expect(booking.create({ clientId: 'client', telegramChatId: 'chat', serviceId: 'massage', startAt: '2099-01-01T09:00:00.000Z', durationMinutes: 90 })).rejects.toThrow('Time is unavailable');
+    expect(calendar.getBusyIntervals).toHaveBeenCalledWith('2099-01-01T09:00:00.000Z', '2099-01-01T10:45:00.000Z', undefined);
+    expect(repository.createBooking).not.toHaveBeenCalled();
+  });
+  it('blocks existing booking holds and unknown Calendar reads', async () => {
+    const { booking, calendar, repository } = setup();
+    repository.listLockedIntervals.mockResolvedValueOnce([{ start: '2099-01-01T09:30:00.000Z', end: '2099-01-01T10:00:00.000Z' }]);
+    const input = { clientId: 'client', telegramChatId: 'chat', serviceId: 'massage', startAt: '2099-01-01T09:00:00.000Z', durationMinutes: 90 };
+    await expect(booking.create(input)).rejects.toThrow('Time is unavailable');
+    calendar.getBusyIntervals.mockRejectedValueOnce(new Error('Calendar unavailable'));
+    await expect(booking.create(input)).rejects.toThrow('Calendar unavailable');
+    expect(repository.createBooking).not.toHaveBeenCalled();
   });
   it('requires an offered duration when a service has multiple options', async () => {
     const { booking, availability, repository } = setup();

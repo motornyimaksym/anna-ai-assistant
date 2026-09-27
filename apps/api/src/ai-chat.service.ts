@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { AiChatStore, type StoredThread } from './ai-chat.store.js';
 import { TelegramMcpService, mcpArguments, readTools, type McpTool } from './telegram-mcp.service.js';
-import { requestOpenAiResponse } from './openai-transport.js';
+import { createOpenAiConversation, requestOpenAiResponse } from './openai-transport.js';
 const str = { type: 'string' };
 const integer = { type: 'integer', minimum: 1, maximum: 50 };
 const definitions: [McpTool, string, Record<string, unknown>, string[]][] = [
@@ -41,19 +41,23 @@ export class AiChatService {
     if (thread.action?.status === 'pending') thread.action.status = 'cancelled';
     if (!thread.messages.length) thread.title = text.slice(0, 80);
     add(thread, 'user', text);
-    try { await this.run(thread); }
+    try { await this.run(uid, thread, text); }
     catch { add(thread, 'assistant', 'Could not complete this request. No message was sent. Please retry; if this involved Telegram, check the connection in Bot Settings.'); }
     await this.store.save(uid, thread);
     return this.store.view(thread);
   }
-  private async run(thread: StoredThread) {
+  private async run(uid: string, thread: StoredThread, text: string) {
     const deadline = AbortSignal.timeout(90_000);
-    const input: unknown[] = thread.messages.map(({ role, text }) => ({ role, content: text }));
+    if (!thread.openaiConversationId) {
+      thread.openaiConversationId = await createOpenAiConversation(deadline);
+      await this.store.save(uid, thread, false);
+    }
+    let input: unknown[] = [{ role: 'user', content: text }];
     let callsUsed = 0;
     for (let round = 0; round < 9; round++) {
       deadline.throwIfAborted();
-      const { output } = outputSchema.parse(await requestOpenAiResponse({ instructions, input, tools, parallel_tool_calls: false, max_output_tokens: 2000 }, AbortSignal.any([deadline, AbortSignal.timeout(25_000)])));
-      input.push(...output);
+      const { output } = outputSchema.parse(await requestOpenAiResponse({ conversation: thread.openaiConversationId, instructions, input, tools, parallel_tool_calls: false, max_output_tokens: 2000 }, AbortSignal.any([deadline, AbortSignal.timeout(25_000)])));
+      input = [];
       const calls = output.filter((item) => item.type === 'function_call');
       if (!calls.length) {
         const text = output.filter((item) => item.type === 'message').flatMap((item) => item.content ?? []).filter((part) => part.type === 'output_text').map((part) => part.text ?? '').join('\n').trim();

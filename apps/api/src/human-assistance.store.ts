@@ -52,7 +52,7 @@ export class HumanAssistanceStore {
         if (current.exists && active(current.data()?.status as HumanRequestDto['status'])) return { request: humanRequestSchema.parse({ ...current.data(), id: current.id }), created: false };
       }
       const timestamp = now();
-      const request: HumanRequestDto = { id: requestRef.id, conversationId: chatId, telegramChatId: chatId, telegramUpdateId: updateId, ...(businessConnectionId ? { businessConnectionId } : {}), status: 'open', reason, ...(probability !== undefined ? { probability } : {}), thresholdPercent, question: question.slice(0, 4000), queuedMessages: [], notifications: {}, acknowledgement: 'pending', createdAt: timestamp, updatedAt: timestamp };
+      const request: HumanRequestDto = { id: requestRef.id, conversationId: chatId, telegramChatId: chatId, telegramUpdateId: updateId, ...(businessConnectionId ? { businessConnectionId } : {}), status: 'open', reason, ...(probability !== undefined ? { probability } : {}), thresholdPercent, question: question.slice(0, 4000), queuedMessages: [], notifications: {}, createdAt: timestamp, updatedAt: timestamp };
       tx.create(requestRef, request);
       tx.set(conversationRef, { activeHumanRequestId: requestRef.id, updatedAt: timestamp }, { merge: true });
       return { request, created: true };
@@ -86,14 +86,13 @@ export class HumanAssistanceStore {
       return true;
     });
   }
-  async setDelivery(id: string, recipient: string | undefined, status: 'sending' | 'sent' | 'failed' | 'uncertain'): Promise<void> {
+  async setDelivery(id: string, recipient: string, status: 'sending' | 'sent' | 'failed' | 'uncertain'): Promise<void> {
     const ref = this.db.collection('humanRequests').doc(id);
     await this.db.runTransaction(async (tx) => {
       const doc = await tx.get(ref);
       if (!doc.exists) return;
       const data = doc.data()!;
-      if (recipient) tx.update(ref, { notifications: Object.fromEntries(Object.entries({ ...(data.notifications as Record<string, string> ?? {}), [recipient]: status }).slice(-200)), updatedAt: now() });
-      else tx.update(ref, { acknowledgement: status, updatedAt: now() });
+      tx.update(ref, { notifications: Object.fromEntries(Object.entries({ ...(data.notifications as Record<string, string> ?? {}), [recipient]: status }).slice(-200)), updatedAt: now() });
     });
   }
   async claimAnswer(id: string, actor: string): Promise<string | undefined> {

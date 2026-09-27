@@ -79,3 +79,26 @@ describe('owner Calendar OAuth', () => {
     expect(await f.service.select('calendar')).toMatchObject({ calendarId: 'calendar', calendarTitle: 'Anna' });
   });
 });
+
+it('checks token scopes without writing an event and reports missing modification permission', async () => {
+  const f = fixture({ revision: 'r', phase: 'connected', calendarId: 'calendar', encryptedToken: sealCalendar('refresh', 'token') });
+  expect((await f.service.status()).writePermission).toBe('unknown');
+  f.fetch
+    .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'access' })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ accessRole: 'owner' })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'access' })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ scope: 'https://www.googleapis.com/auth/calendar.freebusy' })));
+  expect((await f.service.check()).writePermission).toBe('missing');
+  expect(f.fetch.mock.calls.some(([url]) => String(url).includes('/events'))).toBe(false);
+  expect(f.fetch.mock.calls[3]![0]).toBe('https://oauth2.googleapis.com/tokeninfo');
+  expect(f.fetch.mock.calls[3]![1]?.headers).toMatchObject({ authorization: 'Bearer access' });
+});
+
+it('includes read-only personal calendars as conflict sources but rejects inaccessible choices', async () => {
+  const f = fixture({ revision: 'r', phase: 'connected', calendarId: 'booking', encryptedToken: sealCalendar('refresh', 'token') });
+  const list = { items: [{ id: 'booking', summary: 'Bookings', accessRole: 'owner' }, { id: 'personal', summary: 'Personal', accessRole: 'reader' }] };
+  f.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'access' }))).mockResolvedValueOnce(new Response(JSON.stringify(list)));
+  expect((await f.service.selectConflicts(['personal'])).conflictCalendarIds).toEqual(['booking', 'personal']);
+  f.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'access' }))).mockResolvedValueOnce(new Response(JSON.stringify(list)));
+  await expect(f.service.selectConflicts(['inaccessible'])).rejects.toThrow('accessible');
+});

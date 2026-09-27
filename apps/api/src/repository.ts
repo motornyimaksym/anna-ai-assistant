@@ -1,14 +1,17 @@
+import { isDeepStrictEqual } from 'node:util';
+import { createHash, randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
-import { getFirestore, type DocumentData, type Firestore } from 'firebase-admin/firestore';
+import { FieldValue, getFirestore, type DocumentData, type Firestore } from 'firebase-admin/firestore';
 import {
-  availabilityRuleSchema, bookingSchema, botSettingsSchema, conversationSchema, scheduleExceptionSchema, serviceSchema, updateAdminAccessSchema,
+  debugEventsSchema, type DebugEvent, availabilityRuleSchema, bookingSchema, botSettingsSchema, conversationSchema, scheduleExceptionSchema, serviceSchema, updateAdminAccessSchema,
   type AvailabilityRuleDto, type BookingDto, type BotSettings, type ConversationDto, type ScheduleExceptionDto, type ServiceDto,
 } from '@booking/contracts';
 import { BookingConflictError, BookingNotFoundError, lockedSlotKeys, serviceEndAt } from '@booking/domain';
 import { FirebaseAdminService } from './firebase-admin.js';
 
 export type CreateStoredBooking = Omit<BookingDto, 'id' | 'createdAt' | 'updatedAt'> & { lockedSlots: string[]; bufferMinutes: number };
-type StoredBooking = BookingDto & { lockedSlots: string[]; bufferMinutes: number };
+export type BookingOperation = { id: string; kind: 'create' | 'reschedule' | 'cancel'; targetStartAt?: string; targetEndAt?: string; leaseId?: string; leaseUntil?: number };
+type StoredBooking = BookingDto & { lockedSlots: string[]; bufferMinutes: number; operation?: BookingOperation };
 type StoredTelegramButton = { row: number; text: string; url: string };
 const withoutUndefined = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const serviceFromDocument = (id: string, data: DocumentData): ServiceDto => {
@@ -36,6 +39,7 @@ const serviceDocument = (service: ServiceDto): DocumentData => {
 };
 const storedBooking = (id: string, data: DocumentData | undefined): StoredBooking => ({
   ...bookingSchema.parse({ ...data, id }),
+  operation: data?.operation as BookingOperation | undefined,
   lockedSlots: Array.isArray(data?.lockedSlots) ? data.lockedSlots as string[] : [],
   bufferMinutes: typeof data?.bufferMinutes === 'number' ? data.bufferMinutes : 0,
 });
@@ -76,7 +80,9 @@ export class BookingRepository {
     const bookingRef = this.db.collection('bookings').doc();
     const slotRefs = input.lockedSlots.map((slot) => this.db.collection('bookingSlots').doc(slot));
     const now = new Date().toISOString();
-    const booking: StoredBooking = { ...input, id: bookingRef.id, createdAt: now, updatedAt: now };
+    const booking: StoredBooking = { ...input, id: bookingRef.id, createdAt: now, updatedAt: now,
+      ...(input.calendarOperation === 'create' ? { operation: { id: randomUUID(), kind: 'create' as const }, googleCalendarEventId: createHash('sha256').update(`booking:${bookingRef.id}`).digest('hex') } : {}),
+    };
     await this.db.runTransaction(async (transaction) => {
       const snapshots = await Promise.all(slotRefs.map((ref) => transaction.get(ref)));
       if (snapshots.some((snapshot) => snapshot.exists)) throw new BookingConflictError();
@@ -85,60 +91,77 @@ export class BookingRepository {
     });
     return bookingSchema.parse(booking);
   }
-  async cancelBooking(id: string): Promise<BookingDto> {
-    const bookingRef = this.db.collection('bookings').doc(id);
-    return this.db.runTransaction(async (transaction) => {
-      const doc = await transaction.get(bookingRef);
-      if (!doc.exists) throw new BookingNotFoundError();
-      const booking = storedBooking(id, doc.data());
-      if (booking.status === 'cancelled') return bookingSchema.parse(booking);
-      const slotRefs = booking.lockedSlots.map((slot) => this.db.collection('bookingSlots').doc(slot));
-      const slots = await Promise.all(slotRefs.map((ref) => transaction.get(ref)));
-      const changed: StoredBooking = { ...booking, status: 'cancelled', updatedAt: new Date().toISOString() };
-      transaction.set(bookingRef, withoutUndefined(changed));
-      slots.forEach((slot, index) => { if (slot.data()?.bookingId === id) transaction.delete(slotRefs[index]!); });
-      return bookingSchema.parse(changed);
-    });
-  }
   async updateBookingStatus(id: string, status: BookingDto['status']): Promise<BookingDto> {
-    if (status === 'cancelled') return this.cancelBooking(id);
+    if (status === 'cancelled' || status === 'confirmed' || status === 'pending') throw new BookingConflictError();
     const bookingRef = this.db.collection('bookings').doc(id);
     return this.db.runTransaction(async (transaction) => {
       const doc = await transaction.get(bookingRef);
       if (!doc.exists) throw new BookingNotFoundError();
+      if (doc.data()?.operation || doc.data()?.status !== 'confirmed') throw new BookingConflictError();
       const changed = { ...storedBooking(id, doc.data()), status, updatedAt: new Date().toISOString() };
       transaction.set(bookingRef, withoutUndefined(changed));
       return bookingSchema.parse(changed);
     });
   }
-  async rescheduleBooking(id: string, startAt: string): Promise<BookingDto> {
-    const bookingRef = this.db.collection('bookings').doc(id);
-    return this.db.runTransaction(async (transaction) => {
-      const doc = await transaction.get(bookingRef);
+  async listLockedIntervals(excludeBookingId?: string): Promise<{ start: string; end: string }[]> {
+    const snapshot = await this.db.collection('bookings').get();
+    return snapshot.docs.filter((doc) => doc.id !== excludeBookingId).map((doc) => storedBooking(doc.id, doc.data())).filter((booking) => booking.status !== 'cancelled').flatMap((booking) => [
+      { start: booking.startAt, end: new Date(Date.parse(booking.endAt) + booking.bufferMinutes * 60_000).toISOString() },
+      ...(booking.operation?.targetStartAt && booking.operation.targetEndAt ? [{ start: booking.operation.targetStartAt, end: new Date(Date.parse(booking.operation.targetEndAt) + booking.bufferMinutes * 60_000).toISOString() }] : []),
+    ]);
+  }
+  async beginOperation(id: string, kind: 'reschedule' | 'cancel', targetStartAt?: string, calendarId?: string) {
+    const ref = this.db.collection('bookings').doc(id);
+    return this.db.runTransaction(async (tx) => {
+      const doc = await tx.get(ref);
       if (!doc.exists) throw new BookingNotFoundError();
       const booking = storedBooking(id, doc.data());
-      if (booking.status === 'cancelled') throw new BookingConflictError();
-      const durationMinutes = booking.durationMinutes ?? (Date.parse(booking.endAt) - Date.parse(booking.startAt)) / 60_000;
-      const endAt = serviceEndAt(startAt, { durationMinutes });
-      const slots = lockedSlotKeys('default', startAt, endAt, booking.bufferMinutes);
-      const allKeys = [...new Set([...booking.lockedSlots, ...slots])];
-      const refs = allKeys.map((slot) => this.db.collection('bookingSlots').doc(slot));
-      const snapshots = await Promise.all(refs.map((ref) => transaction.get(ref)));
-      const current = new Map(allKeys.map((key, index) => [key, snapshots[index]?.data()?.bookingId as string | undefined]));
-      if (slots.some((slot) => current.get(slot) && current.get(slot) !== id)) throw new BookingConflictError();
-      const changed: StoredBooking = { ...booking, startAt, endAt, lockedSlots: slots, calendarSyncStatus: 'pending', updatedAt: new Date().toISOString() };
-      for (const key of booking.lockedSlots) if (!slots.includes(key) && current.get(key) === id) transaction.delete(this.db.collection('bookingSlots').doc(key));
-      for (const key of slots) if (!current.get(key)) transaction.create(this.db.collection('bookingSlots').doc(key), { bookingId: id });
-      transaction.set(bookingRef, withoutUndefined(changed));
+      if (booking.operation || booking.status !== 'confirmed') throw new BookingConflictError();
+      const targetEndAt = targetStartAt ? serviceEndAt(targetStartAt, { durationMinutes: booking.durationMinutes ?? (Date.parse(booking.endAt) - Date.parse(booking.startAt)) / 60000 }) : undefined;
+      const targetKeys = targetStartAt && targetEndAt ? lockedSlotKeys('default', targetStartAt, targetEndAt, booking.bufferMinutes) : [];
+      const refs = targetKeys.map((key) => this.db.collection('bookingSlots').doc(key));
+      const slots = await Promise.all(refs.map((slot) => tx.get(slot)));
+      if (slots.some((slot) => slot.exists && slot.data()?.bookingId !== id)) throw new BookingConflictError();
+      slots.forEach((slot, index) => { if (!slot.exists) tx.create(refs[index]!, { bookingId: id }); });
+      const changed: StoredBooking = { ...booking, googleCalendarId: booking.googleCalendarId ?? calendarId, lockedSlots: [...new Set([...booking.lockedSlots, ...targetKeys])], calendarOperation: kind, calendarSyncStatus: 'pending', operation: { id: randomUUID(), kind, targetStartAt, targetEndAt }, updatedAt: new Date().toISOString() };
+      tx.set(ref, withoutUndefined(changed));
       return bookingSchema.parse(changed);
     });
   }
-  async setCalendarSync(id: string, status: BookingDto['calendarSyncStatus'], eventId?: string, calendarId?: string): Promise<void> {
-    await this.db.collection('bookings').doc(id).update(withoutUndefined({ calendarSyncStatus: status, googleCalendarEventId: eventId, googleCalendarId: calendarId, updatedAt: new Date().toISOString() }));
+  async claimOperation(id: string) {
+    const ref = this.db.collection('bookings').doc(id);
+    return this.db.runTransaction(async (tx) => {
+      const doc = await tx.get(ref);
+      if (!doc.exists) throw new BookingNotFoundError();
+      const booking = storedBooking(id, doc.data()); const operation = booking.operation;
+      if (!operation || (operation.leaseUntil ?? 0) > Date.now()) throw new BookingConflictError();
+      const claimed = { ...operation, leaseId: randomUUID(), leaseUntil: Date.now() + 10 * 60000 };
+      tx.update(ref, { operation: withoutUndefined(claimed), calendarSyncStatus: 'pending' });
+      return { booking: bookingSchema.parse(booking), operation: claimed };
+    });
   }
-  async listLockedIntervals(excludeBookingId?: string): Promise<{ start: string; end: string }[]> {
-    const snapshot = await this.db.collection('bookings').get();
-    return snapshot.docs.filter((doc) => doc.id !== excludeBookingId).map((doc) => storedBooking(doc.id, doc.data())).filter((booking) => booking.status !== 'cancelled').map((booking) => ({ start: booking.startAt, end: new Date(Date.parse(booking.endAt) + booking.bufferMinutes * 60_000).toISOString() }));
+  async failOperation(id: string, leaseId: string) {
+    const ref = this.db.collection('bookings').doc(id);
+    await this.db.runTransaction(async (tx) => {
+      const doc = await tx.get(ref); const operation = doc.data()?.operation as BookingOperation | undefined;
+      if (operation?.leaseId !== leaseId) return;
+      tx.update(ref, { operation: withoutUndefined({ ...operation, leaseId: undefined, leaseUntil: undefined }), calendarSyncStatus: 'failed', updatedAt: new Date().toISOString() });
+    });
+  }
+  async finishOperation(id: string, leaseId: string) {
+    const ref = this.db.collection('bookings').doc(id);
+    return this.db.runTransaction(async (tx) => {
+      const doc = await tx.get(ref); const booking = storedBooking(id, doc.data()); const operation = booking.operation;
+      if (!operation || operation.leaseId !== leaseId) throw new BookingConflictError();
+      const startAt = operation.targetStartAt ?? booking.startAt; const endAt = operation.targetEndAt ?? booking.endAt;
+      const keep = operation.kind === 'cancel' ? [] : lockedSlotKeys('default', startAt, endAt, booking.bufferMinutes);
+      const release = booking.lockedSlots.filter((key) => !keep.includes(key)).map((key) => this.db.collection('bookingSlots').doc(key));
+      const docs = await Promise.all(release.map((slot) => tx.get(slot)));
+      docs.forEach((slot, index) => { if (slot.data()?.bookingId === id) tx.delete(release[index]!); });
+      const changed: StoredBooking = { ...booking, startAt, endAt, status: operation.kind === 'cancel' ? 'cancelled' : 'confirmed', calendarSyncStatus: 'synced', lockedSlots: keep, operation: undefined, calendarOperation: undefined, updatedAt: new Date().toISOString() };
+      tx.set(ref, withoutUndefined(changed));
+      return bookingSchema.parse(changed);
+    });
   }
   async getRules(): Promise<AvailabilityRuleDto[]> {
     const snapshot = await this.db.collection('availabilityRules').get();
@@ -165,6 +188,25 @@ export class BookingRepository {
     const doc = await this.db.collection('conversations').doc(chatId).get();
     return doc.exists ? conversationSchema.parse({ ...doc.data(), telegramChatId: doc.id }) : undefined;
   }
+  async ensureOpenAiConversation(chatId: string, clientId: string | undefined, candidate: string): Promise<string> {
+    const ref = this.db.collection('conversations').doc(chatId);
+    return this.db.runTransaction(async (tx) => {
+      const doc = await tx.get(ref);
+      const data = doc.data();
+      if (!data || data.clientId !== clientId) throw new Error('Telegram conversation identity changed');
+      if (typeof data.openaiConversationId === 'string' && data.openaiConversationId) return data.openaiConversationId;
+      tx.update(ref, { openaiConversationId: candidate });
+      return candidate;
+    });
+  }
+  async resetTelegramConversationIdentity(conversation: ConversationDto): Promise<void> {
+    const ref = this.db.collection('conversations').doc(conversation.telegramChatId);
+    await this.db.runTransaction(async (tx) => {
+      const doc = await tx.get(ref);
+      if (doc.exists && doc.data()?.clientId === conversation.clientId) return;
+      tx.set(ref, withoutUndefined(conversation));
+    });
+  }
   async saveConversation(conversation: ConversationDto): Promise<ConversationDto> {
     const ref = this.db.collection('conversations').doc(conversation.telegramChatId);
     await this.db.runTransaction(async (tx) => {
@@ -174,6 +216,30 @@ export class BookingRepository {
       tx.set(ref, merged);
     });
     return conversation;
+  }
+  /** Update activity without copying stale proposal or automation state back into storage. */
+  async touchConversation(conversation: ConversationDto): Promise<void> {
+    const ref = this.db.collection('conversations').doc(conversation.telegramChatId);
+    await this.db.runTransaction(async (tx) => {
+      const doc = await tx.get(ref);
+      if (doc.exists) tx.update(ref, { updatedAt: conversation.updatedAt });
+      else tx.set(ref, withoutUndefined(conversation));
+    });
+  }
+  /** Compare-and-set: staging, rejection and consumption all bind to one proposal snapshot. */
+  async replacePendingAction(chatId: string, clientId: string, expected: ConversationDto['pendingAction'], replacement: ConversationDto['pendingAction'], options: { requireUnexpired?: boolean } = {}): Promise<boolean> {
+    const ref = this.db.collection('conversations').doc(chatId);
+    return this.db.runTransaction(async (tx) => {
+      const doc = await tx.get(ref);
+      if (!doc.exists) return false;
+      const current = conversationSchema.parse({ ...doc.data(), telegramChatId: chatId });
+      const now = new Date().toISOString();
+      if (current.clientId !== clientId || !current.assistantEnabled || current.activeHumanRequestId || (current.humanTakeoverUntil && current.humanTakeoverUntil > now)) return false;
+      if (!isDeepStrictEqual(current.pendingAction, expected)) return false;
+      if (options.requireUnexpired && (!current.pendingAction || current.pendingAction.expiresAt <= now)) return false;
+      tx.update(ref, { pendingAction: replacement ? withoutUndefined(replacement) : FieldValue.delete(), updatedAt: now });
+      return true;
+    });
   }
   async listConversations(): Promise<ConversationDto[]> {
     const snapshot = await this.db.collection('conversations').get();
@@ -199,6 +265,29 @@ export class BookingRepository {
   }
   async deleteKnowledgeBaseOverride(): Promise<void> {
     await this.db.collection('assistantSettings').doc('knowledgeBase').delete();
+  }
+  async getBookingPromptOverride(): Promise<{ prompt: string; updatedAt: string } | undefined> {
+    const doc = await this.db.collection('assistantSettings').doc('bookingPrompt').get();
+    const data = doc.data();
+    return typeof data?.prompt === 'string' && typeof data.updatedAt === 'string' ? { prompt: data.prompt, updatedAt: data.updatedAt } : undefined;
+  }
+  async saveBookingPromptOverride(prompt: string) {
+    const value = { prompt, updatedAt: new Date().toISOString() };
+    await this.db.collection('assistantSettings').doc('bookingPrompt').set(value);
+    return value;
+  }
+  async deleteBookingPromptOverride() { await this.db.collection('assistantSettings').doc('bookingPrompt').delete(); }
+  async appendDebugEvent(event: DebugEvent) {
+    const ref = this.db.collection('assistantDiagnostics').doc('recent');
+    await this.db.runTransaction(async (tx) => {
+      const current = (await tx.get(ref)).data()?.events;
+      const events = Array.isArray(current) ? current : [];
+      tx.set(ref, { events: withoutUndefined([...events, event].slice(-200)) });
+    });
+  }
+  async listDebugEvents(): Promise<DebugEvent[]> {
+    const data = (await this.db.collection('assistantDiagnostics').doc('recent').get()).data();
+    return debugEventsSchema.parse(data?.events ?? []).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
   async getAssistantPromptOverride(): Promise<{ prompt: string; updatedAt: string } | undefined> {
     const doc = await this.db.collection('assistantSettings').doc('prompt').get();

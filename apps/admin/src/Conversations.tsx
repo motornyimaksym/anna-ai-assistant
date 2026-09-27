@@ -14,7 +14,7 @@ function RequestCard({ request }: { request: Awaited<ReturnType<typeof adminApi.
     <Typography>{request.question}</Typography>
     {request.queuedMessages.map((message, index) => <Typography key={index} variant="body2">Follow-up: {message}</Typography>)}
     {request.lastAnswer && <Typography variant="body2">Last human answer: {request.lastAnswer}</Typography>}
-    <Typography variant="body2">Responder delivery: {Object.entries(request.notifications).map(([name, status]) => `${name}: ${status}`).join(', ') || 'none'} · Client acknowledgment: {request.acknowledgement}</Typography>
+    <Typography variant="body2">Responder delivery: {Object.entries(request.notifications).map(([name, status]) => `${name}: ${status}`).join(', ') || 'none'}</Typography>
     {request.status === 'uncertain' && <Alert severity="warning">Delivery may have succeeded. Check Telegram before releasing request.</Alert>}
     {request.status === 'open' && <><TextField label={`Reply to request ${request.id}`} multiline minRows={2} value={text} onChange={(event) => setText(event.target.value)} inputProps={{ maxLength: 4000 }} />
       <Button variant="contained" disabled={!text.trim() || reply.isPending} onClick={() => reply.mutate()}>Send human reply</Button></>}

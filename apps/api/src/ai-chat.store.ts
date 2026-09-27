@@ -3,7 +3,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { randomUUID } from 'node:crypto';
 import { aiChatThreadSchema, aiChatSummarySchema, type AiChatAction, type AiChatThread } from '@booking/contracts';
 import { FirebaseAdminService } from './firebase-admin.js';
-export type StoredThread = Omit<AiChatThread, 'action'> & { action?: AiChatAction & { sessionFingerprint: string }; leaseId?: string; leaseUntil?: number };
+export type StoredThread = Omit<AiChatThread, 'action'> & { action?: AiChatAction & { sessionFingerprint: string }; openaiConversationId?: string; leaseId?: string; leaseUntil?: number };
 @Injectable()
 export class AiChatStore {
   constructor(_firebase: FirebaseAdminService) {}

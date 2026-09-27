@@ -1,21 +1,56 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { SystemOneInput } from '../src/system-one.js';
+import type { SystemTwoPromptId } from '../src/system-two.js';
 import { OpenAiService } from '../src/openai.service.js';
 import { THERAPIST_FIRST_PERSON_GUIDANCE } from '../src/assistant-prompt.js';
 import { DEFAULT_KNOWLEDGE_BASE } from '../src/default-knowledge-base.js';
 import type { AssistantToolsService } from '../src/assistant-tools.service.js';
 import type { BookingRepository } from '../src/repository.js';
+import type { BookingPlannerService } from '../src/booking-planner.service.js';
+import type { DebugLogService } from '../src/debug-log.service.js';
 import type { ServiceDto } from '@booking/contracts';
-const conversation = { telegramChatId: 'chat', clientId: 'alice', assistantEnabled: true, state: 'active', summary: '', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
+const conversation = { telegramChatId: 'chat', clientId: 'alice', openaiConversationId: 'conv-existing', assistantEnabled: true, state: 'active', summary: '', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
 const context = { clientId: 'alice', telegramChatId: 'chat' };
-const setup = () => {
+const setup = (promptId: SystemTwoPromptId = 'general') => {
   vi.stubEnv('OPENAI_API_KEY', 'test-key');
-  const repository = { getService: vi.fn(async () => ({ id: 'massage', name: 'Massage', durationMinutes: 60, price: 1500, durationOptions: [{ durationMinutes: 90, price: 2000 }], currency: 'UAH', enabled: true })), listMessages: vi.fn(async () => []), getAssistantPromptOverride: vi.fn(async () => undefined), getKnowledgeBaseOverride: vi.fn(async () => undefined), listServices: vi.fn(async () => [] as ServiceDto[]), saveConversation: vi.fn(async (value: typeof conversation & { pendingAction?: unknown }) => value), appendMessage: vi.fn() };
-  const tools = { execute: vi.fn(async (): Promise<unknown> => ({ id: 'booking-1', startAt: '2099-01-01T10:00:00.000Z', status: 'confirmed' })) };
-  const service = new OpenAiService(repository as unknown as BookingRepository, tools as unknown as AssistantToolsService);
-  return { repository, tools, service };
+  const repository = { getService: vi.fn(async () => ({ id: 'massage', name: 'Massage', durationMinutes: 60, price: 1500, durationOptions: [{ durationMinutes: 90, price: 2000 }], currency: 'UAH', enabled: true })), listMessages: vi.fn(async () => []), getAssistantPromptOverride: vi.fn(async () => undefined), getKnowledgeBaseOverride: vi.fn(async () => undefined), listServices: vi.fn(async () => [] as ServiceDto[]), replacePendingAction: vi.fn(async () => true), ensureOpenAiConversation: vi.fn(async () => 'conv-created'), saveConversation: vi.fn(async (value: typeof conversation & { pendingAction?: unknown }) => value), appendMessage: vi.fn() };
+  const tools = { execute: vi.fn(async (): Promise<unknown> => ({ id: 'booking-1', startAt: '2099-01-01T10:00:00.000Z', status: 'confirmed', calendarSyncStatus: 'synced' })) };
+  const planner = { plan: vi.fn(async () => ({ status: 'ready', serviceId: 'massage', startAt: '2099-01-01T10:00:00.000Z', durationMinutes: 90, candidateStarts: [], question: null })) };
+  const debug = { record: vi.fn(async () => {}) };
+  const selector = { answerBoolean: vi.fn(async () => false), estimateProbability: vi.fn(async () => 0.5), select: vi.fn(async (_input: SystemOneInput, _signal: AbortSignal) => promptId) };
+  const service = new OpenAiService(repository as unknown as BookingRepository, tools as unknown as AssistantToolsService, planner as unknown as BookingPlannerService, debug as unknown as DebugLogService, selector);
+  return { repository, tools, planner, debug, selector, service };
 };
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 describe('OpenAI conversation', () => {
+  it('creates a conversation for a legacy Telegram record and sends only the new message', async () => {
+    const { service, repository } = setup();
+    const fetch = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'conv-created' }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello' }] }] }) });
+    vi.stubGlobal('fetch', fetch);
+    repository.listMessages.mockResolvedValue([{ role: 'user', content: 'old private text' }]);
+    await service.respond({ ...conversation, openaiConversationId: undefined }, context, 'Hi');
+    expect(fetch.mock.calls[0]![0]).toBe('https://api.openai.com/v1/conversations');
+    expect(repository.ensureOpenAiConversation).toHaveBeenCalledWith('chat', 'alice', 'conv-created');
+    const body = JSON.parse(fetch.mock.calls[1]![1].body);
+    expect(body.conversation).toBe('conv-created');
+    expect(body.input).toEqual([{ role: 'user', content: 'Hi' }]);
+  });
+  it('allows a longer provider call and records a safe timeout category', async () => {
+    const { service } = setup();
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const fetch = vi.fn(async (_url: string, options: { signal: AbortSignal }) => {
+      expect(options.signal).toBeInstanceOf(AbortSignal);
+      throw new DOMException('The operation was aborted', 'TimeoutError');
+    });
+    vi.stubGlobal('fetch', fetch);
+    const warn = vi.spyOn((service as unknown as { logger: { warn: (message: string) => void } }).logger, 'warn');
+    const reply = await service.respond(conversation, context, 'Hello');
+    expect(reply.needsHuman).toBe(true);
+    expect(timeout).toHaveBeenCalledWith(60_000);
+    expect(timeout).toHaveBeenCalledWith(10_000);
+    expect(timeout).toHaveBeenCalledWith(30_000);
+    expect(warn).toHaveBeenCalledWith('Assistant request failed (timeout); credentials and message contents omitted');
+  });
   it('continues function calls and returns the model reply', async () => {
     const { service, tools } = setup();
     const fetch = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'get_services', arguments: '{}' }] }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Вітаю!' }] }] }) });
@@ -67,12 +102,23 @@ describe('OpenAI conversation', () => {
     vi.stubGlobal('fetch', fetch);
     await service.respond(conversation, context, 'Where can I park?');
     const request = JSON.parse(fetch.mock.calls[0]![1]!.body as string);
-    const match = request.instructions.match(/Business knowledge base JSON: (.*)\nServices may/);
+    const match = request.instructions.match(/Business knowledge base JSON: (.*)\nCurrent UTC/);
     expect(match).toBeTruthy();
     expect(JSON.parse(match![1])).toEqual({
       additionalKnowledge: 'Parking is available beside the studio.',
       currentEnabledServices: [{ id: 'relax-60', name: 'Relax massage', description: 'Gentle full body massage', durationMinutes: 60, durationOptions: [{ durationMinutes: 90, price: 2000 }], price: 1500, currency: 'UAH' }],
     });
+  });
+  it('uses the separate planner for scheduling and replies with clarification without handoff', async () => {
+    const { service, planner, tools } = setup('booking');
+    planner.plan.mockResolvedValueOnce({ status: 'needs_clarification', serviceId: null, startAt: null, durationMinutes: null, candidateStarts: [], question: 'Яка тривалість?' } as never);
+    const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'plan_booking', arguments: JSON.stringify({ intent: 'availability', bookingId: null }) }] }) }));
+    vi.stubGlobal('fetch', fetch);
+    expect(await service.respond(conversation, context, 'Чи вільно завтра?')).toEqual({ text: 'Яка тривалість?', fromOpenAI: false });
+    expect(planner.plan).toHaveBeenCalledWith(conversation, context, 'Чи вільно завтра?', { intent: 'availability', bookingId: null }, expect.any(AbortSignal));
+    expect(tools.execute).not.toHaveBeenCalled();
+    const request = JSON.parse(fetch.mock.calls[0]![1]!.body as string);
+    expect(request.tools.some((tool: { name: string }) => ['create_booking', 'reschedule_booking'].includes(tool.name))).toBe(false);
   });
   it('uses the repo knowledge base when no override exists', async () => {
     const { service } = setup();
@@ -80,7 +126,7 @@ describe('OpenAI conversation', () => {
     vi.stubGlobal('fetch', fetch);
     await service.respond(conversation, context, 'Hi');
     const request = JSON.parse(fetch.mock.calls[0]![1]!.body as string);
-    const match = request.instructions.match(/Business knowledge base JSON: (.*)\nServices may/);
+    const match = request.instructions.match(/Business knowledge base JSON: (.*)\nCurrent UTC/);
     const knowledge = JSON.parse(match![1]).additionalKnowledge as string;
     expect(knowledge).toBe(DEFAULT_KNOWLEDGE_BASE);
     expect(knowledge).toContain('Для мене «вихідний» — календарний день, який я позначила вихідним у робочому графіку.');
@@ -91,33 +137,180 @@ describe('OpenAI conversation', () => {
   });
 
   it('stages mutation without executing and consumes it only on explicit confirmation', async () => {
-    const { service, tools, repository } = setup();
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'create_booking', arguments: JSON.stringify({ serviceId: 'massage', durationMinutes: 90, startAt: '2099-01-01T10:00:00.000Z' }) }] }) })));
-    expect((await service.respond(conversation, context, 'Запиши мене')).text).toContain('/confirm');
+    const { service, tools, repository, selector } = setup('booking');
+    selector.answerBoolean.mockResolvedValueOnce(true);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'plan_booking', arguments: JSON.stringify({ intent: 'create', bookingId: null }) }] }) })));
+    expect((await service.respond(conversation, context, 'Запиши мене')).text).toContain('так, підтверджую');
     expect(tools.execute).not.toHaveBeenCalled();
-    const saved = repository.saveConversation.mock.calls[0]![0];
+    const saved = { ...conversation, pendingAction: repository.replacePendingAction.mock.calls[0]![3] };
     expect(saved.pendingAction).toMatchObject({ arguments: { durationMinutes: 90 } });
-    expect((await service.respond(saved, context, '/confirm')).text).toContain('booking-1');
+    repository.listMessages.mockResolvedValue([{ role: 'assistant', content: saved.pendingAction.confirmationText }]);
+    expect((await service.respond(saved, context, 'Так, підтверджую')).text).toContain('booking-1');
     expect(tools.execute).toHaveBeenCalledOnce();
-    expect(repository.saveConversation.mock.calls[1]![0].pendingAction).toBeUndefined();
+    expect(repository.replacePendingAction.mock.calls[1]![3]).toBeUndefined();
   });
   it('does not execute expired pending actions', async () => {
     const { service, tools } = setup();
     await service.respond({ ...conversation, pendingAction: { name: 'cancel_booking', arguments: { bookingId: 'b' }, expiresAt: '2020-01-01T00:00:00.000Z' } }, context, '/confirm');
     expect(tools.execute).not.toHaveBeenCalled();
   });
-  it('asks for a duration instead of staging an ambiguous multi-option booking', async () => {
+  it('rejects direct booking tools that bypass the planner', async () => {
     const { service, repository } = setup();
     const fetch = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'create_booking', arguments: JSON.stringify({ serviceId: 'massage', startAt: '2099-01-01T10:00:00.000Z' }) }] }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: '60 чи 90 хвилин?' }] }] }) });
     vi.stubGlobal('fetch', fetch);
-    expect((await service.respond(conversation, context, 'Запиши мене')).text).toContain('60 чи 90');
+    expect((await service.respond(conversation, context, 'Запиши мене')).needsHuman).toBe(true);
     expect(repository.saveConversation).not.toHaveBeenCalled();
     const request = JSON.parse(fetch.mock.calls[0]![1].body);
-    expect(request.tools.find((tool: { name: string }) => tool.name === 'create_booking').parameters.required).toContain('durationMinutes');
+    expect(request.tools.find((tool: { name: string }) => tool.name === 'create_booking')).toBeUndefined();
   });
   it('returns a safe fallback when the provider fails', async () => {
     const { service } = setup();
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 429 })));
-    expect((await service.respond(conversation, context, 'Привіт')).text).toContain('Спробуйте');
+    expect((await service.respond(conversation, context, 'Привіт')).needsHuman).toBe(true);
+  });
+});
+
+it('routes explicit model uncertainty to humans without executing a booking tool', async () => {
+  const { service, tools } = setup();
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'request_human_assistance', arguments: '{}' }] }) })));
+  expect((await service.respond(conversation, context, 'Uncertain request')).needsHuman).toBe(true);
+  expect(tools.execute).not.toHaveBeenCalled();
+});
+
+
+describe('System One dispatch', () => {
+  it('selects before General and supplies bounded context without business facts', async () => {
+    const { service, selector, repository } = setup();
+    repository.listMessages.mockResolvedValue(Array.from({ length: 25 }, () => ({ role: 'user', content: 'x'.repeat(5000) })) as never);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello' }] }] }) }));
+    await service.respond({ ...conversation, summary: 's'.repeat(5000) }, context, 'Hi');
+    expect(selector.select).toHaveBeenCalledOnce();
+    const input = selector.select.mock.calls[0]![0];
+    expect(input).toMatchObject({ message: 'Hi', hasPendingProposal: false });
+    expect(input.summary).toHaveLength(4000);
+    expect(input.history).toHaveLength(20);
+    expect(input.history[0].content).toHaveLength(4000);
+    expect(Object.keys(input).sort()).toEqual(['hasPendingProposal', 'history', 'message', 'summary']);
+    expect(selector.select.mock.invocationCallOrder[0]).toBeLessThan(repository.getAssistantPromptOverride.mock.invocationCallOrder[0]!);
+  });
+  it('isolates Booking from the General override while retaining media tools', async () => {
+    const { service, repository, selector } = setup('booking');
+    repository.getAssistantPromptOverride.mockResolvedValue({ prompt: 'GENERAL CUSTOM SECRET', updatedAt: '2026-01-01T00:00:00.000Z' });
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Which booking?' }] }] }) });
+    vi.stubGlobal('fetch', fetch);
+    await service.respond(conversation, context, 'Move my booking');
+    expect(selector.select).toHaveBeenCalledOnce();
+    expect(repository.getAssistantPromptOverride).not.toHaveBeenCalled();
+    const body = JSON.parse(fetch.mock.calls[0]![1].body);
+    expect(body.instructions).toContain('SYSTEM TWO: BOOKING');
+    expect(body.instructions).not.toContain('GENERAL CUSTOM SECRET');
+    expect(body.tools.map((tool: { name: string }) => tool.name)).toContain('plan_booking');
+    expect(body.tools.map((tool: { name: string }) => tool.name)).toContain('send_media');
+  });
+  it('rejects Booking tools on the General route without executing the planner', async () => {
+    const { service, planner } = setup();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'function_call', name: 'plan_booking', arguments: '{"intent":"create","bookingId":null}' }] }) }));
+    expect((await service.respond(conversation, context, 'Hi')).needsHuman).toBe(true);
+    expect(planner.plan).not.toHaveBeenCalled();
+  });
+  it.each(['failure', 'invalid'] as const)('does not start System Two after selection %s', async (kind) => {
+    const { service, selector, repository } = setup();
+    if (kind === 'failure') selector.select.mockRejectedValue(new Error('private provider details'));
+    else selector.select.mockResolvedValue('unknown' as never);
+    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+    expect((await service.respond(conversation, context, 'Hi')).needsHuman).toBe(true);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(repository.getAssistantPromptOverride).not.toHaveBeenCalled();
+  });
+  it('checks every eligible message, and rejects oversized text before selection', async () => {
+    const { service, selector } = setup();
+    await service.respond(conversation, context, '/confirm');
+    await service.respond(conversation, context, '/cancel');
+    expect(selector.select).toHaveBeenCalledTimes(2);
+    selector.select.mockClear();
+    await service.respond(conversation, context, 'x'.repeat(4001));
+    expect(selector.select).not.toHaveBeenCalled();
+  });
+});
+
+
+it('selects anew on each turn and exposes active proposal presence without its arguments', async () => {
+  const { service, selector } = setup('booking');
+  const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Reply' }] }] }) });
+  vi.stubGlobal('fetch', fetch);
+  const pendingAction = { name: 'cancel_booking' as const, arguments: { bookingId: 'private-booking' }, expiresAt: '2099-01-01T00:00:00.000Z' };
+  await service.respond({ ...conversation, pendingAction }, context, 'yes');
+  expect(selector.select.mock.calls[0]![0].hasPendingProposal).toBe(true);
+  expect(JSON.stringify(selector.select.mock.calls[0]![0])).not.toContain('private-booking');
+  selector.select.mockResolvedValue('general');
+  await service.respond({ ...conversation, pendingAction: { ...pendingAction, expiresAt: '2000-01-01T00:00:00.000Z' } }, context, 'Where are you located?');
+  expect(selector.select).toHaveBeenCalledTimes(2);
+  expect(selector.select.mock.calls[1]![0].hasPendingProposal).toBe(false);
+  expect(JSON.parse(fetch.mock.calls[0]![1].body).instructions).toContain('SYSTEM TWO: BOOKING');
+  expect(JSON.parse(fetch.mock.calls[1]![1].body).instructions).toContain('SYSTEM TWO: GENERAL');
+});
+
+
+const naturalProposal = { id: '2a1c75d0-d891-4e04-8b54-341cba762ae6', name: 'cancel_booking' as const, arguments: { bookingId: 'booking-1' }, expiresAt: '2099-01-01T00:00:00.000Z', confirmationText: 'Cancel appointment tomorrow at 10:00?' };
+describe('natural confirmation', () => {
+  it('executes only after true approval and atomic consumption, without routing or probability', async () => {
+    const { service, selector, tools, repository } = setup();
+    repository.listMessages.mockResolvedValue([{ role: 'assistant', content: naturalProposal.confirmationText }]);
+    selector.answerBoolean.mockResolvedValueOnce(true);
+    const reply = await service.respond({ ...conversation, pendingAction: naturalProposal }, context, 'Так, підтверджую');
+    expect(reply.text).toContain('Готово');
+    expect(repository.replacePendingAction).toHaveBeenCalledWith('chat', 'alice', naturalProposal, undefined, { requireUnexpired: true });
+    expect(repository.replacePendingAction.mock.invocationCallOrder[0]).toBeLessThan(tools.execute.mock.invocationCallOrder[0]!);
+    expect(tools.execute).toHaveBeenCalledWith(naturalProposal, context);
+    expect(selector.select).not.toHaveBeenCalled();
+    expect(selector.estimateProbability).not.toHaveBeenCalled();
+  });
+  it('separately detects rejection and discards without executing', async () => {
+    const { service, selector, tools, repository } = setup();
+    repository.listMessages.mockResolvedValue([{ role: 'assistant', content: naturalProposal.confirmationText }]);
+    selector.answerBoolean.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    expect((await service.respond({ ...conversation, pendingAction: naturalProposal }, context, 'Ні, дякую')).text).toContain('Існуючі записи не змінено');
+    expect(selector.answerBoolean).toHaveBeenCalledTimes(2);
+    expect(repository.replacePendingAction).toHaveBeenCalledWith('chat', 'alice', naturalProposal, undefined);
+    expect(tools.execute).not.toHaveBeenCalled();
+    expect(selector.select).not.toHaveBeenCalled();
+  });
+  it('keeps ambiguous or changed-details replies out of execution and continues routing', async () => {
+    const { service, selector, tools, repository } = setup();
+    repository.listMessages.mockResolvedValue([{ role: 'assistant', content: naturalProposal.confirmationText }]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Please clarify' }] }] }) }));
+    await service.respond({ ...conversation, pendingAction: naturalProposal }, context, 'Maybe, can we change the time?');
+    expect(selector.answerBoolean).toHaveBeenCalledTimes(2);
+    expect(selector.select).toHaveBeenCalledOnce();
+    expect(repository.replacePendingAction).not.toHaveBeenCalled();
+    expect(tools.execute).not.toHaveBeenCalled();
+  });
+  it.each(['error', 'invalid', 'stale'] as const)('never executes on %s confirmation', async (kind) => {
+    const { service, selector, tools, repository } = setup();
+    repository.listMessages.mockResolvedValue([{ role: 'assistant', content: naturalProposal.confirmationText }]);
+    if (kind === 'error') selector.answerBoolean.mockRejectedValueOnce(new DOMException('timeout', 'TimeoutError'));
+    else selector.answerBoolean.mockResolvedValueOnce(kind === 'invalid' ? 'true' as never : true);
+    if (kind === 'stale') repository.replacePendingAction.mockResolvedValueOnce(false);
+    const result = await service.respond({ ...conversation, pendingAction: naturalProposal }, context, 'yes');
+    expect(tools.execute).not.toHaveBeenCalled();
+    if (kind !== 'stale') { expect(result.needsHuman).toBe(true); expect(repository.replacePendingAction).not.toHaveBeenCalled(); }
+  });
+  it('skips boolean checks for missing, expired and legacy proposals', async () => {
+    const { service, selector, tools } = setup();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Which appointment?' }] }] }) }));
+    await service.respond(conversation, context, 'yes');
+    await service.respond({ ...conversation, pendingAction: { ...naturalProposal, expiresAt: '2000-01-01T00:00:00.000Z' } }, context, 'yes');
+    await service.respond({ ...conversation, pendingAction: { ...naturalProposal, confirmationText: undefined } }, context, 'yes');
+    expect(selector.answerBoolean).not.toHaveBeenCalled();
+    expect(tools.execute).not.toHaveBeenCalled();
+  });
+  it('keeps a consumed action consumed when execution fails', async () => {
+    const { service, selector, tools, repository } = setup();
+    repository.listMessages.mockResolvedValue([{ role: 'assistant', content: naturalProposal.confirmationText }]);
+    selector.answerBoolean.mockResolvedValueOnce(true);
+    tools.execute.mockRejectedValueOnce(new Error('uncertain'));
+    expect((await service.respond({ ...conversation, pendingAction: naturalProposal }, context, 'yes')).needsHuman).toBe(true);
+    expect(repository.replacePendingAction).toHaveBeenCalledOnce();
+    expect(repository.replacePendingAction.mock.calls[0]![3]).toBeUndefined();
   });
 });

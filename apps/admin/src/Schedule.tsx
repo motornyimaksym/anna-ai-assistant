@@ -14,6 +14,7 @@ export function Schedule() {
     </Typography>
     {query.isPending ? <Typography>Loading imported slots…</Typography> : query.isError ? <Alert severity="error">Could not load imported schedule slots.</Alert> : <Stack spacing={2}>
       <ScheduleSyncStatus data={query.data} />
+
       {query.data.slots.length ? <List aria-label="Imported free slots" disablePadding>
         {query.data.slots.map((slot) => <ListItem key={slot.messageId} divider alignItems="flex-start" disableGutters>
           <ListItemText primary={slot.text} secondary={`Telegram message · ${formatKyiv(slot.createdAt)} (Europe/Kyiv)`} />

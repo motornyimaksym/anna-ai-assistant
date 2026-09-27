@@ -21,3 +21,11 @@ describe('service duration options', () => {
     expect(pendingActionSchema.parse({ name: 'create_booking', arguments: { serviceId: 'massage', durationMinutes: 90 }, expiresAt: '2099-01-01T00:00:00.000Z' }).arguments.durationMinutes).toBe(90);
   });
 });
+
+it('preserves new proposal identity and exact confirmation text with legacy compatibility', () => {
+  const legacy = { name: 'cancel_booking', arguments: { bookingId: 'booking' }, expiresAt: '2099-01-01T00:00:00.000Z' };
+  expect(pendingActionSchema.parse(legacy)).toEqual(legacy);
+  const proposal = { ...legacy, id: '2a1c75d0-d891-4e04-8b54-341cba762ae6', confirmationText: 'Cancel your appointment tomorrow at 10:00?' };
+  expect(pendingActionSchema.parse(proposal)).toEqual(proposal);
+  expect(pendingActionSchema.safeParse({ ...proposal, confirmationText: 'x'.repeat(4001) }).success).toBe(false);
+});

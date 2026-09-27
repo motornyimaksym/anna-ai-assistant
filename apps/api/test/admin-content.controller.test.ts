@@ -29,6 +29,14 @@ const setup = () => {
 };
 
 describe('admin content endpoints', () => {
+  it('serves code-owned instructions grouped by system', () => {
+    const { controller } = setup();
+    const catalog = controller.promptCatalog();
+    expect(catalog.systemOne.map(({ id }) => id)).toEqual(['routing', 'approval', 'rejection', 'probability']);
+    expect(catalog.systemTwo.map(({ id }) => id)).toEqual(['booking-conversation']);
+    expect(catalog.systemOne[0]?.content).toContain('Select the System Two workflow');
+    expect(catalog.systemTwo[0]?.content).toContain('SYSTEM TWO: BOOKING');
+  });
   it('serves the packaged spec', async () => {
     const { controller, specService } = setup();
     await expect(controller.spec()).resolves.toEqual({ content: '# Test spec' });

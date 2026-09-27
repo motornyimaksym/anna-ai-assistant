@@ -76,7 +76,8 @@ export class TelegramScheduleImportStore {
     await getFirestore().runTransaction(async (transaction) => {
       const data = (await transaction.get(this.ref)).data() ?? {};
       if (data.attemptId !== attemptId) return;
-      transaction.set(this.ref, { ...snapshot, status }, { merge: true });
+      const derived = snapshot ? { ...snapshot, slots: snapshot.slots.slice(-5) } : {};
+      transaction.set(this.ref, { ...derived, status }, { merge: true });
     });
   }
 

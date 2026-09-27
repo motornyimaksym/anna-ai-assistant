@@ -27,7 +27,7 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('Telegram schedule history transport', () => {
-  it('requests only the latest five messages and returns them chronologically', async () => {
+  it('requests bounded schedule history and returns them chronologically', async () => {
     const result = await new TelegramAccountTransport().readScheduleMessages(credentials, { session: '' });
     expect(client.getMessages).toHaveBeenCalledWith(dialog.inputEntity, { limit: 5 });
     expect(result).toMatchObject({ sourcePeerId: '-10042', sourceChatTitle: dialog.title });

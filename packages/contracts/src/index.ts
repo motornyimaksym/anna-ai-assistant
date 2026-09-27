@@ -45,7 +45,7 @@ export const scheduleExceptionSchema = z.object({ id: z.string().min(1), date: z
 export const bookingSchema = z.object({
   durationMinutes: z.number().int().min(15).max(480).optional(), price: z.number().finite().nonnegative().optional(), currency: z.string().length(3).optional(),
   id: z.string().min(1), clientId: z.string().min(1), serviceId: z.string().min(1), startAt: z.string().datetime(), endAt: z.string().datetime(), status: bookingStatusSchema,
-  telegramChatId: z.string().min(1), businessConnectionId: z.string().optional(), googleCalendarEventId: z.string().optional(), googleCalendarId: z.string().optional(), calendarSyncStatus: calendarSyncStatusSchema,
+  telegramChatId: z.string().min(1), businessConnectionId: z.string().optional(), googleCalendarEventId: z.string().optional(), googleCalendarId: z.string().optional(), calendarSyncStatus: calendarSyncStatusSchema, calendarOperation: z.enum(['create', 'reschedule', 'cancel']).optional(),
   createdAt: z.string().datetime(), updatedAt: z.string().datetime()
 });
 export const clientSchema = z.object({ telegramUserId: z.string().min(1), username: z.string().optional(), firstName: z.string().min(1), lastName: z.string().optional(), phone: z.string().optional(), createdAt: z.string().datetime(), updatedAt: z.string().datetime() });
@@ -54,10 +54,13 @@ export const updateBookingRequestSchema = z.object({ status: bookingStatusSchema
 export const rescheduleBookingRequestSchema = z.object({ startAt: z.string().datetime() });
 export const availableSlotsRequestSchema = z.object({ durationMinutes: serviceDurationOptionSchema.shape.durationMinutes.optional(), serviceId: z.string().min(1), date: z.string().date(), after: timeSchema.optional(), before: timeSchema.optional() });
 export const availableSlotsResponseSchema = z.object({ slots: z.array(z.string().datetime()) });
-export const pendingActionSchema = z.object({ name: z.enum(['create_booking', 'cancel_booking', 'reschedule_booking']), arguments: z.record(z.union([z.string(), z.number().finite()])), expiresAt: z.string().datetime() });
-export const conversationSchema = z.object({ telegramChatId: z.string().min(1), clientId: z.string().optional(), businessConnectionId: z.string().optional(), assistantEnabled: z.boolean(), state: z.string().default('active'), summary: z.string().default(''), pendingAction: pendingActionSchema.optional(), humanTakeoverUntil: z.string().datetime().optional(), activeHumanRequestId: z.string().optional(), createdAt: z.string().datetime(), updatedAt: z.string().datetime() });
+export const pendingActionSchema = z.object({ id: z.string().uuid().optional(), confirmationText: z.string().min(1).max(4000).optional(), name: z.enum(['create_booking', 'cancel_booking', 'reschedule_booking']), arguments: z.record(z.union([z.string(), z.number().finite()])), expiresAt: z.string().datetime() });
+export const conversationSchema = z.object({ telegramChatId: z.string().min(1), clientId: z.string().optional(), businessConnectionId: z.string().optional(), openaiConversationId: z.string().min(1).optional(), assistantEnabled: z.boolean(), state: z.string().default('active'), summary: z.string().default(''), pendingAction: pendingActionSchema.optional(), humanTakeoverUntil: z.string().datetime().optional(), activeHumanRequestId: z.string().optional(), createdAt: z.string().datetime(), updatedAt: z.string().datetime() });
 export const patchConversationSchema = z.object({ assistantEnabled: z.boolean().optional(), humanTakeoverUntil: z.string().datetime().nullable().optional() }).refine((value) => Object.keys(value).length > 0, 'At least one field is required');
 export const assistantPromptResponseSchema = z.object({ prompt: z.string(), isCustom: z.boolean(), updatedAt: z.string().datetime().optional() });
+export const promptCatalogEntrySchema = z.object({ id: z.string(), label: z.string(), description: z.string(), content: z.string() });
+export const promptCatalogResponseSchema = z.object({ systemOne: z.array(promptCatalogEntrySchema), systemTwo: z.array(promptCatalogEntrySchema) });
+export type PromptCatalogResponse = z.infer<typeof promptCatalogResponseSchema>;
 export const updateAssistantPromptSchema = z.object({ prompt: z.string().min(1).max(12_000).refine((prompt) => prompt.trim().length > 0, 'Prompt must not be blank') });
 export const botSettingsSchema = z.object({ maxReadDelayMs: z.number().int().min(0).max(3_540_000), typingDelayPerSymbolMs: z.number().int().min(0).max(800) });
 export const botSettingsResponseSchema = botSettingsSchema.extend({ isCustom: z.boolean(), updatedAt: z.string().datetime().optional() });
@@ -74,7 +77,6 @@ export const telegramToolArgsSchema = z.discriminatedUnion('name', [
   z.object({ name: z.literal('get_media'), arguments: z.object({}).strict() }),
   z.object({ name: z.literal('send_media'), arguments: z.object({ mediaId: mediaIdSchema }).strict() }),
   z.object({ name: z.literal('get_services'), arguments: z.object({}) }),
-  z.object({ name: z.literal('get_available_slots'), arguments: availableSlotsRequestSchema }),
   z.object({ name: z.literal('create_booking'), arguments: createBookingRequestSchema }),
   z.object({ name: z.literal('get_bookings'), arguments: z.object({ clientId: z.string().min(1) }) }),
   z.object({ name: z.literal('cancel_booking'), arguments: z.object({ bookingId: z.string().min(1) }) }),
@@ -93,3 +95,6 @@ export * from './telegram-schedule-import.js';
 export * from './ai-chat.js';
 
 export * from './google-calendar.js';
+export * from './booking-plan.js';
+export * from './debug.js';
+export * from './prompt-test.js';

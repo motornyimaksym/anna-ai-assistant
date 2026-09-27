@@ -25,6 +25,15 @@ describe('private thread persistence', () => {
     await expect(store.acquire('stakeholder', thread.id)).rejects.toThrow('Chat not found');
     expect((await store.read('owner', thread.id)).id).toBe(thread.id);
   });
+  it('keeps OpenAI conversation IDs on their owner threads', async () => {
+    const { store } = fixture();
+    const owner = await store.create('owner'); const other = await store.create('other');
+    const lease = await store.acquire('owner', owner.id);
+    lease.openaiConversationId = 'conv-owner'; await store.save('owner', lease);
+    expect((await store.acquire('owner', owner.id)).openaiConversationId).toBe('conv-owner');
+    expect((await store.acquire('other', other.id)).openaiConversationId).toBeUndefined();
+    await expect(store.acquire('other', owner.id)).rejects.toThrow('Chat not found');
+  });
   it('allows only one concurrent turn and refuses stale lease writes', async () => {
     const { store } = fixture(); const thread = await store.create('owner');
     const result = await Promise.allSettled([store.acquire('owner', thread.id), store.acquire('owner', thread.id)]);

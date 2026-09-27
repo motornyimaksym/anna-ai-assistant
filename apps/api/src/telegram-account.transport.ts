@@ -111,7 +111,7 @@ export class TelegramAccountTransport {
       }
       const history = sourceTopicId === 1 ? await this.generalHistory(client, dialog.inputEntity)
         : await client.getMessages(dialog.inputEntity, { limit: 5, ...(sourceTopicId !== undefined ? { replyTo: sourceTopicId } : {}) });
-      const slots = history
+      const slots = history.slice(0, 5)
         .filter((message): message is Api.Message => message instanceof Api.Message && !!message.message?.trim())
         .map((message) => ({ messageId: String(message.id), text: message.message.slice(0, 4_000), createdAt: new Date(message.date * 1000).toISOString() }))
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt));

@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GoogleCalendarSettings } from './GoogleCalendarSettings.js';
 import { adminApi } from './api.js';
-vi.mock('./api.js', () => ({ adminApi: { googleCalendar: vi.fn(), startGoogleCalendar: vi.fn(), googleCalendars: vi.fn(), selectGoogleCalendar: vi.fn(), checkGoogleCalendar: vi.fn(), disconnectGoogleCalendar: vi.fn() } }));
+vi.mock('./api.js', () => ({ adminApi: { googleCalendar: vi.fn(), startGoogleCalendar: vi.fn(), googleCalendars: vi.fn(), selectGoogleCalendar: vi.fn(), selectConflictCalendars: vi.fn(), checkGoogleCalendar: vi.fn(), disconnectGoogleCalendar: vi.fn() } }));
 const connected = { configured: true, phase: 'connected' as const, legacy: false, email: 'anna.lush.massage@gmail.com', calendarId: 'anna.lush.massage@gmail.com', calendarTitle: 'Anna' };
 beforeEach(() => {
   vi.mocked(adminApi.googleCalendar).mockResolvedValue(connected);
@@ -40,4 +40,14 @@ describe('Calendar Settings', () => {
     expect(await screen.findByText('Connection retained; try again.')).toBeTruthy();
     expect(screen.getByText(/Status: connected/)).toBeTruthy();
   });
+});
+
+it('shows permission diagnostics and saves personal conflict calendars', async () => {
+  vi.mocked(adminApi.googleCalendar).mockResolvedValue({ ...connected, writePermission: 'missing', conflictCalendarIds: [connected.calendarId] });
+  vi.mocked(adminApi.googleCalendars).mockResolvedValue([{ id: connected.calendarId, title: 'Anna', primary: true, writable: true }, { id: 'personal', title: 'Personal', primary: false, writable: false }]);
+  vi.mocked(adminApi.selectConflictCalendars).mockResolvedValue({ ...connected, conflictCalendarIds: [connected.calendarId, 'personal'] });
+  show(); expect(await screen.findByText(/Reconnect required/)).toBeTruthy();
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'Personal' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save conflict calendars' }));
+  await waitFor(() => expect(adminApi.selectConflictCalendars).toHaveBeenCalledWith([connected.calendarId, 'personal'], expect.anything()));
 });

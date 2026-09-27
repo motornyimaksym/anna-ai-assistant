@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BookingRepository } from '../src/repository.js';
 import type { HumanAssistanceStore } from '../src/human-assistance.store.js';
 import { HumanAssistanceService, needsHuman } from '../src/human-assistance.service.js';
@@ -9,12 +9,25 @@ const conversation: ConversationDto = { telegramChatId: '123', assistantEnabled:
 const setup = (thresholdPercent = 60) => {
   const store = { settings: vi.fn(async () => ({ thresholdPercent, usernames: [] })), connected: vi.fn(async () => []), open: vi.fn(), setDelivery: vi.fn(), get: vi.fn(), claimAnswer: vi.fn(), completeAnswer: vi.fn() };
   const repository = { getKnowledgeBaseOverride: vi.fn(async () => ({ content: 'Open 10:00–20:00', updatedAt: conversation.updatedAt })), listServices: vi.fn(async () => [{ id: 'massage-60', name: 'Massage', description: 'Classic', durationMinutes: 60, price: 1500, currency: 'UAH', enabled: true }]), listMessages: vi.fn(async () => [{ role: 'user' as const, content: 'Earlier question' }]), appendMessage: vi.fn() };
-  return { service: new HumanAssistanceService(store as unknown as HumanAssistanceStore, repository as unknown as BookingRepository), store, repository };
+  const debug = { record: vi.fn(async () => {}) };
+  return { service: new HumanAssistanceService(store as unknown as HumanAssistanceStore, repository as unknown as BookingRepository, debug as never), store, repository, debug };
 };
 const request = { id: 'case-1', conversationId: '123', telegramChatId: '123', telegramUpdateId: 1, businessConnectionId: 'business-1', status: 'open', reason: 'knowledge_gap', probability: 0.7, thresholdPercent: 60, question: 'Unknown?', queuedMessages: [], notifications: {}, acknowledgement: 'sent', createdAt: conversation.createdAt, updatedAt: conversation.updatedAt } as const;
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe('Jev decision', () => {
+  beforeEach(() => { vi.stubEnv('JEV_ROUTING_ENABLED', 'true'); });
+  it('skips Jev and its input reads by default even when a token exists', async () => {
+    vi.stubEnv('JEV_ROUTING_ENABLED', undefined);
+    vi.stubEnv('JEV_TOKEN', 'test-jev-token');
+    const fetcher = vi.fn();
+    vi.stubGlobal('fetch', fetcher);
+    const { service, store, repository } = setup();
+    expect(await service.decide(conversation, 'What is the price?')).toEqual({ route: 'openai' });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(store.settings).not.toHaveBeenCalled();
+    expect(repository.listServices).not.toHaveBeenCalled();
+  });
   it('uses inclusive probability threshold', () => {
     expect(needsHuman(0.5, 60)).toBe(false);
     expect(needsHuman(0.6, 60)).toBe(true);
@@ -46,30 +59,30 @@ describe('Jev decision', () => {
     await service.decide(conversation, 'What is the policy?');
     expect(JSON.parse(fetcher.mock.calls[0]![1].body).state.knowledge_base).toBe(DEFAULT_KNOWLEDGE_BASE);
   });
-  it('holds valid high scores and continues with OpenAI when Jev is unavailable', async () => {
+  it('routes high scores and Jev failures to responsible people', async () => {
     vi.stubEnv('JEV_TOKEN', 'test-jev-token');
     const fetcher = vi.fn(async () => ({ ok: true, json: async () => ({ code: 0, data: { answers: { needs_human_assistance: { noul: 0.6 } } } }) }));
     vi.stubGlobal('fetch', fetcher);
     const { service } = setup();
     expect(await service.decide(conversation, 'Unknown policy?')).toEqual({ route: 'human', reason: 'knowledge_gap', probability: 0.6, thresholdPercent: 60 });
     fetcher.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ code: 0, data: { answers: { needs_human_assistance: { noul: '0.5' } } } }) }));
-    expect(await service.decide(conversation, 'Unknown policy?')).toEqual({ route: 'openai' });
+    expect(await service.decide(conversation, 'Unknown policy?')).toEqual({ route: 'human', reason: 'jev_unavailable', thresholdPercent: 60 });
     fetcher.mockImplementationOnce(async () => ({ ok: false, json: async () => ({}) }));
-    expect(await service.decide(conversation, 'Unknown policy?')).toEqual({ route: 'openai' });
+    expect(await service.decide(conversation, 'Unknown policy?')).toEqual({ route: 'human', reason: 'jev_unavailable', thresholdPercent: 60 });
     fetcher.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ code: 1 }) }));
-    expect(await service.decide(conversation, 'Unknown policy?')).toEqual({ route: 'openai' });
+    expect(await service.decide(conversation, 'Unknown policy?')).toEqual({ route: 'human', reason: 'jev_unavailable', thresholdPercent: 60 });
     fetcher.mockImplementationOnce(async () => { throw new Error('timeout'); });
-    expect(await service.decide(conversation, 'Unknown policy?')).toEqual({ route: 'openai' });
+    expect(await service.decide(conversation, 'Unknown policy?')).toEqual({ route: 'human', reason: 'jev_unavailable', thresholdPercent: 60 });
     vi.stubEnv('JEV_TOKEN', undefined);
     expect(await service.decide(conversation, 'Unknown policy?')).toEqual({ route: 'openai' });
   });
-  it('continues with OpenAI when essential Jev input exceeds the body cap', async () => {
+  it('requests human assistance when essential Jev input exceeds the body cap', async () => {
     vi.stubEnv('JEV_TOKEN', 'test-jev-token');
     const fetcher = vi.fn();
     vi.stubGlobal('fetch', fetcher);
     const { service, repository } = setup();
     repository.getKnowledgeBaseOverride.mockResolvedValue({ content: 'K'.repeat(33 * 1024), updatedAt: conversation.updatedAt });
-    expect(await service.decide(conversation, 'Can you answer?')).toEqual({ route: 'openai' });
+    expect(await service.decide(conversation, 'Can you answer?')).toEqual({ route: 'human', reason: 'jev_unavailable', thresholdPercent: 60 });
     expect(fetcher).not.toHaveBeenCalled();
   });
 });
@@ -115,4 +128,35 @@ describe('human reply delivery', () => {
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+});
+
+it('sends operational failures to configured verified responders without consulting Jev', async () => {
+  vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
+  const { service, store } = setup(100);
+  store.open.mockResolvedValue({ request, created: true });
+  store.connected.mockResolvedValue([{ userId: '42', chatId: '42', username: 'responsible' }] as never);
+  const fetcher = vi.fn(async (url: string) => ({ ok: true, json: async () => url.endsWith('/getChat') ? { ok: true, result: { id: 42, type: 'private', username: 'responsible' } } : { ok: true } }));
+  vi.stubGlobal('fetch', fetcher);
+  await service.escalateError('123', 'business-1', 777, '/confirm', 'Booking safe-id has an uncertain Calendar outcome.');
+  expect(store.open).toHaveBeenCalledWith('123', 'business-1', 777, expect.stringContaining('safe-id'), 'operation_error', undefined, 100);
+  const deliveries = fetcher.mock.calls.filter(([url]) => url.endsWith('/sendMessage'));
+  expect(deliveries).toHaveLength(1);
+  expect(JSON.parse(deliveries[0]![1]!.body as string)).toMatchObject({ chat_id: '42', text: expect.stringContaining('safe-id') });
+  expect(JSON.parse(deliveries[0]![1]!.body as string)).not.toHaveProperty('business_connection_id');
+  expect(store.setDelivery).toHaveBeenCalledWith('case-1', '42:initial', 'sent');
+  expect(store.setDelivery.mock.calls.every(([, recipient]) => recipient !== undefined)).toBe(true);
+  expect(fetcher.mock.calls.every(([url]) => !url.includes('jevai'))).toBe(true);
+});
+
+it('keeps an open case without sending a client message when no responder is connected', async () => {
+  vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
+  const { service, store, debug } = setup();
+  store.open.mockResolvedValue({ request, created: true });
+  const fetcher = vi.fn();
+  vi.stubGlobal('fetch', fetcher);
+  await service.escalate('123', 'business-1', 778, 'Unknown?', { reason: 'knowledge_gap', thresholdPercent: 60 });
+  expect(store.open).toHaveBeenCalledOnce();
+  expect(store.setDelivery).not.toHaveBeenCalled();
+  expect(debug.record).toHaveBeenCalledWith(expect.any(Object), 'handoff', expect.objectContaining({ reason: 'no_connected_responders', responderCount: 0 }), 'warn');
+  expect(fetcher).not.toHaveBeenCalled();
 });

@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { BookingConflictError } from '@booking/domain';
@@ -18,7 +18,16 @@ describe.skipIf(!withEmulator)('Firestore booking transactions', () => {
   const setup = async () => {
     const repository = new BookingRepository(new FirebaseAdminService());
     await repository.saveService({ id: 'massage-60', name: 'Massage', description: '', durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH', enabled: true });
-    return { repository, service: new BookingService(repository, new CalendarService({ credentials: async () => undefined } as never)) };
+    const events = new Map<string, unknown>();
+    const calendar = {
+      destination: async () => 'test-calendar',
+      getBusyIntervals: vi.fn(async () => []),
+      verifyBookingEvent: vi.fn(async (booking: { id: string }) => events.has(booking.id)),
+      createBookingEvent: vi.fn(async (booking: { id: string }) => { events.set(booking.id, booking); }),
+      updateBookingEvent: vi.fn(async (booking: { id: string }) => { events.set(booking.id, booking); }),
+      deleteBookingEvent: vi.fn(async () => {}),
+    };
+    return { repository, calendar, service: new BookingService(repository, calendar as unknown as CalendarService) };
   };
 
   it('allows only one concurrent reservation for a locked slot', async () => {
@@ -46,6 +55,48 @@ describe.skipIf(!withEmulator)('Firestore booking transactions', () => {
     await service.create({ clientId: 'two', serviceId: 'massage-60', startAt: '2026-09-23T09:00:00.000Z', telegramChatId: '2' });
     await expect(service.reschedule(first.id, { startAt: '2026-09-23T09:00:00.000Z' })).rejects.toThrow(BookingConflictError);
     expect((await repository.getBooking(first.id))?.startAt).toBe(first.startAt);
+  });
+
+  it('retains pending create locks on ambiguous writes and recovers without another event', async () => {
+    const { service, repository, calendar } = await setup();
+    calendar.createBookingEvent.mockImplementationOnce(async () => { throw new Error('lost response'); });
+    const input = { clientId: 'failure', telegramChatId: 'failure', serviceId: 'massage-60', startAt: '2099-02-01T09:00:00Z' };
+    await expect(service.create(input)).rejects.toThrow('human review');
+    const pending = (await repository.listBookings()).find((booking) => booking.clientId === 'failure')!;
+    expect(pending).toMatchObject({ status: 'pending', calendarOperation: 'create', calendarSyncStatus: 'failed' });
+    await expect(service.create(input)).rejects.toThrow(BookingConflictError);
+    calendar.verifyBookingEvent.mockResolvedValueOnce(true);
+    expect(await service.retry(pending.id)).toMatchObject({ status: 'confirmed', calendarSyncStatus: 'synced' });
+    expect(calendar.createBookingEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds old and new intervals until reschedule succeeds, then releases old locks', async () => {
+    const { service, repository, calendar } = await setup();
+    const input = { clientId: 'move', telegramChatId: 'move', serviceId: 'massage-60', startAt: '2099-03-01T09:00:00Z' };
+    const booking = await service.create(input);
+    calendar.updateBookingEvent.mockRejectedValueOnce(new Error('timeout'));
+    await expect(service.reschedule(booking.id, { startAt: '2099-03-02T09:00:00Z' })).rejects.toThrow('human review');
+    expect((await repository.getBooking(booking.id))?.startAt).toBe(input.startAt);
+    await expect(service.create({ ...input, startAt: '2099-03-02T09:00:00Z' })).rejects.toThrow(BookingConflictError);
+    const moved = await service.retry(booking.id);
+    expect(moved.startAt).toBe('2099-03-02T09:00:00Z');
+    expect((await service.create(input)).status).toBe('confirmed');
+  });
+
+  it('retains cancellation locks on failure and prevents concurrent operation claims', async () => {
+    const { service, repository, calendar } = await setup();
+    const input = { clientId: 'cancel-failure', telegramChatId: 'cancel', serviceId: 'massage-60', startAt: '2099-04-01T09:00:00Z' };
+    const booking = await service.create(input);
+    calendar.deleteBookingEvent.mockRejectedValueOnce(new Error('timeout'));
+    await expect(service.cancel(booking.id)).rejects.toThrow('human review');
+    expect((await repository.getBooking(booking.id))?.status).toBe('confirmed');
+    await expect(service.create(input)).rejects.toThrow(BookingConflictError);
+    const claims = await Promise.allSettled([repository.claimOperation(booking.id), repository.claimOperation(booking.id)]);
+    expect(claims.filter((claim) => claim.status === 'fulfilled')).toHaveLength(1);
+    const claim = claims.find((value) => value.status === 'fulfilled')!;
+    if (claim.status === 'fulfilled') await repository.failOperation(booking.id, claim.value.operation.leaseId);
+    expect((await service.retry(booking.id)).status).toBe('cancelled');
+    expect((await service.cancel(booking.id)).status).toBe('cancelled');
   });
 
   it('claims each Telegram update once across repository instances', async () => {

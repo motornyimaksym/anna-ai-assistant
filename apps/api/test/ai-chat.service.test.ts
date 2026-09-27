@@ -3,8 +3,8 @@ import { ServiceUnavailableException } from '@nestjs/common';
 import { AiChatService } from '../src/ai-chat.service.js';
 import { aiChatThreadSchema } from '@booking/contracts';
 import type { StoredThread } from '../src/ai-chat.store.js';
-const { request } = vi.hoisted(() => ({ request: vi.fn() }));
-vi.mock('../src/openai-transport.js', () => ({ requestOpenAiResponse: request }));
+const { request, createConversation } = vi.hoisted(() => ({ request: vi.fn(), createConversation: vi.fn(async () => 'conv-new') }));
+vi.mock('../src/openai-transport.js', () => ({ requestOpenAiResponse: request, createOpenAiConversation: createConversation }));
 const id = 'de51f614-fffc-4a23-824f-788758a041fb';
 const output = (name: string, args: unknown) => ({ output: [{ type: 'function_call', name, arguments: JSON.stringify(args), call_id: 'call-1' }] });
 const answer = (text: string) => ({ output: [{ type: 'message', content: [{ type: 'output_text', text }] }] });
@@ -30,6 +30,19 @@ describe('isolated AI conversation', () => {
     const body = request.mock.calls[0]![0];
     expect(body.tools.map((tool: { name: string }) => tool.name)).toEqual(['get_chats', 'get_chat', 'get_messages', 'search_messages', 'send_message', 'reply_to_message']);
     expect(body.instructions).not.toContain('MEDIA STORE');
+    expect(body.conversation).toBe('conv-new');
+    expect(body.input).toEqual([{ role: 'user', content: 'Find my chats' }]);
+    expect(request.mock.calls[1]![0].input).toEqual([{ type: 'function_call_output', call_id: 'call-1', output: expect.any(String) }]);
+    expect(f.get().openaiConversationId).toBe('conv-new');
+  });
+  it('reuses a legacy thread conversation ID and sends only its new message', async () => {
+    request.mockResolvedValue(answer('OK'));
+    const f = fixture();
+    f.set({ ...f.get(), messages: [{ role: 'user', text: 'old private text', createdAt: new Date().toISOString() }] });
+    await f.service.message('owner', id, 'new text');
+    await f.service.message('owner', id, 'next text');
+    expect(createConversation).toHaveBeenCalledOnce();
+    expect(request.mock.calls.map((call) => call[0].input)).toEqual([[{ role: 'user', content: 'new text' }], [{ role: 'user', content: 'next text' }]]);
   });
   it('returns safe connection guidance when a Telegram read fails', async () => {
     request.mockResolvedValueOnce(output('get_chats', {}));

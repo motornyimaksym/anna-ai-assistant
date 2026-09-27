@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { loadBackendEnv, loadBackendRuntimeEnv } from './index.js';
 
 describe('loadBackendEnv', () => {
+  it('accepts a backend TypeSafe token and rejects an empty configured token', () => {
+    expect(loadBackendRuntimeEnv({ TYPESAFE_AI_TOKEN: ' test-token ' }).TYPESAFE_AI_TOKEN).toBe('test-token');
+    expect(loadBackendRuntimeEnv({}).TYPESAFE_AI_TOKEN).toBeUndefined();
+    expect(() => loadBackendRuntimeEnv({ TYPESAFE_AI_TOKEN: ' ' })).toThrow();
+  });
   it('defaults the local API port to 2301', () => {
     expect(loadBackendEnv({}).PORT).toBe(2301);
   });
@@ -14,5 +19,10 @@ describe('loadBackendEnv', () => {
   it('validates the optional Telegram username restriction without an @ prefix', () => {
     expect(loadBackendRuntimeEnv({ TELEGRAM_ALLOWED_USERNAME: 'user61785' }).TELEGRAM_ALLOWED_USERNAME).toBe('user61785');
     expect(() => loadBackendRuntimeEnv({ TELEGRAM_ALLOWED_USERNAME: '@user61785' })).toThrow();
+  });
+  it('keeps Jev routing off unless explicitly enabled', () => {
+    expect(loadBackendRuntimeEnv({}).JEV_ROUTING_ENABLED).toBe(false);
+    expect(loadBackendRuntimeEnv({ JEV_ROUTING_ENABLED: 'true' }).JEV_ROUTING_ENABLED).toBe(true);
+    expect(() => loadBackendRuntimeEnv({ JEV_ROUTING_ENABLED: 'yes' })).toThrow();
   });
 });

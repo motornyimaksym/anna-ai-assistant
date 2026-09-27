@@ -5,6 +5,7 @@ import { FirebaseAdminService } from './firebase-admin.js';
 export type CalendarEnvelope = { version: 1; iv: string; tag: string; ciphertext: string };
 export type CalendarConnection = {
   revision: string; phase: 'disconnected' | 'pending' | 'connected';
+  grantedScopes?: string[]; conflictCalendarIds?: string[];
   email?: string; calendarId?: string; calendarTitle?: string; checkedAt?: string; encryptedToken?: CalendarEnvelope;
   expiresAt?: number; pending?: { ownerUid: string; stateHash: string; encryptedProof: CalendarEnvelope };
 };

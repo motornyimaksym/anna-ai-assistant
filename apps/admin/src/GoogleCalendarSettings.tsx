@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, Button, MenuItem, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Button, Checkbox, FormControlLabel, MenuItem, Stack, TextField, Typography } from '@mui/material';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { GoogleCalendarStatus } from '@booking/contracts';
 import { adminApi } from './api.js';
@@ -9,14 +9,16 @@ export function GoogleCalendarSettings() {
   const status = useQuery({ queryKey: key, queryFn: adminApi.googleCalendar, retry: false, gcTime: 0, refetchInterval: 15000 });
   const calendars = useQuery({ queryKey: ['google-calendars', status.data?.email], queryFn: adminApi.googleCalendars, enabled: status.data?.phase === 'connected', retry: false, gcTime: 0 });
   const [selected, setSelected] = useState(''); const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [conflicts, setConflicts] = useState<string[] | undefined>();
   const [notice, setNotice] = useState('');
   const update = (value: GoogleCalendarStatus) => { cache.setQueryData(key, value); void cache.invalidateQueries({ queryKey: ['google-calendars'] }); };
   const connect = useMutation({ mutationFn: adminApi.startGoogleCalendar, onSuccess: ({ url }) => { window.location.assign(url); } });
   const select = useMutation({ mutationFn: adminApi.selectGoogleCalendar, onSuccess: (value) => { update(value); setSelected(''); setNotice('Calendar selected. New bookings will sync here.'); } });
+  const saveConflicts = useMutation({ mutationFn: adminApi.selectConflictCalendars, onSuccess: (value) => { update(value); setConflicts(undefined); setNotice('Conflict calendars saved.'); } });
   const check = useMutation({ mutationFn: adminApi.checkGoogleCalendar, onSuccess: (value) => { update(value); setNotice('Google Calendar connection verified.'); } });
   const disconnect = useMutation({ mutationFn: adminApi.disconnectGoogleCalendar, onSuccess: (value) => { update(value); cache.removeQueries({ queryKey: ['google-calendars'] }); setConfirmDisconnect(false); setNotice('Google Calendar disconnected.'); } });
-  const busy = connect.isPending || select.isPending || check.isPending || disconnect.isPending;
-  const error = connect.error ?? select.error ?? check.error ?? disconnect.error;
+  const busy = saveConflicts.isPending || connect.isPending || select.isPending || check.isPending || disconnect.isPending;
+  const error = saveConflicts.error ?? connect.error ?? select.error ?? check.error ?? disconnect.error;
   return <Stack spacing={1.5}>
     <Typography variant="h6">Google Calendar</Typography>
     <Typography variant="body2">Connect a Google account to check busy times and sync massage appointments. Google will ask for permission to view your calendar list and manage events. Existing events remain when disconnected.</Typography>
@@ -25,6 +27,9 @@ export function GoogleCalendarSettings() {
     {status.data && <>
       {!status.data.configured && <Alert severity="warning">Google authorization setup is incomplete. Ask the administrator to configure the OAuth client, callback URL and encryption key.</Alert>}
       <Typography>Status: {status.data.phase}{status.data.email ? ` · ${status.data.email}` : ''}</Typography>
+      {status.data.phase === 'connected' && <Alert severity={status.data.writePermission === 'granted' ? 'success' : 'warning'}>
+        {status.data.writePermission === 'granted' ? 'Event modification permission granted.' : status.data.writePermission === 'missing' ? 'Reconnect required: event modification permission missing. Disconnect, then connect and allow all requested permissions.' : 'Event modification permission unknown. Check connection; reconnect if permission is missing.'}
+      </Alert>}
       {status.data.legacy && <Alert severity="info">Using the existing server configuration. Connect here to manage authorization from Settings.</Alert>}
       {(status.data.phase !== 'connected' || status.data.legacy) && <Button variant="contained" disabled={busy || !status.data.configured} onClick={() => { setNotice(''); connect.mutate(); }}>Connect Google Calendar</Button>}
       {status.data.phase === 'pending' && <Typography>Authorization is pending. Finish Google consent or start again; the link expires after ten minutes.</Typography>}
@@ -36,8 +41,12 @@ export function GoogleCalendarSettings() {
         {calendars.data && <>
           {!calendars.data.length ? <Alert severity="info">No calendars with permission to edit events were found.</Alert> : <>
             <TextField select label="Google calendar" value={selected} disabled={busy} onChange={(event) => setSelected(event.target.value)}>
-              {calendars.data.map((calendar) => <MenuItem key={calendar.id} value={calendar.id}>{calendar.title}{calendar.primary ? ' (primary)' : ''} · {calendar.id}</MenuItem>)}
+              {calendars.data.filter((calendar) => calendar.writable !== false).map((calendar) => <MenuItem key={calendar.id} value={calendar.id}>{calendar.title}{calendar.primary ? ' (primary)' : ''} · {calendar.id}</MenuItem>)}
             </TextField>
+            {status.data.calendarId && <Stack><Typography>Calendars that block appointments</Typography>
+              {calendars.data.map((calendar) => <FormControlLabel key={calendar.id} label={calendar.title} control={<Checkbox disabled={busy || calendar.id === status.data!.calendarId} checked={calendar.id === status.data!.calendarId || (conflicts ?? status.data!.conflictCalendarIds ?? []).includes(calendar.id)} onChange={(_, checked) => setConflicts((current) => checked ? [...new Set([...(current ?? status.data!.conflictCalendarIds ?? []), calendar.id])] : (current ?? status.data!.conflictCalendarIds ?? []).filter((id) => id !== calendar.id))} />} />)}
+              <Button disabled={busy || !conflicts} onClick={() => saveConflicts.mutate([...new Set([status.data!.calendarId!, ...(conflicts ?? [])])])}>Save conflict calendars</Button>
+            </Stack>}
             <Button disabled={busy || !selected} onClick={() => select.mutate(selected)}>Use selected calendar</Button>
           </>}
         </>}

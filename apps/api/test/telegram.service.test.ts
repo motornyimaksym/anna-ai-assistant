@@ -22,14 +22,15 @@ const setup = (settings = { maxReadDelayMs: 0, typingDelayPerSymbolMs: 600, upda
     claimTelegramUpdate: vi.fn(async () => true),
     getConversation: vi.fn(async () => undefined),
     getBotSettingsOverride: vi.fn(async () => settings),
+    touchConversation: vi.fn(async () => {}),
     saveConversation: vi.fn(async (conversation: unknown) => conversation),
   };
   const send = vi.fn(async (url: string, _init?: RequestInit) => { order.push(url.split('/').at(-1)!); return { ok: true, json: async () => ({ ok: true }) }; });
   vi.stubGlobal('fetch', send);
   const assistant = { respond: vi.fn(async (): Promise<AssistantReply> => { order.push('assistant'); return { text: 'OK', fromOpenAI: true }; }) };
-  const human = { decide: vi.fn(async () => ({ route: 'openai' as const })), isConfiguredUsername: vi.fn(async () => false), authorizedResponder: vi.fn(async () => undefined), enroll: vi.fn(async () => true), send: vi.fn(), reply: vi.fn(), queueExisting: vi.fn(), escalate: vi.fn() };
+  const human = { decide: vi.fn(async () => ({ route: 'openai' as const })), isConfiguredUsername: vi.fn(async () => false), authorizedResponder: vi.fn(async () => undefined), enroll: vi.fn(async () => true), send: vi.fn(), reply: vi.fn(), queueExisting: vi.fn(), escalate: vi.fn(), escalateError: vi.fn() };
   const scheduleImport = { syncIfDue: vi.fn(async () => undefined) };
-  return { service: new TelegramService(repository as unknown as BookingRepository, assistant as unknown as OpenAiService, human as unknown as HumanAssistanceService, scheduleImport as never), repository, send, assistant, human, scheduleImport, order };
+  return { service: new TelegramService(repository as unknown as BookingRepository, assistant as unknown as OpenAiService, human as unknown as HumanAssistanceService, scheduleImport as never, { record: vi.fn(async () => {}) } as never), repository, send, assistant, human, scheduleImport, order };
 };
 
 afterEach(() => {
@@ -90,7 +91,7 @@ describe('Telegram private test restriction', () => {
     await handling;
 
     expect(repository.claimTelegramUpdate).toHaveBeenCalledWith(101);
-    expect(repository.saveConversation).toHaveBeenCalledOnce();
+    expect(repository.touchConversation).toHaveBeenCalledOnce();
     expect(send).toHaveBeenCalledTimes(3);
     expect(assistant.respond).toHaveBeenCalledOnce();
     expect(order.slice(0, 3)).toEqual(['readBusinessMessage', 'sendChatAction', 'assistant']);
@@ -306,4 +307,13 @@ it('accepts /answer only from enrolled configured responders', async () => {
   expect(human.reply).toHaveBeenCalledWith('case-1', 'Human answer', 'telegram:888');
   expect(assistant.respond).not.toHaveBeenCalled();
   expect(repository.saveConversation).not.toHaveBeenCalled();
+});
+
+it('routes assistant errors directly to configured responders without sending false success', async () => {
+  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret'); vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+  const { service, assistant, human, send } = setup();
+  assistant.respond.mockResolvedValueOnce({ text: 'not sent', fromOpenAI: false, needsHuman: true, humanContext: 'Booking safe-id requires human review.' });
+  await service.handle('webhook-secret', update('user61785'));
+  expect(human.escalateError).toHaveBeenCalledWith('123', 'connection-1', 101, 'Hello', 'Booking safe-id requires human review.');
+  expect(send.mock.calls.some(([url]) => url.endsWith('/sendMessage'))).toBe(false);
 });

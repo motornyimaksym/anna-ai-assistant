@@ -41,3 +41,16 @@ export class AdminOwnerGuard implements CanActivate {
     return true;
   }
 }
+
+export const canViewDebug = (principal: AdminPrincipal | undefined): boolean => {
+  const owners = [...new Set((process.env.ADMIN_UIDS ?? '').split(',').map((uid) => uid.trim()).filter(Boolean))];
+  const selected = process.env.DEBUG_OWNER_UID?.trim() || (owners.length === 1 ? owners[0] : undefined);
+  return !!principal?.isOwner && !!selected && owners.includes(selected) && principal.uid === selected;
+};
+@Injectable()
+export class AdminDebugGuard implements CanActivate {
+  canActivate(context: ExecutionContext): boolean {
+    if (!canViewDebug(context.switchToHttp().getRequest<AdminRequest>().admin)) throw new ForbiddenException('Debug access is restricted to the selected owner');
+    return true;
+  }
+}

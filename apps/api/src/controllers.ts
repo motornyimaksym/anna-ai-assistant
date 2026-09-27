@@ -1,10 +1,14 @@
-import { Body, Controller, Delete, Get, Headers, HttpCode, NotFoundException, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
-import { adminAccessResponseSchema, assistantPromptResponseSchema, availabilityRuleSchema, availableSlotsRequestSchema, botSettingsResponseSchema, createBookingRequestSchema, patchConversationSchema, rescheduleBookingRequestSchema, scheduleExceptionSchema, servicePhotoUploadSchema, serviceSchema, updateAdminAccessSchema, updateAssistantPromptSchema, updateBotSettingsSchema, knowledgeBaseResponseSchema, updateKnowledgeBaseSchema, updateBookingRequestSchema, humanAssistanceSettingsResponseSchema, humanReplySchema, updateHumanAssistanceSettingsSchema } from '@booking/contracts';
-import { AdminGuard, AdminOwnerGuard, type AdminRequest } from './auth.js'; import { AvailabilityService } from './availability.service.js'; import { BookingService } from './booking.service.js'; import { BookingRepository } from './repository.js'; import { SpecService } from './spec.service.js'; import { TelegramService } from './telegram.service.js'; import { ASSISTANT_SYSTEM_PROMPT } from './assistant-prompt.js';
+import { BOOKING_SYSTEM_PROMPT } from './booking-prompt.js';
+import { Body, Controller, Delete, Get, Header, Headers, HttpCode, NotFoundException, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { adminAccessResponseSchema, assistantPromptResponseSchema, promptCatalogResponseSchema, availabilityRuleSchema, availableSlotsRequestSchema, botSettingsResponseSchema, createBookingRequestSchema, patchConversationSchema, rescheduleBookingRequestSchema, scheduleExceptionSchema, servicePhotoUploadSchema, serviceSchema, updateAdminAccessSchema, updateAssistantPromptSchema, updateBotSettingsSchema, knowledgeBaseResponseSchema, updateKnowledgeBaseSchema, updateBookingRequestSchema, humanAssistanceSettingsResponseSchema, humanReplySchema, updateHumanAssistanceSettingsSchema } from '@booking/contracts';
+import { AdminGuard, AdminOwnerGuard, AdminDebugGuard, canViewDebug, type AdminRequest } from './auth.js'; import { AvailabilityService } from './availability.service.js'; import { BookingService } from './booking.service.js'; import { BookingRepository } from './repository.js'; import { SpecService } from './spec.service.js'; import { TelegramService } from './telegram.service.js'; import { ASSISTANT_SYSTEM_PROMPT } from './assistant-prompt.js';
 import { DEFAULT_BOT_SETTINGS } from './bot-settings.js';
 import { DEFAULT_KNOWLEDGE_BASE } from './default-knowledge-base.js';
 import { ServicePhotoService } from './service-photo.service.js';
 import { HumanAssistanceService } from './human-assistance.service.js';
+import { APPROVAL_QUESTION, REJECTION_QUESTION } from './confirmation-prompt.js';
+import { contextGuidance, routingGuidance } from './typesafe-system-one.js';
+import { SYSTEM_TWO_PROMPTS } from './system-two.js';
 @Controller()
 export class HealthController { @Get('health') health() { return { status: 'ok' }; } }
 @Controller('telegram')
@@ -13,9 +17,25 @@ export class TelegramController { constructor(private readonly telegram: Telegra
 export class AdminController {
   constructor(private readonly repository: BookingRepository, private readonly bookings: BookingService, private readonly availability: AvailabilityService, private readonly specService: SpecService, private readonly servicePhotos: ServicePhotoService, private readonly human: HumanAssistanceService) {}
   @Get('spec') spec() { return this.specService.getSpec(); }
+  @Get('prompt-catalog') promptCatalog() { return promptCatalogResponseSchema.parse({
+    systemOne: [
+      { id: 'routing', label: 'Routing', description: 'Selects General or Booking. Choice criteria come from the System Two registry.', content: routingGuidance },
+      { id: 'approval', label: 'Approval', description: 'Checks explicit approval of a pending proposal.', content: `${APPROVAL_QUESTION}\n${contextGuidance}` },
+      { id: 'rejection', label: 'Rejection', description: 'Checks explicit rejection of a pending proposal.', content: `${REJECTION_QUESTION}\n${contextGuidance}` },
+      { id: 'probability', label: 'Probability', description: 'Estimates a yes probability; no production caller yet.', content: `Server-authored question\nEstimate the probability that the answer is yes. ${contextGuidance}` },
+    ],
+    systemTwo: [
+      { id: 'booking-conversation', label: 'Booking conversation', description: 'Code-owned Booking workflow instructions. Dynamic context and mandatory guidance are appended at request time.', content: `${SYSTEM_TWO_PROMPTS.booking.defaultPrompt}\n\n${SYSTEM_TWO_PROMPTS.booking.guidance}` },
+    ],
+  }); }
   @Get('assistant-prompt') async assistantPrompt() { return this.promptResponse(await this.repository.getAssistantPromptOverride()); }
   @Put('assistant-prompt') async updateAssistantPrompt(@Body() body: unknown) { const { prompt } = updateAssistantPromptSchema.parse(body); return this.promptResponse(await this.repository.saveAssistantPromptOverride(prompt)); }
   @Delete('assistant-prompt') async resetAssistantPrompt() { await this.repository.deleteAssistantPromptOverride(); return this.promptResponse(); }
+  @Get('booking-prompt') async bookingPrompt() { const value = await this.repository.getBookingPromptOverride(); return assistantPromptResponseSchema.parse(value ? { ...value, isCustom: true } : { prompt: BOOKING_SYSTEM_PROMPT, isCustom: false }); }
+  @Put('booking-prompt') async updateBookingPrompt(@Body() body: unknown) { await this.repository.saveBookingPromptOverride(updateAssistantPromptSchema.parse(body).prompt); return this.bookingPrompt(); }
+  @Delete('booking-prompt') async resetBookingPrompt() { await this.repository.deleteBookingPromptOverride(); return this.bookingPrompt(); }
+  @Get('debug/access') @Header('Cache-Control', 'no-store') debugAccess(@Req() request: AdminRequest) { return { canView: canViewDebug(request.admin) }; }
+  @Get('debug/logs') @Header('Cache-Control', 'no-store') @UseGuards(AdminDebugGuard) debugLogs() { return this.repository.listDebugEvents(); }
   @Get('knowledge-base') async knowledgeBase() { const [override, services] = await Promise.all([this.repository.getKnowledgeBaseOverride(), this.repository.listServices()]); return this.knowledgeBaseResponse(override, services.filter((service) => service.enabled)); }
   @Put('knowledge-base') async updateKnowledgeBase(@Body() body: unknown) { const { content } = updateKnowledgeBaseSchema.parse(body); const [override, services] = await Promise.all([this.repository.saveKnowledgeBaseOverride(content), this.repository.listServices()]); return this.knowledgeBaseResponse(override, services.filter((service) => service.enabled)); }
   @Delete('knowledge-base') async resetKnowledgeBase() { await this.repository.deleteKnowledgeBaseOverride(); return this.knowledgeBaseResponse(undefined, (await this.repository.listServices()).filter((service) => service.enabled)); }
@@ -32,7 +52,8 @@ export class AdminController {
   @Get('bookings') listBookings() { return this.repository.listBookings(); }
   @Get('bookings/:id') booking(@Param('id') id: string) { return this.repository.getBooking(id); }
   @Post('bookings') createBooking(@Body() body: unknown) { return this.bookings.create(createBookingRequestSchema.parse(body)); }
-  @Patch('bookings/:id') patchBooking(@Param('id') id: string, @Body() body: unknown) { const patch = updateBookingRequestSchema.parse(body); return patch.status ? this.repository.updateBookingStatus(id, patch.status) : this.repository.getBooking(id); }
+  @Patch('bookings/:id') patchBooking(@Param('id') id: string, @Body() body: unknown) { const patch = updateBookingRequestSchema.parse(body); return patch.status === 'cancelled' ? this.bookings.cancel(id) : patch.status ? this.repository.updateBookingStatus(id, patch.status) : this.repository.getBooking(id); }
+  @Post('bookings/:id/retry') retryBooking(@Param('id') id: string) { return this.bookings.retry(id); }
   @Post('bookings/:id/cancel') cancel(@Param('id') id: string) { return this.bookings.cancel(id); }
   @Post('bookings/:id/reschedule') reschedule(@Param('id') id: string, @Body() body: unknown) { return this.bookings.reschedule(id, rescheduleBookingRequestSchema.parse(body)); }
   @Get('services') services() { return this.repository.listServices(); }

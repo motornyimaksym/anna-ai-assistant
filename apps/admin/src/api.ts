@@ -1,3 +1,4 @@
+import { debugAccessSchema, debugEventsSchema, promptTestRequestSchema, promptTestResponseSchema, type PromptTestRequest } from '@booking/contracts';
 import { googleCalendarStatusSchema, googleCalendarStartSchema, googleCalendarListSchema } from '@booking/contracts';
 import { aiChatThreadSchema, aiChatSummarySchema } from '@booking/contracts';
 import { knowledgeBaseResponseSchema } from '@booking/contracts';
@@ -5,9 +6,9 @@ import { mediaSchema, mediaDeleteResponseSchema, createMediaSchema, updateMediaS
 import { telegramAccountStatusSchema } from '@booking/contracts';
 import { telegramScheduleSlotsResponseSchema, telegramScheduleChatsSchema, telegramScheduleTopicsSchema } from '@booking/contracts';
 import { humanAssistanceSettingsResponseSchema, humanReleaseResponseSchema, humanRequestSchema, updateHumanAssistanceSettingsSchema, type HumanAssistanceSettings } from '@booking/contracts';
-import { adminAccessResponseSchema, assistantPromptResponseSchema, availableSlotsResponseSchema, bookingSchema, botSettingsResponseSchema, conversationSchema, servicePhotoUploadResponseSchema, servicePhotoUploadSchema, serviceSchema, specResponseSchema, updateAdminAccessSchema, type BotSettings, type ServiceDto } from '@booking/contracts';
+import { adminAccessResponseSchema, assistantPromptResponseSchema, promptCatalogResponseSchema, availableSlotsResponseSchema, bookingSchema, botSettingsResponseSchema, conversationSchema, servicePhotoUploadResponseSchema, servicePhotoUploadSchema, serviceSchema, specResponseSchema, updateAdminAccessSchema, type BotSettings, type ServiceDto } from '@booking/contracts';
 import { getAuth } from 'firebase/auth';
-const request = async <T>(path: string, schema: { parse(value: unknown): T }, init?: RequestInit): Promise<T> => { const user = getAuth().currentUser; const token = user ? await user.getIdToken() : undefined; const response = await fetch(`/api${path}`, { ...init, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...init?.headers } }); if (!response.ok) { const body = (path.startsWith('/admin/telegram-account') || path.startsWith('/admin/media') || path.startsWith('/admin/ai-chat') || path.startsWith('/admin/schedule') || path.startsWith('/admin/google-calendar')) ? await response.json().catch(() => ({})) as { message?: unknown } : {}; throw new Error(typeof body.message === 'string' ? body.message : `API request failed (${response.status})`); } return schema.parse(await response.json()); };
+const request = async <T>(path: string, schema: { parse(value: unknown): T }, init?: RequestInit): Promise<T> => { const user = getAuth().currentUser; const token = user ? await user.getIdToken() : undefined; const response = await fetch(`/api${path}`, { ...init, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...init?.headers } }); if (!response.ok) { const body = (path.startsWith('/admin/telegram-account') || path.startsWith('/admin/media') || path.startsWith('/admin/ai-chat') || path.startsWith('/admin/schedule') || path.startsWith('/admin/google-calendar') || path.startsWith('/admin/debug')) ? await response.json().catch(() => ({})) as { message?: unknown } : {}; throw new Error(typeof body.message === 'string' ? body.message : `API request failed (${response.status})`); } return schema.parse(await response.json()); };
 const readMediaFile = async (file: File) => {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -23,6 +24,8 @@ export const adminApi = {
   completeGoogleCalendar: (input: { state: string; code?: string; denied?: boolean }) => request('/admin/google-calendar/complete', googleCalendarStatusSchema, { method: 'POST', body: JSON.stringify(input) }),
   googleCalendars: () => request('/admin/google-calendar/calendars', googleCalendarListSchema, { cache: 'no-store' }),
   selectGoogleCalendar: (calendarId: string) => request('/admin/google-calendar/selection', googleCalendarStatusSchema, { method: 'PUT', body: JSON.stringify({ calendarId }) }),
+  selectConflictCalendars: (calendarIds: string[]) => request('/admin/google-calendar/conflicts', googleCalendarStatusSchema, { method: 'PUT', body: JSON.stringify({ calendarIds }) }),
+  retryBooking: (id: string) => request(`/admin/bookings/${encodeURIComponent(id)}/retry`, bookingSchema, { method: 'POST', body: '{}' }),
   checkGoogleCalendar: () => request('/admin/google-calendar/check', googleCalendarStatusSchema, { method: 'POST', body: '{}' }),
   disconnectGoogleCalendar: () => request('/admin/google-calendar', googleCalendarStatusSchema, { method: 'DELETE' }),
 
@@ -58,9 +61,16 @@ export const adminApi = {
   updateConversation: (id: string, data: { assistantEnabled?: boolean }) => request(`/admin/conversations/${id}`, conversationSchema, { method: 'PATCH', body: JSON.stringify(data) }),
   slots: (data: { serviceId: string; date: string; durationMinutes?: number }) => request('/admin/available-slots', availableSlotsResponseSchema, { method: 'POST', body: JSON.stringify(data) }),
   spec: () => request('/admin/spec', specResponseSchema),
+  promptCatalog: () => request('/admin/prompt-catalog', promptCatalogResponseSchema),
   knowledgeBase: () => request('/admin/knowledge-base', knowledgeBaseResponseSchema),
   saveKnowledgeBase: (content: string) => request('/admin/knowledge-base', knowledgeBaseResponseSchema, { method: 'PUT', body: JSON.stringify({ content }) }),
   resetKnowledgeBase: () => request('/admin/knowledge-base', knowledgeBaseResponseSchema, { method: 'DELETE' }),
+  bookingPrompt: () => request('/admin/booking-prompt', assistantPromptResponseSchema),
+  saveBookingPrompt: (prompt: string) => request('/admin/booking-prompt', assistantPromptResponseSchema, { method: 'PUT', body: JSON.stringify({ prompt }) }),
+  resetBookingPrompt: () => request('/admin/booking-prompt', assistantPromptResponseSchema, { method: 'DELETE' }),
+  debugAccess: () => request('/admin/debug/access', debugAccessSchema, { cache: 'no-store' }),
+  debugLogs: () => request('/admin/debug/logs', debugEventsSchema, { cache: 'no-store' }),
+  promptTest: (input: PromptTestRequest) => request('/admin/debug/prompt-test', promptTestResponseSchema, { method: 'POST', body: JSON.stringify(promptTestRequestSchema.parse(input)), cache: 'no-store' }),
   assistantPrompt: () => request('/admin/assistant-prompt', assistantPromptResponseSchema),
   saveAssistantPrompt: (prompt: string) => request('/admin/assistant-prompt', assistantPromptResponseSchema, { method: 'PUT', body: JSON.stringify({ prompt }) }),
   resetAssistantPrompt: () => request('/admin/assistant-prompt', assistantPromptResponseSchema, { method: 'DELETE' }),
