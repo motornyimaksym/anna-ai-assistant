@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { fetchWithLinearBackoff } from '@booking/http';
 import { z } from 'zod';
 import { SystemOneSelector, systemOneDecisionInputSchema, systemOneProbabilitySchema, type SystemOneDecisionInput, type SystemOneInput } from './system-one.js';
 import { SYSTEM_TWO_PROMPTS, systemTwoPromptIdSchema, type SystemTwoPromptId } from './system-two.js';
@@ -55,12 +56,12 @@ export class TypeSafeSystemOneSelector extends SystemOneSelector {
   private async request(state: unknown, question: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
     const token = process.env.TYPESAFE_AI_TOKEN?.trim();
     if (!token) throw new Error('TypeSafe is not configured');
-    const response = await fetch('https://api.typesafe.ai/v1/systemone', {
+    const response = await fetchWithLinearBackoff('https://api.typesafe.ai/v1/systemone', {
       method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'jev-latest', state, questions: { decision: question } }),
-    });
-    if (!response.ok) throw new Error(`TypeSafe HTTP ${response.status}`);
+    }, { replaySafe: true });
+    if (!response.ok) throw Object.assign(new Error(`TypeSafe HTTP ${response.status}`), { upstreamStatus: response.status, providerRequestId: response.headers?.get('x-request-id') ?? undefined });
     return envelopeSchema.parse(await response.json()).answers.decision;
   }
 }

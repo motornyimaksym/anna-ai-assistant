@@ -22,7 +22,7 @@ const setup = () => {
   const service = new BookingPlannerService(repository as never, schedule as never, calendar as never, debug as never);
   const plan = (intent: 'availability' | 'create' | 'reschedule' = 'create', bookingId: string | null = null) => service.plan(conversation, context, 'Запишіть мене завтра', { intent, bookingId });
   const output = (value: unknown) => fetcher.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(value) }] }] }) });
-  return { repository, schedule, calendar, debug, fetcher, plan, output };
+  return { repository, schedule, calendar, debug, fetcher, plan, output, service };
 };
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe('structured booking planner', () => {
@@ -94,10 +94,12 @@ describe('structured booking planner', () => {
     expect(calendar.getBusyIntervals).toHaveBeenCalledWith(expect.any(String), expect.any(String), booking);
     expect(repository.listLockedIntervals).toHaveBeenCalledWith('b');
   });
-  it('handles invalid JSON or provider failure as unavailable without raw error logs', async () => {
-    const { plan, fetcher, debug } = setup();
-    fetcher.mockRejectedValue(new Error('private API key or prompt'));
+  it('handles provider failure as unavailable without logging client content', async () => {
+    const { plan, fetcher, debug, service } = setup();
+    const errorLog = vi.spyOn((service as unknown as { logger: { error: (message: string) => void } }).logger, 'error');
+    fetcher.mockRejectedValue(new Error('Запишіть мене завтра'));
     expect((await plan()).status).toBe('unavailable');
-    expect(JSON.stringify(debug.record.mock.calls)).not.toContain('private API key');
+    expect(JSON.stringify(debug.record.mock.calls)).not.toContain('Запишіть мене завтра');
+    expect(errorLog.mock.calls[0]![0]).not.toContain('Запишіть мене завтра');
   });
 });

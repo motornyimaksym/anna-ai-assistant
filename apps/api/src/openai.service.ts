@@ -12,7 +12,7 @@ import { systemTwoInstructions } from './system-two-instructions.js';
 import { AssistantToolsService, assistantToolSchema, type AssistantContext } from './assistant-tools.service.js';
 import { BookingRepository } from './repository.js';
 import { BookingPlannerService } from './booking-planner.service.js';
-import { DebugLogService, safeErrorCategory } from './debug-log.service.js';
+import { collectSensitiveStrings, DebugLogService, safeErrorCategory, safeErrorDiagnostic } from './debug-log.service.js';
 
 const string = { type: 'string' };
 const tool = (name: string, description: string, properties: Record<string, unknown>) => ({ type: 'function', name, description, strict: true, parameters: { type: 'object', properties, required: Object.keys(properties), additionalProperties: false } });
@@ -36,19 +36,22 @@ export class OpenAiService {
   private readonly logger = new Logger(OpenAiService.name);
   constructor(private readonly repository: BookingRepository, private readonly assistantTools: AssistantToolsService, private readonly planner: BookingPlannerService, private readonly debug: DebugLogService, private readonly selector: SystemOneSelector) {}
   async respond(conversation: ConversationDto, context: AssistantContext, text: string): Promise<AssistantReply> {
+    const sensitiveValues = [text];
     try {
-      return await this.run(conversation, context, text);
+      return await this.run(conversation, context, text, sensitiveValues);
     } catch (error) {
       await this.debug.record(context, 'error', { reason: 'assistant_failed', errorCategory: safeErrorCategory(error) }, 'error');
-      this.logger.warn(`Assistant request failed (${safeErrorCategory(error)}); credentials and message contents omitted`);
+      this.logger.error(`Assistant request failed trace=${context.traceId ?? 'unknown'} category=${safeErrorCategory(error)}: ${JSON.stringify(safeErrorDiagnostic(error, sensitiveValues))}`);
       return { ...localReply(fallback), needsHuman: true, ...(error instanceof BookingNeedsHumanError ? { humanContext: error.message } : {}) };
     }
   }
-  private async run(conversation: ConversationDto, context: AssistantContext, text: string): Promise<AssistantReply> {
+  private async run(conversation: ConversationDto, context: AssistantContext, text: string, sensitiveValues: string[]): Promise<AssistantReply> {
     if (text.length > 4000) return localReply('Будь ласка, скоротіть повідомлення до 4000 символів.');
     const deadline = AbortSignal.timeout(60_000);
     const history = (await this.repository.listMessages(context.telegramChatId)).slice(-20).map(({ role, content }) => ({ role, content: content.slice(0, 4000) }));
+    sensitiveValues.push(...history.map(({ content }) => content), conversation.summary);
     const pending = conversation.pendingAction;
+    if (pending?.confirmationText) sensitiveValues.push(pending.confirmationText);
     if (pending?.id && pending.confirmationText && pending.expiresAt > new Date().toISOString() && history.some((item) => item.role === 'assistant' && item.content === pending.confirmationText)) {
       const evidence = JSON.stringify({ message: text, history, proposal: { action: pending.name, confirmationText: pending.confirmationText } });
       const decide = async (question: string) => systemOneBooleanSchema.parse(await this.selector.answerBoolean({ question, context: evidence }, AbortSignal.any([deadline, AbortSignal.timeout(10_000)])));
@@ -70,6 +73,7 @@ export class OpenAiService {
       this.repository.listServices(),
     ]);
     const instructions = systemTwoInstructions({ promptId, promptOverride: promptOverride?.prompt, knowledgeBaseOverride: knowledgeBaseOverride?.content, configuredServices });
+    sensitiveValues.push(...collectSensitiveStrings({ instructions, promptOverride, knowledgeBaseOverride, configuredServices }));
     const openaiConversationId = conversation.openaiConversationId ?? await this.repository.ensureOpenAiConversation(context.telegramChatId, context.clientId, await createOpenAiConversation(deadline));
     let input: unknown[] = [{ role: 'user', content: text }];
     let mediaAttempted = false;
@@ -84,6 +88,7 @@ export class OpenAiService {
         return { text: reply.slice(0, 4000), fromOpenAI: true };
       }
       for (const call of calls) {
+        sensitiveValues.push(...collectSensitiveStrings(call.arguments));
         let result: unknown;
         {
           await this.debug.record(context, 'tool_called', { tool: call.name?.slice(0, 100) });
@@ -105,6 +110,7 @@ export class OpenAiService {
           } else result = await this.assistantTools.execute(parsed, context);
         }
         if (result && typeof result === 'object' && 'status' in result && ['failed', 'uncertain', 'unavailable'].includes(String(result.status))) throw new Error('Tool result requires human assistance');
+        sensitiveValues.push(...collectSensitiveStrings(result));
         input.push({ type: 'function_call_output', call_id: call.call_id, output: JSON.stringify(result) });
       }
     }

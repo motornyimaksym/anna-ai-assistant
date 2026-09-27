@@ -46,8 +46,9 @@ describe('private MCP integration', () => {
     await expect(f.service.call('get_chats', {})).rejects.toThrow('not configured');
     expect(f.accounts.acquire).not.toHaveBeenCalled();
     vi.stubEnv('TELEGRAM_MCP_BRIDGE_URL', 'https://private.example.run.app');
-    f.fetch.mockRejectedValueOnce(new Error('private provider data'));
+    f.fetch.mockRejectedValue(new Error('private provider data'));
     await expect(f.service.call('get_chats', {})).rejects.toThrow('could not be verified');
+    expect(f.fetch).toHaveBeenCalledTimes(4);
     expect(f.accounts.finish).toHaveBeenCalledOnce();
   });
 });

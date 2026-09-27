@@ -11,6 +11,8 @@ Media Store replaces the Services admin page, while the backend service catalog 
 
 A Firestore lease serializes sends for the same chat/media ID; successful and uncertain delivery establish a cooldown, explicit rejection does not. Network uncertainty and process crashes prevent a strict exactly-once guarantee across Telegram and Firestore. No background retry sends client messages.
 
+Application-owned HTTP `fetch` calls use `@booking/http` with three linear retries (250/500/750 ms) for transient failures. Reads and explicitly idempotent operations can replay after transient status or network failure. OpenAI conversation/response requests carry a per-call idempotency key reused across attempts. Other writes retry only explicit HTTP 425/429 rejection or connection failure known to precede transmission; timeouts, resets and ambiguous 5xx results are not replayed. This preserves Telegram delivery uncertainty and durable booking recovery. Google auth library transports use the same linear delays for replay-safe methods only.
+
 Telegram methods and URL transport constraints: https://core.telegram.org/bots/api#sending-files and https://core.telegram.org/bots/api#sendvideo. App uploads support JPEG/PNG (5 MB) and MP4 (20 MB); local JSON parser accepts 28 MiB for base64 transport. Uploaded URLs are intentionally shareable with clients.
 
 ## Assistant knowledge base
@@ -50,7 +52,9 @@ Private debug events trace routing, planning and reply delivery without recordin
 
 ## System One / System Two
 
-The active provider is `TypeSafeSystemOneSelector`, calling TypeSafe's `/v1/systemone` with `jev-latest`. Registry routing and boolean yes/no decisions use Choice; probability estimation uses Noul. The adapter validates typed answers and distributions, maps yes/no explicitly, and respects caller cancellation plus a 10-second deadline. Errors propagate to existing recovery without retries or OpenAI fallback. `OpenAiSystemOneSelector` remains available for code-level replacement. System Two and the booking planner still use OpenAI; the legacy optional Jev precheck is separate.
+The active provider is `TypeSafeSystemOneSelector`, calling TypeSafe's `/v1/systemone` with `jev-latest`. Registry routing and boolean yes/no decisions use Choice; probability estimation uses Noul. The adapter validates typed answers and distributions, maps yes/no explicitly, and respects caller cancellation plus a 10-second deadline. Transient requests use the shared bounded retry policy; exhausted errors propagate to existing recovery without OpenAI fallback. `OpenAiSystemOneSelector` remains available for code-level replacement. System Two and the booking planner still use OpenAI; the legacy optional Jev precheck is separate.
+
+Assistant exception logs include bounded, redacted underlying error details for diagnosis. Jev routing logs include trace ID, route reason, probability and threshold, so an intentional human handoff can be distinguished from a failed request. Firestore diagnostics retain safe categories only; they do not persist exception text, credentials, provider bodies or conversation content.
 
 Eligible bot text → existing guards and optional Jev gate → System One → selected System Two workflow → reply.
 

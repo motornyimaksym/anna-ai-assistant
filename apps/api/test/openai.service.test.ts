@@ -43,13 +43,16 @@ describe('OpenAI conversation', () => {
       throw new DOMException('The operation was aborted', 'TimeoutError');
     });
     vi.stubGlobal('fetch', fetch);
-    const warn = vi.spyOn((service as unknown as { logger: { warn: (message: string) => void } }).logger, 'warn');
+    const errorLog = vi.spyOn((service as unknown as { logger: { error: (message: string) => void } }).logger, 'error');
     const reply = await service.respond(conversation, context, 'Hello');
     expect(reply.needsHuman).toBe(true);
     expect(timeout).toHaveBeenCalledWith(60_000);
     expect(timeout).toHaveBeenCalledWith(10_000);
     expect(timeout).toHaveBeenCalledWith(30_000);
-    expect(warn).toHaveBeenCalledWith('Assistant request failed (timeout); credentials and message contents omitted');
+    expect(errorLog).toHaveBeenCalledOnce();
+    expect(errorLog.mock.calls[0]![0]).toContain('TimeoutError');
+    expect(errorLog.mock.calls[0]![0]).toContain('openai.service.ts');
+    expect(errorLog.mock.calls[0]![0]).not.toContain('test-key');
   });
   it('continues function calls and returns the model reply', async () => {
     const { service, tools } = setup();

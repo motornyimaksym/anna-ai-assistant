@@ -23,7 +23,7 @@ describe('Jev decision', () => {
     const fetcher = vi.fn();
     vi.stubGlobal('fetch', fetcher);
     const { service, store, repository } = setup();
-    expect(await service.decide(conversation, 'What is the price?')).toEqual({ route: 'openai' });
+    expect(await service.decide(conversation, 'What is the price?')).toEqual({ route: 'openai', reason: 'routing_disabled' });
     expect(fetcher).not.toHaveBeenCalled();
     expect(store.settings).not.toHaveBeenCalled();
     expect(repository.listServices).not.toHaveBeenCalled();
@@ -40,7 +40,7 @@ describe('Jev decision', () => {
     const fetcher = vi.fn(async () => ({ ok: true, json: async () => ({ code: 0, data: { answers: { needs_human_assistance: { noul: 0.5 } } } }) }));
     vi.stubGlobal('fetch', fetcher);
     const { service } = setup();
-    expect(await service.decide(conversation, 'What is the price?')).toEqual({ route: 'openai' });
+    expect(await service.decide(conversation, 'What is the price?')).toEqual({ route: 'openai', reason: 'below_threshold', probability: 0.5, thresholdPercent: 60 });
     const [url, init] = fetcher.mock.calls[0]!;
     expect(url).toBe('https://www.jevai.org/api/v1/decisions');
     expect(init.headers.Authorization).toBe('Bearer test-jev-token');
@@ -71,10 +71,10 @@ describe('Jev decision', () => {
     expect(await service.decide(conversation, 'Unknown policy?')).toEqual({ route: 'human', reason: 'jev_unavailable', thresholdPercent: 60 });
     fetcher.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ code: 1 }) }));
     expect(await service.decide(conversation, 'Unknown policy?')).toEqual({ route: 'human', reason: 'jev_unavailable', thresholdPercent: 60 });
-    fetcher.mockImplementationOnce(async () => { throw new Error('timeout'); });
+    fetcher.mockRejectedValue(new Error('timeout'));
     expect(await service.decide(conversation, 'Unknown policy?')).toEqual({ route: 'human', reason: 'jev_unavailable', thresholdPercent: 60 });
     vi.stubEnv('JEV_TOKEN', undefined);
-    expect(await service.decide(conversation, 'Unknown policy?')).toEqual({ route: 'openai' });
+    expect(await service.decide(conversation, 'Unknown policy?')).toEqual({ route: 'openai', reason: 'token_unavailable' });
   });
   it('requests human assistance when essential Jev input exceeds the body cap', async () => {
     vi.stubEnv('JEV_TOKEN', 'test-jev-token');

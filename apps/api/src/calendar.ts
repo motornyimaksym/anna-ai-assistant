@@ -28,7 +28,7 @@ export class CalendarService {
     const busy: BusyInterval[] = [];
     const freeBusyIds = ids.filter((id) => !(exclude?.googleCalendarEventId && id === original));
     if (freeBusyIds.length) {
-      const response = await this.connection.request(credentials, '/freeBusy', { method: 'POST', body: JSON.stringify({ timeMin: start, timeMax: end, items: freeBusyIds.map((id) => ({ id })) }) });
+      const response = await this.connection.request(credentials, '/freeBusy', { method: 'POST', body: JSON.stringify({ timeMin: start, timeMax: end, items: freeBusyIds.map((id) => ({ id })) }) }, [], { replaySafe: true });
       const data = z.object({ calendars: z.record(z.object({ busy: z.array(z.object({ start: instant, end: instant })).optional(), errors: z.array(z.unknown()).optional() })) }).parse(await response.json());
       for (const id of freeBusyIds) {
         const calendar = data.calendars[id];
@@ -89,7 +89,7 @@ export class CalendarService {
     const credentials = await this.required();
     const calendarId = booking.googleCalendarId ?? credentials.calendarId!;
     const eventId = booking.googleCalendarEventId ?? bookingEventId(booking.id);
-    const response = await this.connection.request(credentials, path(calendarId), { method: 'POST', body: JSON.stringify({ id: eventId, summary: `Massage: ${serviceName}`, description: `Booking ID: ${booking.id}\nClient: ${booking.clientId}\nTelegram chat: ${booking.telegramChatId}`, extendedProperties: { private: { bookingId: booking.id } }, transparency: 'opaque', start: { dateTime: booking.startAt }, end: { dateTime: booking.endAt } }) }, [409]);
+    const response = await this.connection.request(credentials, path(calendarId), { method: 'POST', body: JSON.stringify({ id: eventId, summary: `Massage: ${serviceName}`, description: `Booking ID: ${booking.id}\nClient: ${booking.clientId}\nTelegram chat: ${booking.telegramChatId}`, extendedProperties: { private: { bookingId: booking.id } }, transparency: 'opaque', start: { dateTime: booking.startAt }, end: { dateTime: booking.endAt } }) }, [409], { replaySafe: true });
     if (response.status === 409) {
       if (!await this.verifyBookingEvent({ ...booking, googleCalendarId: calendarId, googleCalendarEventId: eventId })) throw new Error('Calendar event is missing');
     } else {
@@ -115,6 +115,6 @@ export class CalendarService {
     const event = await this.getBookingEvent(booking);
     if (!event) return;
     if (!sameTime(event, booking) || !event.etag) throw new Error('Calendar event was changed. Human review required');
-    await this.connection.request(credentials, path(originalCalendarId ?? credentials.calendarId!, eventId), { method: 'DELETE', headers: { 'If-Match': event.etag } }, [404, 410]);
+    await this.connection.request(credentials, path(originalCalendarId ?? credentials.calendarId!, eventId), { method: 'DELETE', headers: { 'If-Match': event.etag } }, [404, 410], { replaySafe: true });
   }
 }

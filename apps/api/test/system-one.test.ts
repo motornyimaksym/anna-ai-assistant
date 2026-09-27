@@ -92,7 +92,7 @@ describe('System One OpenAI adapter', () => {
     vi.stubEnv('OPENAI_API_KEY', 'test');
     const fetch = vi.fn().mockRejectedValue(new DOMException('Timed out', 'TimeoutError'));
     vi.stubGlobal('fetch', fetch);
-    await expect(new OpenAiSystemOneSelector(repository as never).select(input, AbortSignal.timeout(1000))).rejects.toThrow('Timed out');
+    await expect(new OpenAiSystemOneSelector(repository as never).select(input, AbortSignal.timeout(1000))).rejects.toThrow(/timeout/i);
   });
   it('combines the supplied abort signal with its internal timeout', async () => {
     vi.stubEnv('OPENAI_API_KEY', 'test');
@@ -147,7 +147,7 @@ describe('System One boolean and probability operations', () => {
   it.each(['answerBoolean', 'estimateProbability'] as const)('propagates %s errors without substituting a default', async (method) => {
     vi.stubEnv('OPENAI_API_KEY', 'test');
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new DOMException('Timeout', 'TimeoutError')));
-    await expect(new OpenAiSystemOneSelector(repository as never)[method](decision, AbortSignal.timeout(1000))).rejects.toThrow('Timeout');
+    await expect(new OpenAiSystemOneSelector(repository as never)[method](decision, AbortSignal.timeout(1000))).rejects.toThrow(/timeout/i);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response('{"answer":true,"probability":0.4}', 'incomplete')));
     await expect(new OpenAiSystemOneSelector(repository as never)[method](decision, AbortSignal.timeout(1000))).rejects.toThrow();
   });

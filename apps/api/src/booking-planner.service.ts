@@ -1,10 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { bookingPlanRequestSchema, bookingPlanSchema, type BookingPlan, type BookingPlanRequest, type ConversationDto } from '@booking/contracts';
 import { BookingRepository } from './repository.js';
 import { TelegramScheduleImportService } from './telegram-schedule-import.service.js';
 import { CalendarService } from './calendar.js';
-import { DebugLogService, safeErrorCategory } from './debug-log.service.js';
+import { collectSensitiveStrings, DebugLogService, safeErrorCategory, safeErrorDiagnostic } from './debug-log.service.js';
 import { requestOpenAiResponse } from './openai-transport.js';
 import { BOOKING_MANDATORY_GUIDANCE, BOOKING_OUTPUT_FORMAT, BOOKING_SYSTEM_PROMPT } from './booking-prompt.js';
 import { DEFAULT_KNOWLEDGE_BASE } from './default-knowledge-base.js';
@@ -15,9 +15,11 @@ const unavailable = (question: string): BookingPlan => ({ status: 'unavailable',
 const responseSchema = z.object({ status: z.string().optional(), output: z.array(z.object({ type: z.string(), content: z.array(z.object({ type: z.string(), text: z.string().optional() })).optional() })) });
 @Injectable()
 export class BookingPlannerService {
+  private readonly logger = new Logger(BookingPlannerService.name);
   constructor(private readonly repository: BookingRepository, private readonly schedule: TelegramScheduleImportService, private readonly calendar: CalendarService, private readonly debug: DebugLogService) {}
   async plan(conversation: ConversationDto, context: AssistantContext, question: string, input: BookingPlanRequest, signal?: AbortSignal): Promise<BookingPlan> {
     let phase = 'context';
+    const sensitiveValues = [question, conversation.summary];
     try {
       const request = bookingPlanRequestSchema.parse(input);
       const now = Date.now();
@@ -32,6 +34,7 @@ export class BookingPlannerService {
         this.repository.listMessages(context.telegramChatId), booking ? this.repository.getBookingTiming(booking.id) : undefined,
         this.repository.listLockedIntervals(booking?.id),
       ]);
+      sensitiveValues.push(...history.map(({ content }) => content));
       const [scheduleResult, calendarResult] = await Promise.allSettled([
         this.schedule.readSnapshot(), this.calendar.getBusyIntervals(new Date(now).toISOString(), new Date(horizon).toISOString(), booking),
       ]);
@@ -55,6 +58,7 @@ export class BookingPlannerService {
         calendarRange: { start: new Date(now).toISOString(), end: new Date(horizon).toISOString() }, busy,
         ownedBooking: booking ? { serviceId: booking.serviceId, startAt: booking.startAt, durationMinutes: timing!.durationMinutes } : null,
       };
+      sensitiveValues.push(...collectSensitiveStrings(payload), ...snapshot!.slots.map(({ text }) => text));
       const response = responseSchema.parse(await requestOpenAiResponse({ store: false, instructions: `${override?.prompt ?? BOOKING_SYSTEM_PROMPT}\n${BOOKING_MANDATORY_GUIDANCE}`, input: [{ role: 'user', content: JSON.stringify(payload) }], text: { format: BOOKING_OUTPUT_FORMAT }, max_output_tokens: 3000 }, signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000)));
       phase = 'validation';
       if (response.status && response.status !== 'completed') throw new Error('Incomplete planner response');
@@ -80,6 +84,7 @@ export class BookingPlannerService {
       return plan;
     } catch (error) {
       await this.debug.record(context, 'booking_result', { status: 'unavailable', reason: `${phase}_failed`, errorCategory: safeErrorCategory(error) }, 'warn');
+      this.logger.error(`Booking planner ${phase} failed trace=${context.traceId ?? 'unknown'}: ${JSON.stringify(safeErrorDiagnostic(error, sensitiveValues))}`);
       return unavailable('Не вдалося перевірити цей час. Уточніть, будь ласка, послугу, тривалість та бажану дату або спробуйте пізніше.');
     }
   }

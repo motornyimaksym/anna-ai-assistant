@@ -132,10 +132,10 @@ it('continues replying when Telegram rejects the business read receipt', async (
 
   await service.handle('webhook-secret', update('user61785'));
 
-  expect(send).toHaveBeenCalledTimes(3);
+  expect(send).toHaveBeenCalledTimes(4);
   expect(send.mock.calls[0]![0]).toContain('/readBusinessMessage');
-  expect(send.mock.calls[2]![0]).toContain('/sendMessage');
-  expect(JSON.parse(send.mock.calls[2]![1]!.body as string)).not.toHaveProperty('parse_mode');
+  expect(send.mock.calls[3]![0]).toContain('/sendMessage');
+  expect(JSON.parse(send.mock.calls[3]![1]!.body as string)).not.toHaveProperty('parse_mode');
   expect(assistant.respond).toHaveBeenCalledOnce();
 });
 

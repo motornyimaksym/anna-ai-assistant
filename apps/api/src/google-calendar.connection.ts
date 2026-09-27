@@ -1,14 +1,19 @@
-import { BadRequestException, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { randomBytes, createHash } from 'node:crypto';
 import { OAuth2Client } from 'google-auth-library';
 import { z } from 'zod';
 import type { GoogleCalendarChoice, GoogleCalendarStatus } from '@booking/contracts';
 import { GoogleCalendarStore, openCalendar, sealCalendar } from './google-calendar.store.js';
+import { fetchWithLinearBackoff } from '@booking/http';
+import { safeErrorDiagnostic } from './debug-log.service.js';
 const calendarScopes = ['calendar.events', 'calendar.freebusy', 'calendar.calendarlist.readonly'].map((scope) => `https://www.googleapis.com/auth/${scope}`);
-const fail = () => new ServiceUnavailableException('Google Calendar request failed. Check the connection or reconnect in Settings.');
+const fail = (response?: Response) => Object.assign(new ServiceUnavailableException('Google Calendar request failed. Check the connection or reconnect in Settings.'), {
+  ...(response ? { upstreamStatus: response.status, providerRequestId: response.headers?.get('x-request-id') ?? undefined } : {}),
+});
 export type CalendarCredentials = { refreshToken: string; calendarId?: string; conflictCalendarIds?: string[] };
 @Injectable()
 export class GoogleCalendarConnection {
+  private readonly logger = new Logger(GoogleCalendarConnection.name);
   constructor(private readonly store: GoogleCalendarStore) {}
   private config() {
     const clientId = process.env.GOOGLE_CLIENT_ID; const clientSecret = process.env.GOOGLE_CLIENT_SECRET; const redirect = process.env.GOOGLE_CALENDAR_REDIRECT_URI;
@@ -45,11 +50,14 @@ export class GoogleCalendarConnection {
     try {
       if (input.denied) { await this.store.replace(pending.revision, { phase: 'disconnected' }); return this.status(); }
       const proof = z.object({ verifier: z.string(), nonce: z.string() }).parse(JSON.parse(openCalendar(pending.proof, 'proof')));
-      const response = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, signal: AbortSignal.timeout(15000), body: new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret, redirect_uri: config.redirect, grant_type: 'authorization_code', code: input.code!, code_verifier: proof.verifier }) });
-      if (!response.ok) throw fail();
+      const response = await fetchWithLinearBackoff('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, signal: AbortSignal.timeout(15000), body: new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret, redirect_uri: config.redirect, grant_type: 'authorization_code', code: input.code!, code_verifier: proof.verifier }) });
+      if (!response.ok) throw fail(response);
       const tokens = z.object({ refresh_token: z.string().min(1), id_token: z.string().min(1), scope: z.string() }).parse(await response.json());
       if (!calendarScopes.every((scope) => tokens.scope.split(' ').includes(scope))) throw new BadRequestException('Required Calendar permissions were not granted. Connect again and allow the requested permissions.');
-      const client = new OAuth2Client({ clientId: config.clientId, transporterOptions: { timeout: 15000, retry: false } });
+      const client = new OAuth2Client({ clientId: config.clientId, transporterOptions: { timeout: 15000, retryConfig: {
+        retry: 3, httpMethodsToRetry: ['GET', 'HEAD', 'OPTIONS'], statusCodesToRetry: [[408, 408], [425, 425], [429, 429], [500, 599]], noResponseRetries: 3,
+        retryBackoff: async (error) => new Promise<void>((resolve) => setTimeout(resolve, 250 * (error.config.retryConfig?.currentRetryAttempt ?? 1))),
+      } } });
       const ticket = await client.verifyIdToken({ idToken: tokens.id_token, audience: config.clientId });
       const identity = ticket.getPayload();
       const expected = process.env.GOOGLE_CALENDAR_ACCOUNT_EMAIL?.trim().toLowerCase();
@@ -57,6 +65,7 @@ export class GoogleCalendarConnection {
       await this.store.replace(pending.revision, { phase: 'connected', grantedScopes: tokens.scope.split(' '), email: identity.email, encryptedToken: sealCalendar(tokens.refresh_token, 'token') });
       return this.status();
     } catch (error) {
+      this.logger.error(`Google authorization exchange failed: ${JSON.stringify(safeErrorDiagnostic(error, [input.code ?? '', input.state, config.clientSecret]))}`);
       await this.store.replace(pending.revision, { phase: 'disconnected' }).catch(() => {});
       if (error instanceof BadRequestException) throw error;
       throw new BadRequestException('Google authorization could not be completed. Start again from Settings.');
@@ -64,17 +73,17 @@ export class GoogleCalendarConnection {
   }
   async accessToken(credentials: CalendarCredentials): Promise<string> {
     try {
-      const response = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, signal: AbortSignal.timeout(15000), body: new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID ?? '', client_secret: process.env.GOOGLE_CLIENT_SECRET ?? '', refresh_token: credentials.refreshToken, grant_type: 'refresh_token' }) });
-      if (!response.ok) throw fail();
+      const response = await fetchWithLinearBackoff('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, signal: AbortSignal.timeout(15000), body: new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID ?? '', client_secret: process.env.GOOGLE_CLIENT_SECRET ?? '', refresh_token: credentials.refreshToken, grant_type: 'refresh_token' }) });
+      if (!response.ok) throw fail(response);
       return z.object({ access_token: z.string().min(1) }).parse(await response.json()).access_token;
-    } catch { throw fail(); }
+    } catch (error) { this.logger.error(`Google token refresh failed: ${JSON.stringify(safeErrorDiagnostic(error, [credentials.refreshToken, process.env.GOOGLE_CLIENT_SECRET ?? '']))}`); throw fail(); }
   }
-  async request(credentials: CalendarCredentials, path: string, init: RequestInit = {}, allowedStatuses: number[] = []): Promise<Response> {
+  async request(credentials: CalendarCredentials, path: string, init: RequestInit = {}, allowedStatuses: number[] = [], retry: { replaySafe?: boolean } = {}): Promise<Response> {
     try {
       const token = await this.accessToken(credentials);
-      const response = await fetch(`https://www.googleapis.com/calendar/v3${path}`, { ...init, signal: AbortSignal.timeout(15000), headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...init.headers } });
-      if (!response.ok && !allowedStatuses.includes(response.status)) throw fail(); return response;
-    } catch { throw fail(); }
+      const response = await fetchWithLinearBackoff(`https://www.googleapis.com/calendar/v3${path}`, { ...init, signal: AbortSignal.timeout(15000), headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...init.headers } }, retry);
+      if (!response.ok && !allowedStatuses.includes(response.status)) throw fail(response); return response;
+    } catch (error) { this.logger.error(`Google Calendar API request failed: ${JSON.stringify(safeErrorDiagnostic(error))}`); throw fail(); }
   }
   async calendars(): Promise<GoogleCalendarChoice[]> {
     const credentials = await this.credentials(); if (!credentials) throw new BadRequestException('Connect Google Calendar first.');
@@ -106,10 +115,10 @@ export class GoogleCalendarConnection {
     const token = await this.accessToken(credentials);
     let grantedScopes: string[];
     try {
-      const response = await fetch('https://oauth2.googleapis.com/tokeninfo', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/x-www-form-urlencoded' }, signal: AbortSignal.timeout(15000) });
-      if (!response.ok) throw fail();
+      const response = await fetchWithLinearBackoff('https://oauth2.googleapis.com/tokeninfo', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/x-www-form-urlencoded' }, signal: AbortSignal.timeout(15000) }, { replaySafe: true });
+      if (!response.ok) throw fail(response);
       grantedScopes = z.object({ scope: z.string() }).parse(await response.json()).scope.split(' ');
-    } catch { throw fail(); }
+    } catch (error) { this.logger.error(`Google Calendar token scope check failed: ${JSON.stringify(safeErrorDiagnostic(error))}`); throw fail(); }
     for (const id of credentials.conflictCalendarIds ?? []) {
       const check = await this.request(credentials, `/users/me/calendarList/${encodeURIComponent(id)}`);
       const role = z.object({ accessRole: z.string() }).parse(await check.json());
@@ -135,9 +144,9 @@ export class GoogleCalendarConnection {
     const credentials = await this.credentials();
     if (credentials) {
       try {
-        const response = await fetch('https://oauth2.googleapis.com/revoke', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, signal: AbortSignal.timeout(15000), body: new URLSearchParams({ token: credentials.refreshToken }) });
-        if (!response.ok) { const body = await response.json().catch(() => ({})) as { error?: string }; if (response.status !== 400 || body.error !== 'invalid_token') throw fail(); }
-      } catch { throw new ServiceUnavailableException('Could not revoke Google access. Connection retained; try disconnecting again.'); }
+        const response = await fetchWithLinearBackoff('https://oauth2.googleapis.com/revoke', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, signal: AbortSignal.timeout(15000), body: new URLSearchParams({ token: credentials.refreshToken }) }, { replaySafe: true });
+        if (!response.ok) { const body = await response.json().catch(() => ({})) as { error?: string }; if (response.status !== 400 || body.error !== 'invalid_token') throw fail(response); }
+      } catch (error) { this.logger.error(`Google token revocation failed: ${JSON.stringify(safeErrorDiagnostic(error, [credentials.refreshToken]))}`); throw new ServiceUnavailableException('Could not revoke Google access. Connection retained; try disconnecting again.'); }
     }
     await this.store.replace(record?.revision, { phase: 'disconnected' });
     return this.status();

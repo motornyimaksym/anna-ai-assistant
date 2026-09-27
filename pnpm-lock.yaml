@@ -23,6 +23,9 @@ importers:
       '@booking/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@booking/http':
+        specifier: workspace:*
+        version: link:../../packages/http
       '@emotion/react':
         specifier: ^11.14.0
         version: 11.14.0(@types/react@19.3.0)(react@19.3.0)
@@ -102,6 +105,9 @@ importers:
       '@booking/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@booking/http':
+        specifier: workspace:*
+        version: link:../../packages/http
       '@nestjs/common':
         specifier: ^11.1.1
         version: 11.2.5(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -238,6 +244,27 @@ importers:
       typescript-eslint:
         specifier: ^8.33.0
         version: 8.70.0(eslint@9.39.5)(typescript@5.9.3)
+
+  packages/http:
+    devDependencies:
+      '@booking/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@booking/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@types/node':
+        specifier: ^22.15.3
+        version: 22.20.4
+      eslint:
+        specifier: ^9.27.0
+        version: 9.39.5
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.1.4
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@22.20.4)(jsdom@26.1.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(tsx@4.23.15)
 
   packages/typescript-config: {}
 

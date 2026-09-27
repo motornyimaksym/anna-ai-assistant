@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getDownloadURL, getStorage } from 'firebase-admin/storage';
+import { fetchWithLinearBackoff } from '@booking/http';
+import { collectSensitiveStrings, safeErrorDiagnostic } from './debug-log.service.js';
 import { createMediaSchema, updateMediaSchema, mediaSchema, mediaIdSchema, MEDIA_PHOTO_MAX_BYTES, MEDIA_VIDEO_MAX_BYTES, type MediaDto, type MediaFileInput } from '@booking/contracts';
 import { FirebaseAdminService } from './firebase-admin.js';
 
@@ -117,14 +119,20 @@ export class MediaStoreService {
     const item = claim.item;
     let status: SendStatus = 'uncertain';
     try {
-      const response = await fetch(`https://api.telegram.org/bot${token}/${item.kind === 'photo' ? 'sendPhoto' : 'sendVideo'}`, {
-        method: 'POST', signal: AbortSignal.timeout(25_000), headers: { 'content-type': 'application/json' },
+      const response = await fetchWithLinearBackoff(`https://api.telegram.org/bot${token}/${item.kind === 'photo' ? 'sendPhoto' : 'sendVideo'}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ chat_id: chatId, ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}), [item.kind === 'photo' ? 'photo' : 'video']: item.url }),
-      });
-      const result = await response.json() as { ok?: boolean; result?: { message_id?: number } };
-      if (response.ok && result.ok === true && typeof result.result?.message_id === 'number') status = 'sent';
-      else if (result.ok === false) status = 'failed';
-    } catch { this.logger.warn('Media delivery outcome uncertain'); }
+      }, { timeoutMs: 25_000 });
+      const result = await response.json().catch(() => undefined) as { ok?: boolean; result?: { message_id?: number } } | undefined;
+      if (response.ok && result?.ok === true && typeof result.result?.message_id === 'number') status = 'sent';
+      else if (!response.ok || result?.ok === false) {
+        status = 'failed';
+        const error = Object.assign(new Error('Telegram rejected media delivery'), { upstreamStatus: response.status, providerRequestId: response.headers?.get('x-request-id') ?? undefined });
+        this.logger.error(`Media delivery rejected: ${JSON.stringify(safeErrorDiagnostic(error, [chatId, ...collectSensitiveStrings(item.url)]))}`);
+      } else {
+        this.logger.error(`Media delivery unconfirmed: ${JSON.stringify(safeErrorDiagnostic(Object.assign(new Error('Telegram media response was invalid'), { upstreamStatus: response.status, providerRequestId: response.headers?.get('x-request-id') ?? undefined }), [chatId, ...collectSensitiveStrings(item.url)]))}`);
+      }
+    } catch (error) { this.logger.error(`Media delivery outcome uncertain: ${JSON.stringify(safeErrorDiagnostic(error, [chatId, ...collectSensitiveStrings(item.url)]))}`); }
     try {
       await this.db.runTransaction(async (tx) => {
         const state = (await tx.get(stateRef)).data();

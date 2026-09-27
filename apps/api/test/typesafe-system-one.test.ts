@@ -18,7 +18,7 @@ const setup = (answer: unknown) => {
 };
 const call = (method: 'select' | 'answerBoolean' | 'estimateProbability') => {
   const service = new TypeSafeSystemOneSelector(repository as never);
-  return method === 'select' ? service.select(routing, AbortSignal.timeout(1000)) : service[method](decision, AbortSignal.timeout(1000));
+  return method === 'select' ? service.select(routing, AbortSignal.timeout(10_000)) : service[method](decision, AbortSignal.timeout(10_000));
 };
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers(); repository.getPromptOverride.mockReset().mockResolvedValue(undefined); repository.getRoutingPromptOverride.mockReset().mockResolvedValue(undefined); });
 
@@ -94,7 +94,7 @@ describe('TypeSafe System One', () => {
     setup({ type: 'noul', noul: 1 });
     await expect(call('answerBoolean')).rejects.toThrow();
   });
-  it.each(['select', 'answerBoolean', 'estimateProbability'] as const)('fails %s safely on missing answers and HTTP errors without retries', async (method) => {
+  it.each(['select', 'answerBoolean', 'estimateProbability'] as const)('fails %s safely after retrying transient HTTP errors', async (method) => {
     const fetcher = setup(choice());
     fetcher.mockResolvedValueOnce({ ok: true, json: async () => ({ model: 'jev', answers: {} }) });
     await expect(call(method)).rejects.toThrow();
@@ -102,7 +102,7 @@ describe('TypeSafe System One', () => {
     const json = vi.fn(async () => ({ error: 'private provider details' }));
     fetcher.mockResolvedValue({ ok: false, status: 429, json });
     await expect(call(method)).rejects.toThrow('TypeSafe HTTP 429');
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledTimes(4);
     expect(json).not.toHaveBeenCalled();
     expect(safeErrorCategory(new Error('TypeSafe HTTP 429'))).toBe('TypeSafe HTTP 429');
   });
@@ -149,8 +149,8 @@ describe('TypeSafe System One', () => {
     const fetcher = setup(choice());
     fetcher.mockResolvedValueOnce({ ok: true, json: async () => { throw new SyntaxError('Invalid JSON'); } });
     await expect(call('select')).rejects.toThrow('Invalid JSON');
-    fetcher.mockRejectedValueOnce(new TypeError('Network failure'));
+    fetcher.mockRejectedValue(new TypeError('Network failure'));
     await expect(call('select')).rejects.toThrow('Network failure');
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(5);
   });
 });

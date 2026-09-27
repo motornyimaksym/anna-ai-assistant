@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { DebugLogService, safeErrorCategory } from './debug-log.service.js';
+import { DebugLogService, safeErrorCategory, safeErrorDiagnostic } from './debug-log.service.js';
 import { waitForRandomReadDelay, waitForResponsePacing } from './response-pacing.js';
 import { OpenAiService } from './openai.service.js';
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
@@ -10,6 +10,7 @@ import { BookingRepository } from './repository.js';
 import { DEFAULT_BOT_SETTINGS } from './bot-settings.js';
 import { HumanAssistanceService } from './human-assistance.service.js';
 import { TelegramScheduleImportService } from './telegram-schedule-import.service.js';
+import { fetchWithLinearBackoff } from '@booking/http';
 const messageSchema = z.object({ message_id: z.number().int(), chat: z.object({ id: z.union([z.string(), z.number()]), type: z.string().optional() }), from: z.object({ id: z.union([z.string(), z.number()]), username: z.string().optional(), is_bot: z.boolean().optional() }).optional(), text: z.string().optional(), business_connection_id: z.string().optional() });
 const updateSchema = z.object({ update_id: z.number().int(), business_message: messageSchema.optional(), message: messageSchema.optional() });
 const escapeHtml = (value: string) => value.replace(/&(?!(?:amp|lt|gt|quot|#39|#\d+|#x[\da-f]+);)/gi, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -88,8 +89,8 @@ export class TelegramService {
       return;
     }
     if (message.text.length <= 4000) {
-      const decision = await this.human.decide(conversation, message.text);
-      await this.debug.record(trace, 'jev_decision', { status: decision.route, reason: process.env.JEV_ROUTING_ENABLED === 'true' ? 'enabled' : 'disabled' });
+      const decision = await this.human.decide(conversation, message.text, trace.traceId);
+      await this.debug.record(trace, 'jev_decision', { status: decision.route, reason: decision.reason });
       if (decision.route === 'human') {
         await this.repository.appendMessage(chatId, 'user', message.text);
         await this.human.escalate(chatId, message.business_connection_id, update.update_id, message.text, decision);
@@ -115,6 +116,7 @@ export class TelegramService {
       if (answer.fromOpenAI) parseMode = 'HTML';
     } catch (error) {
       await this.debug.record(trace, 'error', { reason: 'assistant_operation_failed', errorCategory: safeErrorCategory(error) }, 'error');
+      this.logger.error(`Assistant operation failed update=${update.update_id} trace=${trace.traceId}: ${JSON.stringify(safeErrorDiagnostic(error, [message.text]))}`);
       await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text);
       return;
     } finally {
@@ -127,6 +129,7 @@ export class TelegramService {
       await this.debug.record(trace, 'reply_sent');
     } catch (error) {
       await this.debug.record(trace, 'reply_failed', { reason: 'delivery_or_persistence_uncertain', errorCategory: safeErrorCategory(error) }, 'error');
+      this.logger.error(`Telegram reply failed or is uncertain update=${update.update_id} trace=${trace.traceId}: ${JSON.stringify(safeErrorDiagnostic(error, [message.text, reply]))}`);
       await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, 'Client reply delivery or persistence is uncertain. Check before resending.');
     }
   }
@@ -137,13 +140,13 @@ export class TelegramService {
       if (pending) return;
       pending = true;
       try {
-        const response = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendChatAction`, {
-          method: 'POST', signal: AbortSignal.timeout(10_000), headers: { 'content-type': 'application/json' },
+        const response = await fetchWithLinearBackoff(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendChatAction`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ chat_id: chatId, action: 'typing', ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}) }),
-        });
+        }, { replaySafe: true, timeoutMs: 10_000 });
         if (!response.ok) this.logger.warn('Telegram typing indicator request failed');
-      } catch {
-        this.logger.warn('Telegram typing indicator request failed');
+      } catch (error) {
+        this.logger.error(`Telegram typing indicator request failed: ${JSON.stringify(safeErrorDiagnostic(error, [chatId]))}`);
       } finally {
         pending = false;
       }
@@ -157,15 +160,15 @@ export class TelegramService {
     const numericChatId = Number(chatId);
     if (!token || !Number.isSafeInteger(numericChatId)) return;
     try {
-      const response = await fetch(`https://api.telegram.org/bot${token}/readBusinessMessage`, {
-        method: 'POST', signal: AbortSignal.timeout(10_000), headers: { 'content-type': 'application/json' },
+      const response = await fetchWithLinearBackoff(`https://api.telegram.org/bot${token}/readBusinessMessage`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ business_connection_id: businessConnectionId, chat_id: numericChatId, message_id: messageId }),
-      });
+      }, { replaySafe: true, timeoutMs: 10_000 });
       const result = await response.json().catch(() => undefined) as { ok?: boolean } | undefined;
       if (!response.ok || result?.ok === false) this.logger.warn('Telegram read receipt request failed');
-    } catch {
-      this.logger.warn('Telegram read receipt request failed');
+    } catch (error) {
+      this.logger.error(`Telegram read receipt request failed: ${JSON.stringify(safeErrorDiagnostic(error, [String(chatId)]))}`);
     }
   }
-  private async reply(chatId: string, businessConnectionId: string | undefined, text: string, parseMode?: 'HTML'): Promise<void> { const token = process.env.TELEGRAM_BOT_TOKEN; if (!token) throw new Error('Telegram token not configured'); const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', signal: AbortSignal.timeout(10_000), headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text, ...(parseMode ? { parse_mode: parseMode } : {}), ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}) }) }); if (!response.ok) throw new Error(`Telegram HTTP ${response.status}`); const result = await response.json().catch(() => undefined) as { ok?: boolean } | undefined; if (result?.ok !== true) throw new Error('Telegram message delivery was not confirmed'); }
+  private async reply(chatId: string, businessConnectionId: string | undefined, text: string, parseMode?: 'HTML'): Promise<void> { const token = process.env.TELEGRAM_BOT_TOKEN; if (!token) throw new Error('Telegram token not configured'); const response = await fetchWithLinearBackoff(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text, ...(parseMode ? { parse_mode: parseMode } : {}), ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}) }) }, { timeoutMs: 10_000 }); const providerRequestId = response.headers?.get('x-request-id') ?? undefined; if (!response.ok) throw Object.assign(new Error(`Telegram HTTP ${response.status}`), { upstreamStatus: response.status, providerRequestId }); const result = await response.json().catch(() => undefined) as { ok?: boolean } | undefined; if (result?.ok !== true) throw Object.assign(new Error('Telegram message delivery was not confirmed'), { upstreamStatus: response.status, providerRequestId }); }
 }

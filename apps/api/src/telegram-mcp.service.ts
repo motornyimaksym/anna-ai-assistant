@@ -1,8 +1,10 @@
-import { Injectable, ServiceUnavailableException, ConflictException } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException, ConflictException } from '@nestjs/common';
 import { GoogleAuth } from 'google-auth-library';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { TelegramAccountStore, decryptSession } from './telegram-account.store.js';
+import { fetchWithLinearBackoff } from '@booking/http';
+import { safeErrorDiagnostic } from './debug-log.service.js';
 const peer = z.string().min(1).max(150);
 const page = z.number().int().min(1).max(100).default(1);
 const size = z.number().int().min(1).max(50).default(20);
@@ -18,7 +20,11 @@ export type McpTool = keyof typeof mcpArguments;
 export const readTools = new Set<McpTool>(['get_chats', 'get_chat', 'get_messages', 'search_messages']);
 @Injectable()
 export class TelegramMcpService {
-  private readonly auth = new GoogleAuth();
+  private readonly logger = new Logger(TelegramMcpService.name);
+  private readonly auth = new GoogleAuth({ clientOptions: { transporterOptions: { retryConfig: {
+    retry: 3, httpMethodsToRetry: ['GET', 'HEAD', 'OPTIONS'], statusCodesToRetry: [[408, 408], [425, 425], [429, 429], [500, 599]], noResponseRetries: 3,
+    retryBackoff: async (error) => new Promise<void>((resolve) => setTimeout(resolve, 250 * (error.config.retryConfig?.currentRetryAttempt ?? 1))),
+  } } } });
   constructor(private readonly accounts: TelegramAccountStore) {}
   async call(name: McpTool, args: unknown, expectedSession?: string, signal?: AbortSignal): Promise<{ text: string; sessionFingerprint: string }> {
     if (!Object.hasOwn(mcpArguments, name)) throw new ConflictException('Unsupported Telegram operation');
@@ -36,25 +42,28 @@ export class TelegramMcpService {
         this.auth.getIdTokenClient(origin).then(async (client) => (await client.getRequestHeaders()).get('authorization')!),
         new Promise<never>((_, reject) => { tokenTimer = setTimeout(() => reject(new Error('Identity timeout')), 10_000); }),
       ]);
-    } catch { throw new ServiceUnavailableException('Private Telegram bridge authentication is unavailable.'); }
+    } catch (error) { this.logger.error(`Private Telegram bridge authentication failed: ${JSON.stringify(safeErrorDiagnostic(error, [origin]))}`); throw new ServiceUnavailableException('Private Telegram bridge authentication is unavailable.'); }
     finally { clearTimeout(tokenTimer); }
     signal?.throwIfAborted();
     const lease = await this.accounts.acquire();
+    const sensitiveValues = [origin, authorization, apiHash];
     try {
       if (lease.record.phase !== 'connected' || !lease.record.encrypted) throw new ServiceUnavailableException('Connect the Telegram account in Bot Settings first.');
       const { session } = decryptSession(lease.record.encrypted, key);
+      sensitiveValues.push(session);
       const sessionFingerprint = createHash('sha256').update(session).digest('hex');
       if (expectedSession && expectedSession !== sessionFingerprint) throw new ConflictException('Telegram account changed. Create a new proposal.');
-      const response = await fetch(`${origin}/call`, {
+      const response = await fetchWithLinearBackoff(`${origin}/call`, {
         method: 'POST', headers: { authorization, 'content-type': 'application/json' },
         signal: AbortSignal.any([AbortSignal.timeout(35_000), ...(signal ? [signal] : [])]), redirect: 'error',
         body: JSON.stringify({ name, arguments: arguments_, session, api_id: apiId, api_hash: apiHash }),
-      });
-      if (!response.ok) throw new Error('MCP call failed');
+      }, { replaySafe: readTools.has(name) });
+      if (!response.ok) throw Object.assign(new Error('MCP call failed'), { upstreamStatus: response.status, providerRequestId: response.headers?.get('x-request-id') ?? undefined });
       const result = z.object({ text: z.string().max(24000) }).parse(await response.json());
       return { text: result.text, sessionFingerprint };
     } catch (error) {
       if (error instanceof ServiceUnavailableException || error instanceof ConflictException) throw error;
+      this.logger.error(`Private Telegram bridge request failed: ${JSON.stringify(safeErrorDiagnostic(error, sensitiveValues))}`);
       throw new ServiceUnavailableException('Telegram operation could not be verified. For sends, check Telegram before trying again.');
     } finally { await this.accounts.finish(lease.id, lease.record); }
   }
