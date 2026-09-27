@@ -14,7 +14,7 @@ export function systemTwoInstructions(input: {
   now?: Date;
 }): string {
   const definition = SYSTEM_TWO_PROMPTS[input.promptId];
-  const systemPrompt = input.promptOverride ? `${input.promptOverride}\n\n${THERAPIST_FIRST_PERSON_GUIDANCE}\n\n${TELEGRAM_FORMAT_GUIDANCE}` : definition.defaultPrompt;
+  const systemPrompt = `${input.promptOverride ?? definition.defaultPrompt}\n\n${THERAPIST_FIRST_PERSON_GUIDANCE}\n\n${TELEGRAM_FORMAT_GUIDANCE}`;
   const businessFacts = JSON.stringify({
     additionalKnowledge: input.knowledgeBaseOverride ?? DEFAULT_KNOWLEDGE_BASE,
     currentEnabledServices: input.configuredServices.filter((service) => service.enabled).map(({ id, name, description, durationMinutes, durationOptions, price, currency }) => ({ id, name, description, durationMinutes, ...(durationOptions ? { durationOptions } : {}), price, currency })),

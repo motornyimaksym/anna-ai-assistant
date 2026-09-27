@@ -13,7 +13,7 @@ const conversation = { telegramChatId: 'chat', clientId: 'alice', openaiConversa
 const context = { clientId: 'alice', telegramChatId: 'chat' };
 const setup = (promptId: SystemTwoPromptId = 'general') => {
   vi.stubEnv('OPENAI_API_KEY', 'test-key');
-  const repository = { getService: vi.fn(async () => ({ id: 'massage', name: 'Massage', durationMinutes: 60, price: 1500, durationOptions: [{ durationMinutes: 90, price: 2000 }], currency: 'UAH', enabled: true })), listMessages: vi.fn(async () => []), getAssistantPromptOverride: vi.fn(async () => undefined), getKnowledgeBaseOverride: vi.fn(async () => undefined), listServices: vi.fn(async () => [] as ServiceDto[]), replacePendingAction: vi.fn(async () => true), ensureOpenAiConversation: vi.fn(async () => 'conv-created'), saveConversation: vi.fn(async (value: typeof conversation & { pendingAction?: unknown }) => value), appendMessage: vi.fn() };
+  const repository = { getService: vi.fn(async () => ({ id: 'massage', name: 'Massage', durationMinutes: 60, price: 1500, durationOptions: [{ durationMinutes: 90, price: 2000 }], currency: 'UAH', enabled: true })), listMessages: vi.fn(async () => []), getAssistantPromptOverride: vi.fn(async () => undefined), getPromptOverride: vi.fn(async () => undefined as { prompt: string; updatedAt: string } | undefined), getKnowledgeBaseOverride: vi.fn(async () => undefined), listServices: vi.fn(async () => [] as ServiceDto[]), replacePendingAction: vi.fn(async () => true), ensureOpenAiConversation: vi.fn(async () => 'conv-created'), saveConversation: vi.fn(async (value: typeof conversation & { pendingAction?: unknown }) => value), appendMessage: vi.fn() };
   const tools = { execute: vi.fn(async (): Promise<unknown> => ({ id: 'booking-1', startAt: '2099-01-01T10:00:00.000Z', status: 'confirmed', calendarSyncStatus: 'synced' })) };
   const planner = { plan: vi.fn(async () => ({ status: 'ready', serviceId: 'massage', startAt: '2099-01-01T10:00:00.000Z', durationMinutes: 90, candidateStarts: [], question: null })) };
   const debug = { record: vi.fn(async () => {}) };
@@ -78,6 +78,19 @@ describe('OpenAI conversation', () => {
     expect(instructions).toContain(THERAPIST_FIRST_PERSON_GUIDANCE);
     expect(instructions).toContain('TELEGRAM FORMATTING');
     expect(instructions).toContain('Never use Markdown markers');
+  });
+  it('uses the Booking conversation override with mandatory guidance', async () => {
+    const { service, repository } = setup('booking');
+    repository.getPromptOverride.mockResolvedValue({ prompt: 'CUSTOM BOOKING CONVERSATION', updatedAt: new Date().toISOString() });
+    const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Which booking?' }] }] }) }));
+    vi.stubGlobal('fetch', fetch);
+    await service.respond(conversation, context, 'Move my booking');
+    expect(repository.getPromptOverride).toHaveBeenCalledWith('booking-conversation');
+    const body = JSON.parse(fetch.mock.calls[0]![1].body);
+    expect(body.instructions).toContain('CUSTOM BOOKING CONVERSATION');
+    expect(body.instructions).toContain('plan_booking');
+    expect(body.instructions).toContain('CONFIRMATION:');
+    expect(body.tools.some((tool: { name: string }) => tool.name === 'plan_booking')).toBe(true);
   });
   it('includes Telegram HTML formatting rules in the default assistant prompt', async () => {
     const { service } = setup();

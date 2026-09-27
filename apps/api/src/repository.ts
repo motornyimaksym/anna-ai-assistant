@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { FieldValue, getFirestore, type DocumentData, type Firestore } from 'firebase-admin/firestore';
 import {
-  debugEventsSchema, type DebugEvent, availabilityRuleSchema, bookingSchema, botSettingsSchema, conversationSchema, scheduleExceptionSchema, serviceSchema, updateAdminAccessSchema,
+  debugEventsSchema, type DebugEvent, type AssistantPromptId, availabilityRuleSchema, bookingSchema, botSettingsSchema, conversationSchema, scheduleExceptionSchema, serviceSchema, updateAdminAccessSchema,
   type AvailabilityRuleDto, type BookingDto, type BotSettings, type ConversationDto, type ScheduleExceptionDto, type ServiceDto,
 } from '@booking/contracts';
 import { BookingConflictError, BookingNotFoundError, lockedSlotKeys, serviceEndAt } from '@booking/domain';
@@ -49,6 +49,25 @@ export class BookingRepository {
   private readonly db: Firestore;
 
   constructor(_firebase: FirebaseAdminService) { this.db = getFirestore(); }
+
+  private promptDocumentId(id: AssistantPromptId): string {
+    return {
+      routing: 'systemOneRoutingPrompt', approval: 'systemOneApprovalPrompt', probability: 'systemOneProbabilityPrompt',
+      general: 'prompt', 'booking-conversation': 'bookingConversationPrompt', 'booking-planner': 'bookingPrompt',
+    }[id];
+  }
+  async getPromptOverride(id: AssistantPromptId): Promise<{ prompt: string; updatedAt: string } | undefined> {
+    const data = (await this.db.collection('assistantSettings').doc(this.promptDocumentId(id)).get()).data();
+    return typeof data?.prompt === 'string' && typeof data.updatedAt === 'string' ? { prompt: data.prompt, updatedAt: data.updatedAt } : undefined;
+  }
+  async savePromptOverride(id: AssistantPromptId, prompt: string): Promise<{ prompt: string; updatedAt: string }> {
+    const value = { prompt, updatedAt: new Date().toISOString() };
+    await this.db.collection('assistantSettings').doc(this.promptDocumentId(id)).set(value);
+    return value;
+  }
+  async deletePromptOverride(id: AssistantPromptId): Promise<void> {
+    await this.db.collection('assistantSettings').doc(this.promptDocumentId(id)).delete();
+  }
 
   async listServices(): Promise<ServiceDto[]> {
     const snapshot = await this.db.collection('services').get();

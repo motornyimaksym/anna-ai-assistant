@@ -10,6 +10,7 @@ const setup = () => {
   const repository = {
     getAssistantPromptOverride: vi.fn(async () => ({ prompt: 'CUSTOM GENERAL', updatedAt: new Date().toISOString() })),
     getBookingPromptOverride: vi.fn(async () => ({ prompt: 'CUSTOM PLANNER', updatedAt: new Date().toISOString() })),
+    getPromptOverride: vi.fn(async () => undefined as { prompt: string; updatedAt: string } | undefined),
     getKnowledgeBaseOverride: vi.fn(async () => undefined), listServices: vi.fn(async () => []),
     saveConversation: vi.fn(), replacePendingAction: vi.fn(), appendDebugEvent: vi.fn(),
   };
@@ -40,10 +41,13 @@ describe('isolated prompt tester', () => {
   });
   it('reports Booking tool requests without executing or persisting them', async () => {
     const { service, repository } = setup();
+    repository.getPromptOverride.mockResolvedValue({ prompt: 'CUSTOM BOOKING CONVERSATION', updatedAt: new Date().toISOString() });
     vi.mocked(requestOpenAiResponse).mockResolvedValue({ status: 'completed', output: [{ type: 'function_call', name: 'plan_booking', arguments: '{"intent":"availability","bookingId":null}' }] });
     const result = await service.run({ system: 'two', promptId: 'booking-conversation', text: 'Any times tomorrow?' });
     expect(result.kind).toBe('tool_calls');
     expect(result.output).toContain('plan_booking');
+    expect(repository.getPromptOverride).toHaveBeenCalledWith('booking-conversation');
+    expect(vi.mocked(requestOpenAiResponse).mock.calls[0]![0].instructions).toContain('CUSTOM BOOKING CONVERSATION');
     expect(repository.replacePendingAction).not.toHaveBeenCalled();
     expect(repository.appendDebugEvent).not.toHaveBeenCalled();
   });

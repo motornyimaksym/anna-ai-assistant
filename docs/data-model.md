@@ -88,11 +88,14 @@ Bookings add optional public `calendarOperation` (create/reschedule/cancel) and 
 
 ## System One / System Two
 
-No new routing documents or migration. `assistantSettings/prompt` applies to System Two General; `assistantSettings/bookingPrompt` continues to control the structured planner inside System Two Booking. System One and Booking conversation-dispatch instructions are code-owned. The existing diagnostic shape records routing as `assistant_started` with `intent: general|booking`, `reason: system_one_selected`; no raw selector inputs or provider results are stored.
+`assistantSettings/prompt` applies to System Two General; `assistantSettings/bookingPrompt` continues to control the structured planner inside System Two Booking. Additional optional documents for System One and Booking conversation overrides are defined below; no migration is required. The existing diagnostic shape records routing as `assistant_started` with `intent: general|booking`, `reason: system_one_selected`; no raw selector inputs or provider results are stored.
 
 ## Natural-language proposal confirmation (section 50)
 
 `conversations/{chatId}.pendingAction` gains optional `id` (UUID) and `confirmationText` (nonempty string, maximum 4,000 characters). Every new proposal writes both; the text is the exact displayed summary, including action, appointment details and confirmation invitation. Existing documents remain readable without migration. Natural approval requires both fields; legacy proposals without summaries cannot use natural approval and must be replaced with a fresh proposal; client chat has no command shortcut.
 
 Compare-and-consume transactions verify the complete expected action and current client/automation/human state, then delete only `pendingAction` and update `updatedAt`. A valid false approval decision clears only a matching snapshot. Telegram activity uses a field-only timestamp update to preserve concurrent changes. Reply delivery checks positive Telegram `ok: true` before recording the proposal summary in history. No boolean result or probability is persisted as booking authorization, and no new collection/index is added. Existing deny-all client access remains unchanged.
+
 `aiChatUsers/{uid}/threads/{uuid}.openaiConversationId` and `conversations/{chatId}.openaiConversationId` are optional OpenAI Conversations API IDs. Legacy documents acquire one on their next conversational model request. IDs stay scoped to the authenticated UID/thread or Telegram chat/client. Firestore messages serve UI, routing, confirmations, planning and audit, not conversational Responses input.
+
+`assistantSettings/systemOneRoutingPrompt`, `assistantSettings/systemOneApprovalPrompt`, `assistantSettings/systemOneProbabilityPrompt`, and `assistantSettings/bookingConversationPrompt` store optional `{ prompt, updatedAt }` overrides for their respective `/prompt` tabs. `assistantSettings/prompt` and `assistantSettings/bookingPrompt` remain the General and Booking planner overrides. Missing documents select code defaults. Only backend Admin SDK accesses these documents; saving one prompt never changes another.

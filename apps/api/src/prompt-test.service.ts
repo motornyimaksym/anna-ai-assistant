@@ -61,7 +61,7 @@ export class PromptTestService {
   private async systemTwo(request: Extract<PromptTestRequest, { system: 'two' }> & { promptId: 'general' | 'booking-conversation' }): Promise<PromptTestResponse> {
     const promptId = request.promptId === 'general' ? 'general' : 'booking';
     const [override, knowledge, services] = await Promise.all([
-      promptId === 'general' ? this.repository.getAssistantPromptOverride() : undefined,
+      promptId === 'general' ? this.repository.getAssistantPromptOverride() : this.repository.getPromptOverride('booking-conversation'),
       this.repository.getKnowledgeBaseOverride(), this.repository.listServices(),
     ]);
     const instructions = systemTwoInstructions({ promptId, promptOverride: override?.prompt, knowledgeBaseOverride: knowledge?.content, configuredServices: services });

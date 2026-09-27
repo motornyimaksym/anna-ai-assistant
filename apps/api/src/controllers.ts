@@ -6,9 +6,8 @@ import { DEFAULT_BOT_SETTINGS } from './bot-settings.js';
 import { DEFAULT_KNOWLEDGE_BASE } from './default-knowledge-base.js';
 import { ServicePhotoService } from './service-photo.service.js';
 import { HumanAssistanceService } from './human-assistance.service.js';
-import { APPROVAL_QUESTION } from './confirmation-prompt.js';
-import { contextGuidance, routingGuidance } from './typesafe-system-one.js';
-import { SYSTEM_TWO_PROMPTS } from './system-two.js';
+import { assistantPromptIdSchema } from '@booking/contracts';
+import { promptDefinitions } from './prompt-settings.js';
 @Controller()
 export class HealthController { @Get('health') health() { return { status: 'ok' }; } }
 @Controller('telegram')
@@ -19,14 +18,25 @@ export class AdminController {
   @Get('spec') spec() { return this.specService.getSpec(); }
   @Get('prompt-catalog') promptCatalog() { return promptCatalogResponseSchema.parse({
     systemOne: [
-      { id: 'routing', label: 'Routing', description: 'Selects General or Booking. Choice criteria come from the System Two registry.', content: routingGuidance },
-      { id: 'approval', label: 'Approval', description: 'Checks explicit approval of a pending proposal.', content: `${APPROVAL_QUESTION}\n${contextGuidance}` },
-      { id: 'probability', label: 'Probability', description: 'Estimates a yes probability; no production caller yet.', content: `Server-authored question\nEstimate the probability that the answer is yes. ${contextGuidance}` },
+      ...(['routing', 'approval', 'probability'] as const).map((id) => ({ id, label: promptDefinitions[id].label, description: promptDefinitions[id].description, content: promptDefinitions[id].defaultPrompt })),
     ],
-    systemTwo: [
-      { id: 'booking-conversation', label: 'Booking conversation', description: 'Code-owned Booking workflow instructions. Dynamic context and mandatory guidance are appended at request time.', content: `${SYSTEM_TWO_PROMPTS.booking.defaultPrompt}\n\n${SYSTEM_TWO_PROMPTS.booking.guidance}` },
-    ],
+    systemTwo: (['general', 'booking-conversation', 'booking-planner'] as const).map((id) => ({ id, label: promptDefinitions[id].label, description: promptDefinitions[id].description, content: promptDefinitions[id].defaultPrompt })),
   }); }
+  @Get('prompts/:id') async promptById(@Param('id') rawId: string) {
+    const id = assistantPromptIdSchema.parse(rawId);
+    const override = await this.repository.getPromptOverride(id);
+    return assistantPromptResponseSchema.parse(override ? { ...override, isCustom: true } : { prompt: promptDefinitions[id].defaultPrompt, isCustom: false });
+  }
+  @Put('prompts/:id') async updatePromptById(@Param('id') rawId: string, @Body() body: unknown) {
+    const id = assistantPromptIdSchema.parse(rawId);
+    const override = await this.repository.savePromptOverride(id, updateAssistantPromptSchema.parse(body).prompt);
+    return assistantPromptResponseSchema.parse({ ...override, isCustom: true });
+  }
+  @Delete('prompts/:id') async resetPromptById(@Param('id') rawId: string) {
+    const id = assistantPromptIdSchema.parse(rawId);
+    await this.repository.deletePromptOverride(id);
+    return assistantPromptResponseSchema.parse({ prompt: promptDefinitions[id].defaultPrompt, isCustom: false });
+  }
   @Get('assistant-prompt') async assistantPrompt() { return this.promptResponse(await this.repository.getAssistantPromptOverride()); }
   @Put('assistant-prompt') async updateAssistantPrompt(@Body() body: unknown) { const { prompt } = updateAssistantPromptSchema.parse(body); return this.promptResponse(await this.repository.saveAssistantPromptOverride(prompt)); }
   @Delete('assistant-prompt') async resetAssistantPrompt() { await this.repository.deleteAssistantPromptOverride(); return this.promptResponse(); }

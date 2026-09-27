@@ -17,6 +17,9 @@ const setup = () => {
     getAssistantPromptOverride: vi.fn(async () => undefined),
     saveAssistantPromptOverride: vi.fn(async (prompt: string) => ({ prompt, updatedAt: '2026-09-24T10:00:00.000Z' })),
     deleteAssistantPromptOverride: vi.fn(async () => undefined),
+    getPromptOverride: vi.fn(async () => undefined as { prompt: string; updatedAt: string } | undefined),
+    savePromptOverride: vi.fn(async (_id: string, prompt: string) => ({ prompt, updatedAt: '2026-09-24T10:00:00.000Z' })),
+    deletePromptOverride: vi.fn(async () => undefined),
     getKnowledgeBaseOverride: vi.fn(async () => undefined),
     saveKnowledgeBaseOverride: vi.fn(async (content: string) => ({ content, updatedAt: '2026-09-24T10:00:00.000Z' })),
     deleteKnowledgeBaseOverride: vi.fn(async () => undefined),
@@ -33,14 +36,28 @@ describe('admin content endpoints', () => {
     const { controller } = setup();
     const catalog = controller.promptCatalog();
     expect(catalog.systemOne.map(({ id }) => id)).toEqual(['routing', 'approval', 'probability']);
-    expect(catalog.systemTwo.map(({ id }) => id)).toEqual(['booking-conversation']);
+    expect(catalog.systemTwo.map(({ id }) => id)).toEqual(['general', 'booking-conversation', 'booking-planner']);
     expect(catalog.systemOne[0]?.content).toContain('Select the System Two workflow');
-    expect(catalog.systemTwo[0]?.content).toContain('SYSTEM TWO: BOOKING');
+    expect(catalog.systemTwo[1]?.content).toContain('SYSTEM TWO: BOOKING');
   });
   it('serves the packaged spec', async () => {
     const { controller, specService } = setup();
     await expect(controller.spec()).resolves.toEqual({ content: '# Test spec' });
     expect(specService.getSpec).toHaveBeenCalledOnce();
+  });
+  it('saves and resets each newly editable prompt independently', async () => {
+    const { controller, repository } = setup();
+    for (const id of ['routing', 'approval', 'probability', 'booking-conversation'] as const) {
+      const initial = await controller.promptById(id);
+      expect(initial.isCustom).toBe(false);
+      expect(initial.prompt.length).toBeGreaterThan(0);
+      expect(await controller.updatePromptById(id, { prompt: `Custom ${id}` })).toMatchObject({ prompt: `Custom ${id}`, isCustom: true });
+      expect(repository.savePromptOverride).toHaveBeenLastCalledWith(id, `Custom ${id}`);
+      expect(await controller.resetPromptById(id)).toEqual(initial);
+      expect(repository.deletePromptOverride).toHaveBeenLastCalledWith(id);
+    }
+    await expect(controller.updatePromptById('routing', { prompt: ' ' })).rejects.toThrow();
+    await expect(controller.promptById('unknown')).rejects.toThrow();
   });
 
   it('returns the code default, saves an override, and resets to the default', async () => {

@@ -37,3 +37,7 @@ A functional task is complete only when `SPEC.md`, implementation, and tests agr
 ## Production deployment authorization
 
 Never deploy to any production environment or invoke a production deployment script unless the user explicitly asks for deployment. This rule applies even after implementation, tests, commits, pushes, or a reported production issue. A request to commit or push does not authorize deployment. Treat explicit deployment authorization as scoped to the target and changes in that request; ask if the target is unclear.
+
+## User shorthand
+
+When the user types `cpd`, treat it as an explicit request to commit the current intended changes, push the current branch, and deploy those changes using the repository's configured deployment target and script. Complete those steps in that order. `cpd` authorizes that deployment; it is not a standing authorization to deploy later changes without a new request. If the target is unclear, ask before deploying.

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requestOpenAiResponse } from './openai-transport.js';
 import { SystemOneSelector, systemOneDecisionInputSchema, systemOneBooleanSchema, systemOneProbabilitySchema, type SystemOneDecisionInput, type SystemOneInput } from './system-one.js';
 import { SYSTEM_TWO_PROMPTS, systemTwoPromptIdSchema, type SystemTwoPromptId } from './system-two.js';
+import { BookingRepository } from './repository.js';
 
 export const SYSTEM_ONE_PROMPT = `Select exactly one System Two prompt for the current client message. Return only the required JSON promptId; never answer the client or perform actions.
 ${Object.entries(SYSTEM_TWO_PROMPTS).map(([id, definition]) => `${id}: ${definition.description}`).join('\n')}
@@ -29,12 +30,15 @@ const responseSchema = z.object({
 
 @Injectable()
 export class OpenAiSystemOneSelector extends SystemOneSelector {
+  constructor(private readonly repository: BookingRepository) { super(); }
   async answerBoolean(input: SystemOneDecisionInput, signal: AbortSignal): Promise<boolean> {
-    const value = await this.decision(SYSTEM_ONE_BOOLEAN_PROMPT, 'boolean_answer', 'answer', { type: 'boolean' }, input, signal);
+    const override = await this.repository.getPromptOverride('approval');
+    const value = await this.decision(`${override?.prompt ?? ''}\n${SYSTEM_ONE_BOOLEAN_PROMPT}`, 'boolean_answer', 'answer', { type: 'boolean' }, input, signal);
     return z.object({ answer: systemOneBooleanSchema }).strict().parse(value).answer;
   }
   async estimateProbability(input: SystemOneDecisionInput, signal: AbortSignal): Promise<number> {
-    const value = await this.decision(SYSTEM_ONE_PROBABILITY_PROMPT, 'probability_estimate', 'probability', { type: 'number', minimum: 0, maximum: 1 }, input, signal);
+    const override = await this.repository.getPromptOverride('probability');
+    const value = await this.decision(override?.prompt ?? SYSTEM_ONE_PROBABILITY_PROMPT, 'probability_estimate', 'probability', { type: 'number', minimum: 0, maximum: 1 }, input, signal);
     return z.object({ probability: systemOneProbabilitySchema }).strict().parse(value).probability;
   }
   private async decision(instructions: string, name: string, field: string, property: Record<string, unknown>, input: SystemOneDecisionInput, signal: AbortSignal): Promise<unknown> {
@@ -49,8 +53,9 @@ export class OpenAiSystemOneSelector extends SystemOneSelector {
     return JSON.parse(response.output[0]!.content[0]!.text);
   }
   async select(input: SystemOneInput, signal: AbortSignal): Promise<SystemTwoPromptId> {
+    const override = await this.repository.getPromptOverride('routing');
     const response = responseSchema.parse(await requestOpenAiResponse({
-      instructions: SYSTEM_ONE_PROMPT,
+      instructions: override?.prompt ?? SYSTEM_ONE_PROMPT,
       input: [{ role: 'user', content: JSON.stringify(input) }],
       text: { format: {
         type: 'json_schema', name: 'system_two_selection', strict: true,

@@ -65,7 +65,7 @@ export class OpenAiService {
     const key = process.env.OPENAI_API_KEY;
     if (!key) throw new Error('OpenAI is not configured');
     const [promptOverride, knowledgeBaseOverride, configuredServices] = await Promise.all([
-      promptId === 'general' ? this.repository.getAssistantPromptOverride() : undefined,
+      promptId === 'general' ? this.repository.getAssistantPromptOverride() : this.repository.getPromptOverride('booking-conversation'),
       this.repository.getKnowledgeBaseOverride(),
       this.repository.listServices(),
     ]);
