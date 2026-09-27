@@ -7,6 +7,7 @@ import { telegramAccountStatusSchema } from '@booking/contracts';
 import { telegramScheduleSlotsResponseSchema, telegramScheduleChatsSchema, telegramScheduleTopicsSchema } from '@booking/contracts';
 import { humanAssistanceSettingsResponseSchema, humanReleaseResponseSchema, humanRequestSchema, updateHumanAssistanceSettingsSchema, type HumanAssistanceSettings } from '@booking/contracts';
 import { adminAccessResponseSchema, assistantPromptResponseSchema, promptCatalogResponseSchema, availableSlotsResponseSchema, bookingSchema, botSettingsResponseSchema, conversationSchema, servicePhotoUploadResponseSchema, servicePhotoUploadSchema, serviceSchema, specResponseSchema, updateAdminAccessSchema, type AssistantPromptId, type BotSettings, type ServiceDto } from '@booking/contracts';
+import { routingPromptResponseSchema, type UpdateRoutingPromptRequest } from '@booking/contracts';
 import { getAuth } from 'firebase/auth';
 const request = async <T>(path: string, schema: { parse(value: unknown): T }, init?: RequestInit): Promise<T> => { const user = getAuth().currentUser; const token = user ? await user.getIdToken() : undefined; const response = await fetch(`/api${path}`, { ...init, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...init?.headers } }); if (!response.ok) { const body = (path.startsWith('/admin/telegram-account') || path.startsWith('/admin/media') || path.startsWith('/admin/ai-chat') || path.startsWith('/admin/schedule') || path.startsWith('/admin/google-calendar') || path.startsWith('/admin/debug')) ? await response.json().catch(() => ({})) as { message?: unknown } : {}; throw new Error(typeof body.message === 'string' ? body.message : `API request failed (${response.status})`); } return schema.parse(await response.json()); };
 const readMediaFile = async (file: File) => {
@@ -65,6 +66,9 @@ export const adminApi = {
   prompt: (id: AssistantPromptId) => request(`/admin/prompts/${id}`, assistantPromptResponseSchema),
   savePrompt: (id: AssistantPromptId, prompt: string) => request(`/admin/prompts/${id}`, assistantPromptResponseSchema, { method: 'PUT', body: JSON.stringify({ prompt }) }),
   resetPrompt: (id: AssistantPromptId) => request(`/admin/prompts/${id}`, assistantPromptResponseSchema, { method: 'DELETE' }),
+  routingPrompt: () => request('/admin/prompts/routing', routingPromptResponseSchema),
+  saveRoutingPrompt: (value: UpdateRoutingPromptRequest) => request('/admin/prompts/routing', routingPromptResponseSchema, { method: 'PUT', body: JSON.stringify(value) }),
+  resetRoutingPrompt: () => request('/admin/prompts/routing', routingPromptResponseSchema, { method: 'DELETE' }),
   knowledgeBase: () => request('/admin/knowledge-base', knowledgeBaseResponseSchema),
   saveKnowledgeBase: (content: string) => request('/admin/knowledge-base', knowledgeBaseResponseSchema, { method: 'PUT', body: JSON.stringify({ content }) }),
   resetKnowledgeBase: () => request('/admin/knowledge-base', knowledgeBaseResponseSchema, { method: 'DELETE' }),

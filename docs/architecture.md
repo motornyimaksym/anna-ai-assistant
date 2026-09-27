@@ -60,6 +60,8 @@ The System Two registry owns route descriptions, prompt definitions and tool pol
 
 The `/prompt` admin page groups instructions under System One and System Two tabs. Nested tabs show Routing, Approval, and Probability for System One; General, Booking conversation, and Booking planner for System Two. All six prompts have independent editors with save/reset and default/custom status. The protected backend prompt catalog supplies tab descriptions and code defaults. Tab switches preserve unsaved drafts.
 
+Routing editor exposes instructions plus General and Booking Choice criteria separately. TypeSafe receives each value in its native field; legacy single-prompt routing overrides supply instructions with default criteria.
+
 The debug page separates system events from a designated-owner prompt tester. The tester runs one isolated model call using the selected current prompt; it displays tool requests without executing tools. System One consent/probability tests use a fixed example proposal. The structured booking planner test uses synthetic schedule context and cannot confirm real availability. Test inputs and outputs are neither persisted nor appended to diagnostic events.
 
 To replace System One, implement `select(input, signal)`, `answerBoolean(input, signal)` and `estimateProbability(input, signal)` and replace the Nest provider binding. No OpenAI types appear in that contract. To add a future confirmation or other workflow, extend the typed registry, tool policy and handler dispatch, describe routing criteria, and add routing/isolation tests. UI provider selection and an editable classifier are deferred. `/ai-chat` stays independent.

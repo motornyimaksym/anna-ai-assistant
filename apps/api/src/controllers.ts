@@ -1,6 +1,6 @@
 import { BOOKING_SYSTEM_PROMPT } from './booking-prompt.js';
 import { Body, Controller, Delete, Get, Header, Headers, HttpCode, NotFoundException, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
-import { adminAccessResponseSchema, assistantPromptResponseSchema, promptCatalogResponseSchema, availabilityRuleSchema, availableSlotsRequestSchema, botSettingsResponseSchema, createBookingRequestSchema, patchConversationSchema, rescheduleBookingRequestSchema, scheduleExceptionSchema, servicePhotoUploadSchema, serviceSchema, updateAdminAccessSchema, updateAssistantPromptSchema, updateBotSettingsSchema, knowledgeBaseResponseSchema, updateKnowledgeBaseSchema, updateBookingRequestSchema, humanAssistanceSettingsResponseSchema, humanReplySchema, updateHumanAssistanceSettingsSchema } from '@booking/contracts';
+import { adminAccessResponseSchema, assistantPromptResponseSchema, promptCatalogResponseSchema, routingPromptResponseSchema, updateRoutingPromptSchema, availabilityRuleSchema, availableSlotsRequestSchema, botSettingsResponseSchema, createBookingRequestSchema, patchConversationSchema, rescheduleBookingRequestSchema, scheduleExceptionSchema, servicePhotoUploadSchema, serviceSchema, updateAdminAccessSchema, updateAssistantPromptSchema, updateBotSettingsSchema, knowledgeBaseResponseSchema, updateKnowledgeBaseSchema, updateBookingRequestSchema, humanAssistanceSettingsResponseSchema, humanReplySchema, updateHumanAssistanceSettingsSchema } from '@booking/contracts';
 import { AdminGuard, AdminOwnerGuard, AdminDebugGuard, canViewDebug, type AdminRequest } from './auth.js'; import { AvailabilityService } from './availability.service.js'; import { BookingService } from './booking.service.js'; import { BookingRepository } from './repository.js'; import { SpecService } from './spec.service.js'; import { TelegramService } from './telegram.service.js'; import { ASSISTANT_SYSTEM_PROMPT } from './assistant-prompt.js';
 import { DEFAULT_BOT_SETTINGS } from './bot-settings.js';
 import { DEFAULT_KNOWLEDGE_BASE } from './default-knowledge-base.js';
@@ -8,6 +8,7 @@ import { ServicePhotoService } from './service-photo.service.js';
 import { HumanAssistanceService } from './human-assistance.service.js';
 import { assistantPromptIdSchema } from '@booking/contracts';
 import { promptDefinitions } from './prompt-settings.js';
+import { SYSTEM_TWO_PROMPTS } from './system-two.js';
 @Controller()
 export class HealthController { @Get('health') health() { return { status: 'ok' }; } }
 @Controller('telegram')
@@ -24,18 +25,25 @@ export class AdminController {
   }); }
   @Get('prompts/:id') async promptById(@Param('id') rawId: string) {
     const id = assistantPromptIdSchema.parse(rawId);
+    if (id === 'routing') return this.routingPrompt();
     const override = await this.repository.getPromptOverride(id);
     return assistantPromptResponseSchema.parse(override ? { ...override, isCustom: true } : { prompt: promptDefinitions[id].defaultPrompt, isCustom: false });
   }
   @Put('prompts/:id') async updatePromptById(@Param('id') rawId: string, @Body() body: unknown) {
     const id = assistantPromptIdSchema.parse(rawId);
+    if (id === 'routing') return routingPromptResponseSchema.parse({ ...await this.repository.saveRoutingPromptOverride(updateRoutingPromptSchema.parse(body)), isCustom: true });
     const override = await this.repository.savePromptOverride(id, updateAssistantPromptSchema.parse(body).prompt);
     return assistantPromptResponseSchema.parse({ ...override, isCustom: true });
   }
   @Delete('prompts/:id') async resetPromptById(@Param('id') rawId: string) {
     const id = assistantPromptIdSchema.parse(rawId);
     await this.repository.deletePromptOverride(id);
+    if (id === 'routing') return this.routingPrompt();
     return assistantPromptResponseSchema.parse({ prompt: promptDefinitions[id].defaultPrompt, isCustom: false });
+  }
+  private async routingPrompt() {
+    const override = await this.repository.getRoutingPromptOverride();
+    return routingPromptResponseSchema.parse({ instructions: override?.instructions ?? promptDefinitions.routing.defaultPrompt, general: override?.general ?? SYSTEM_TWO_PROMPTS.general.description, booking: override?.booking ?? SYSTEM_TWO_PROMPTS.booking.description, isCustom: !!override, ...(override ? { updatedAt: override.updatedAt } : {}) });
   }
   @Get('assistant-prompt') async assistantPrompt() { return this.promptResponse(await this.repository.getAssistantPromptOverride()); }
   @Put('assistant-prompt') async updateAssistantPrompt(@Body() body: unknown) { const { prompt } = updateAssistantPromptSchema.parse(body); return this.promptResponse(await this.repository.saveAssistantPromptOverride(prompt)); }

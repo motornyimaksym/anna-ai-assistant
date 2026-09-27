@@ -13,7 +13,7 @@ vi.mock('./api.js', () => ({ adminApi: { promptCatalog: vi.fn(async () => ({ sys
   { id: 'general', label: 'General', description: 'General replies', content: 'General instructions' },
   { id: 'booking-conversation', label: 'Booking conversation', description: 'Booking workflow', content: 'Booking instructions' },
   { id: 'booking-planner', label: 'Booking planner', description: 'Structured planning', content: 'Planner instructions' },
-] })), prompt: vi.fn(async (id: string) => ({ prompt: `${id} default`, isCustom: false })), savePrompt: vi.fn(async (_id: string, prompt: string) => ({ prompt, isCustom: true })), resetPrompt: vi.fn(async (id: string) => ({ prompt: `${id} default`, isCustom: false })) } }));
+ ] })), prompt: vi.fn(async (id: string) => ({ prompt: `${id} default`, isCustom: false })), savePrompt: vi.fn(async (_id: string, prompt: string) => ({ prompt, isCustom: true })), resetPrompt: vi.fn(async (id: string) => ({ prompt: `${id} default`, isCustom: false })), routingPrompt: vi.fn(async () => ({ instructions: 'Routing default', general: 'General default', booking: 'Booking default', isCustom: false })), saveRoutingPrompt: vi.fn(async (value) => ({ ...value, isCustom: true })), resetRoutingPrompt: vi.fn(async () => ({ instructions: 'Routing default', general: 'General default', booking: 'Booking default', isCustom: false })) } }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.mocked(adminApi.prompt).mockImplementation(async (id) => ({ prompt: `${id} default`, isCustom: false })); });
 const show = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } })}><AssistantPrompt /></QueryClientProvider>);
 const openSystemTwo = () => fireEvent.click(screen.getByRole('tab', { name: 'System Two' }));
@@ -80,7 +80,7 @@ describe('admin assistant prompt page', () => {
   });
   it('saves and resets newly editable System One and Booking conversation prompts', async () => {
     show();
-    for (const [label, id] of [['Routing', 'routing'], ['Approval', 'approval'], ['Probability', 'probability']] as const) {
+    for (const [label, id] of [['Approval', 'approval'], ['Probability', 'probability']] as const) {
       fireEvent.click(await screen.findByRole('tab', { name: label }));
       const editor = await screen.findByRole('textbox', { name: `${label} instructions` });
       fireEvent.change(editor, { target: { value: `Custom ${id}` } });
@@ -95,5 +95,18 @@ describe('admin assistant prompt page', () => {
     fireEvent.change(editor, { target: { value: 'Custom booking conversation' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save Booking conversation prompt' }));
     await waitFor(() => expect(adminApi.savePrompt).toHaveBeenCalledWith('booking-conversation', 'Custom booking conversation'));
+  });
+  it('edits separate routing instructions and Choice criteria', async () => {
+    show();
+    const instructions = await screen.findByRole('textbox', { name: 'Routing instructions' });
+    const general = screen.getByRole('textbox', { name: 'General criteria' });
+    const booking = screen.getByRole('textbox', { name: 'Booking criteria' });
+    fireEvent.change(instructions, { target: { value: 'Choose workflow' } });
+    fireEvent.change(general, { target: { value: 'Questions about services' } });
+    fireEvent.change(booking, { target: { value: 'Appointment requests' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Routing prompt' }));
+    await waitFor(() => expect(adminApi.saveRoutingPrompt).toHaveBeenCalledWith({ instructions: 'Choose workflow', general: 'Questions about services', booking: 'Appointment requests' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reset Routing prompt' }));
+    await waitFor(() => expect(adminApi.resetRoutingPrompt).toHaveBeenCalled());
   });
 });

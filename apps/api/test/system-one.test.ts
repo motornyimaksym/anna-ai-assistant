@@ -4,8 +4,8 @@ import { SYSTEM_TWO_PROMPTS } from '../src/system-two.js';
 
 const input = { message: 'Tomorrow?', summary: 'Choosing a massage', history: [{ role: 'assistant' as const, content: 'Which date?' }], hasPendingProposal: false };
 const response = (text: string, status = 'completed') => ({ ok: true, json: async () => ({ status, output: [{ type: 'message', content: [{ type: 'output_text', text }] }] }) });
-const repository = { getPromptOverride: vi.fn(async () => undefined as { prompt: string; updatedAt: string } | undefined) };
-afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); repository.getPromptOverride.mockReset().mockResolvedValue(undefined); });
+const repository = { getPromptOverride: vi.fn(async () => undefined as { prompt: string; updatedAt: string } | undefined), getRoutingPromptOverride: vi.fn(async () => undefined as { instructions: string; general?: string; booking?: string; updatedAt: string } | undefined) };
+afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); repository.getPromptOverride.mockReset().mockResolvedValue(undefined); repository.getRoutingPromptOverride.mockReset().mockResolvedValue(undefined); });
 describe('System One response envelopes', () => {
   const cases = [
     { method: 'select' as const, text: '{"promptId":"general"}', expected: 'general' },
@@ -49,12 +49,13 @@ describe('System One response envelopes', () => {
 describe('System One OpenAI adapter', () => {
   it('uses a saved routing prompt while retaining strict output schema', async () => {
     vi.stubEnv('OPENAI_API_KEY', 'test');
-    repository.getPromptOverride.mockResolvedValueOnce({ prompt: 'Custom routing', updatedAt: new Date().toISOString() });
+    repository.getRoutingPromptOverride.mockResolvedValueOnce({ instructions: 'Custom routing', general: 'Facts', booking: 'Appointments', updatedAt: new Date().toISOString() });
     const fetcher = vi.fn().mockResolvedValue(response('{"promptId":"booking"}'));
     vi.stubGlobal('fetch', fetcher);
     expect(await new OpenAiSystemOneSelector(repository as never).select(input, AbortSignal.timeout(1000))).toBe('booking');
     const body = JSON.parse(fetcher.mock.calls[0]![1].body);
-    expect(body.instructions).toBe('Custom routing');
+    expect(body.instructions).toContain('Custom routing');
+    expect(body.instructions).toContain('general: Facts');
     expect(body.text.format.strict).toBe(true);
   });
   it.each(['general', 'booking'] as const)('returns %s with an isolated strict schema and no tools', async (promptId) => {

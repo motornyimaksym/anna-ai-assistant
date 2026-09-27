@@ -28,9 +28,9 @@ function choiceSchema(criteria: Record<string, string>) {
 export class TypeSafeSystemOneSelector extends SystemOneSelector {
   constructor(private readonly repository: BookingRepository) { super(); }
   async select(input: SystemOneInput, signal: AbortSignal): Promise<SystemTwoPromptId> {
-    const criteria = Object.fromEntries(Object.entries(SYSTEM_TWO_PROMPTS).map(([id, definition]) => [id, definition.description]));
-    const override = await this.repository.getPromptOverride('routing');
-    const answer = await this.request(routingInputSchema.parse(input), { type: 'choice', instructions: `${override?.prompt ?? routingGuidance}\n${contextGuidance}`, criteria }, signal);
+    const override = await this.repository.getRoutingPromptOverride();
+    const criteria = { general: override?.general ?? SYSTEM_TWO_PROMPTS.general.description, booking: override?.booking ?? SYSTEM_TWO_PROMPTS.booking.description };
+    const answer = await this.request(routingInputSchema.parse(input), { type: 'choice', instructions: `${override?.instructions ?? routingGuidance}\n${contextGuidance}`, criteria }, signal);
     return systemTwoPromptIdSchema.parse(choiceSchema(criteria).parse(answer).choice);
   }
 

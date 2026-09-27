@@ -58,6 +58,11 @@ export const pendingActionSchema = z.object({ id: z.string().uuid().optional(), 
 export const conversationSchema = z.object({ telegramChatId: z.string().min(1), clientId: z.string().optional(), businessConnectionId: z.string().optional(), openaiConversationId: z.string().min(1).optional(), assistantEnabled: z.boolean(), state: z.string().default('active'), summary: z.string().default(''), pendingAction: pendingActionSchema.optional(), humanTakeoverUntil: z.string().datetime().optional(), activeHumanRequestId: z.string().optional(), createdAt: z.string().datetime(), updatedAt: z.string().datetime() });
 export const patchConversationSchema = z.object({ assistantEnabled: z.boolean().optional(), humanTakeoverUntil: z.string().datetime().nullable().optional() }).refine((value) => Object.keys(value).length > 0, 'At least one field is required');
 export const assistantPromptResponseSchema = z.object({ prompt: z.string(), isCustom: z.boolean(), updatedAt: z.string().datetime().optional() });
+const routingFieldSchema = z.string().min(1).max(12_000).refine((value) => value.trim().length > 0, 'Field must not be blank');
+export const updateRoutingPromptSchema = z.object({ instructions: routingFieldSchema, general: routingFieldSchema, booking: routingFieldSchema }).strict();
+export const routingPromptResponseSchema = updateRoutingPromptSchema.extend({ isCustom: z.boolean(), updatedAt: z.string().datetime().optional() });
+export type RoutingPromptResponse = z.infer<typeof routingPromptResponseSchema>;
+export type UpdateRoutingPromptRequest = z.infer<typeof updateRoutingPromptSchema>;
 export const assistantPromptIdSchema = z.enum(['routing', 'approval', 'probability', 'general', 'booking-conversation', 'booking-planner']);
 export type AssistantPromptId = z.infer<typeof assistantPromptIdSchema>;
 export const promptCatalogEntrySchema = z.object({ id: z.string(), label: z.string(), description: z.string(), content: z.string() });

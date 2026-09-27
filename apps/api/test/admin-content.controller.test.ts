@@ -18,6 +18,8 @@ const setup = () => {
     saveAssistantPromptOverride: vi.fn(async (prompt: string) => ({ prompt, updatedAt: '2026-09-24T10:00:00.000Z' })),
     deleteAssistantPromptOverride: vi.fn(async () => undefined),
     getPromptOverride: vi.fn(async () => undefined as { prompt: string; updatedAt: string } | undefined),
+    getRoutingPromptOverride: vi.fn(async () => undefined as { instructions: string; general?: string; booking?: string; updatedAt: string } | undefined),
+    saveRoutingPromptOverride: vi.fn(async (value: { instructions: string; general: string; booking: string }) => ({ ...value, updatedAt: '2026-09-24T10:00:00.000Z' })),
     savePromptOverride: vi.fn(async (_id: string, prompt: string) => ({ prompt, updatedAt: '2026-09-24T10:00:00.000Z' })),
     deletePromptOverride: vi.fn(async () => undefined),
     getKnowledgeBaseOverride: vi.fn(async () => undefined),
@@ -47,7 +49,7 @@ describe('admin content endpoints', () => {
   });
   it('saves and resets each newly editable prompt independently', async () => {
     const { controller, repository } = setup();
-    for (const id of ['routing', 'approval', 'probability', 'booking-conversation'] as const) {
+    for (const id of ['approval', 'probability', 'booking-conversation'] as const) {
       const initial = await controller.promptById(id);
       expect(initial.isCustom).toBe(false);
       expect(initial.prompt.length).toBeGreaterThan(0);
@@ -56,7 +58,13 @@ describe('admin content endpoints', () => {
       expect(await controller.resetPromptById(id)).toEqual(initial);
       expect(repository.deletePromptOverride).toHaveBeenLastCalledWith(id);
     }
-    await expect(controller.updatePromptById('routing', { prompt: ' ' })).rejects.toThrow();
+    const routing = await controller.promptById('routing');
+    expect(routing).toMatchObject({ isCustom: false, general: expect.any(String), booking: expect.any(String) });
+    const updated = { instructions: 'Choose workflow', general: 'Facts', booking: 'Appointments' };
+    expect(await controller.updatePromptById('routing', updated)).toMatchObject({ ...updated, isCustom: true });
+    expect(repository.saveRoutingPromptOverride).toHaveBeenCalledWith(updated);
+    expect(await controller.resetPromptById('routing')).toEqual(routing);
+    await expect(controller.updatePromptById('routing', { ...updated, general: ' ' })).rejects.toThrow();
     await expect(controller.promptById('unknown')).rejects.toThrow();
   });
 

@@ -60,6 +60,17 @@ export class BookingRepository {
     const data = (await this.db.collection('assistantSettings').doc(this.promptDocumentId(id)).get()).data();
     return typeof data?.prompt === 'string' && typeof data.updatedAt === 'string' ? { prompt: data.prompt, updatedAt: data.updatedAt } : undefined;
   }
+  async getRoutingPromptOverride(): Promise<{ instructions: string; general?: string; booking?: string; updatedAt: string } | undefined> {
+    const data = (await this.db.collection('assistantSettings').doc('systemOneRoutingPrompt').get()).data();
+    const instructions = typeof data?.instructions === 'string' ? data.instructions : data?.prompt;
+    if (typeof instructions !== 'string' || typeof data?.updatedAt !== 'string') return undefined;
+    return { instructions, ...(typeof data.general === 'string' ? { general: data.general } : {}), ...(typeof data.booking === 'string' ? { booking: data.booking } : {}), updatedAt: data.updatedAt };
+  }
+  async saveRoutingPromptOverride(value: { instructions: string; general: string; booking: string }) {
+    const saved = { ...value, updatedAt: new Date().toISOString() };
+    await this.db.collection('assistantSettings').doc('systemOneRoutingPrompt').set(saved);
+    return saved;
+  }
   async savePromptOverride(id: AssistantPromptId, prompt: string): Promise<{ prompt: string; updatedAt: string }> {
     const value = { prompt, updatedAt: new Date().toISOString() };
     await this.db.collection('assistantSettings').doc(this.promptDocumentId(id)).set(value);

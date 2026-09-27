@@ -23,5 +23,9 @@ describe('editable prompt storage', () => {
     await repository.deletePromptOverride('approval');
     expect(await repository.getPromptOverride('approval')).toBeUndefined();
     expect(await repository.getPromptOverride('routing')).toMatchObject({ prompt: 'Custom routing' });
+    data.set('assistantSettings/systemOneRoutingPrompt', { prompt: 'Legacy instructions', updatedAt: '2026-09-24T10:00:00.000Z' });
+    expect(await repository.getRoutingPromptOverride()).toEqual({ instructions: 'Legacy instructions', updatedAt: '2026-09-24T10:00:00.000Z' });
+    await repository.saveRoutingPromptOverride({ instructions: 'Route request', general: 'Facts', booking: 'Appointments' });
+    expect(await repository.getRoutingPromptOverride()).toMatchObject({ instructions: 'Route request', general: 'Facts', booking: 'Appointments' });
   });
 });
