@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { APPROVAL_QUESTION, REJECTION_QUESTION, CONFIRMATION_INVITATION } from './confirmation-prompt.js';
+import { APPROVAL_QUESTION, CONFIRMATION_INVITATION } from './confirmation-prompt.js';
 import { SystemOneSelector, systemOneBooleanSchema } from './system-one.js';
 import { SYSTEM_TWO_PROMPTS, systemTwoPromptIdSchema } from './system-two.js';
 import { BookingNeedsHumanError } from './booking.service.js';
@@ -53,8 +53,7 @@ export class OpenAiService {
       const evidence = JSON.stringify({ message: text, history, proposal: { action: pending.name, confirmationText: pending.confirmationText } });
       const decide = async (question: string) => systemOneBooleanSchema.parse(await this.selector.answerBoolean({ question, context: evidence }, AbortSignal.any([deadline, AbortSignal.timeout(10_000)])));
       if (await decide(APPROVAL_QUESTION)) return this.confirmProposal(conversation, context);
-      if (await decide(REJECTION_QUESTION)) return this.discardProposal(conversation, context);
-      await this.debug.record(context, 'confirmation_result', { status: 'not_confirmed' });
+      return this.discardProposal(conversation, context);
     }
     const promptId = systemTwoPromptIdSchema.parse(await this.selector.select({
       message: text, summary: conversation.summary.slice(0, 4000), history,

@@ -6,7 +6,7 @@ import { DEFAULT_BOT_SETTINGS } from './bot-settings.js';
 import { DEFAULT_KNOWLEDGE_BASE } from './default-knowledge-base.js';
 import { ServicePhotoService } from './service-photo.service.js';
 import { HumanAssistanceService } from './human-assistance.service.js';
-import { APPROVAL_QUESTION, REJECTION_QUESTION } from './confirmation-prompt.js';
+import { APPROVAL_QUESTION } from './confirmation-prompt.js';
 import { contextGuidance, routingGuidance } from './typesafe-system-one.js';
 import { SYSTEM_TWO_PROMPTS } from './system-two.js';
 @Controller()
@@ -21,7 +21,6 @@ export class AdminController {
     systemOne: [
       { id: 'routing', label: 'Routing', description: 'Selects General or Booking. Choice criteria come from the System Two registry.', content: routingGuidance },
       { id: 'approval', label: 'Approval', description: 'Checks explicit approval of a pending proposal.', content: `${APPROVAL_QUESTION}\n${contextGuidance}` },
-      { id: 'rejection', label: 'Rejection', description: 'Checks explicit rejection of a pending proposal.', content: `${REJECTION_QUESTION}\n${contextGuidance}` },
       { id: 'probability', label: 'Probability', description: 'Estimates a yes probability; no production caller yet.', content: `Server-authored question\nEstimate the probability that the answer is yes. ${contextGuidance}` },
     ],
     systemTwo: [

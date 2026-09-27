@@ -32,7 +32,7 @@ describe('admin content endpoints', () => {
   it('serves code-owned instructions grouped by system', () => {
     const { controller } = setup();
     const catalog = controller.promptCatalog();
-    expect(catalog.systemOne.map(({ id }) => id)).toEqual(['routing', 'approval', 'rejection', 'probability']);
+    expect(catalog.systemOne.map(({ id }) => id)).toEqual(['routing', 'approval', 'probability']);
     expect(catalog.systemTwo.map(({ id }) => id)).toEqual(['booking-conversation']);
     expect(catalog.systemOne[0]?.content).toContain('Select the System Two workflow');
     expect(catalog.systemTwo[0]?.content).toContain('SYSTEM TWO: BOOKING');

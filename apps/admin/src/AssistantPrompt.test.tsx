@@ -8,7 +8,6 @@ import { adminApi } from './api.js';
 vi.mock('./api.js', () => ({ adminApi: { promptCatalog: vi.fn(async () => ({ systemOne: [
   { id: 'routing', label: 'Routing', description: 'Select workflow', content: 'Routing instructions' },
   { id: 'approval', label: 'Approval', description: 'Approve proposal', content: 'Approval instructions' },
-  { id: 'rejection', label: 'Rejection', description: 'Reject proposal', content: 'Rejection instructions' },
   { id: 'probability', label: 'Probability', description: 'Estimate probability', content: 'Probability instructions' },
 ], systemTwo: [{ id: 'booking-conversation', label: 'Booking conversation', description: 'Booking workflow', content: 'Booking instructions' }] })), assistantPrompt: vi.fn(), saveAssistantPrompt: vi.fn(), resetAssistantPrompt: vi.fn(), bookingPrompt: vi.fn(async () => ({ prompt: 'Booking default', isCustom: false })), saveBookingPrompt: vi.fn(), resetBookingPrompt: vi.fn() } }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
@@ -69,7 +68,7 @@ describe('admin assistant prompt page', () => {
     vi.mocked(adminApi.assistantPrompt).mockResolvedValue({ prompt: 'Default prompt', isCustom: false });
     show();
     expect(await screen.findByRole('tab', { name: 'Routing' })).toBeTruthy();
-    for (const name of ['Approval', 'Rejection', 'Probability']) expect(screen.getByRole('tab', { name })).toBeTruthy();
+    for (const name of ['Approval', 'Probability']) expect(screen.getByRole('tab', { name })).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: 'Approval' }));
     expect((screen.getByRole('textbox', { name: 'Approval instructions' }) as HTMLTextAreaElement).value).toBe('Approval instructions');
     openSystemTwo();

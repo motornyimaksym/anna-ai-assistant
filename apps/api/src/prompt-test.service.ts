@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { bookingPlanSchema, promptTestRequestSchema, promptTestResponseSchema, type PromptTestRequest, type PromptTestResponse } from '@booking/contracts';
 import { z } from 'zod';
-import { APPROVAL_QUESTION, REJECTION_QUESTION } from './confirmation-prompt.js';
+import { APPROVAL_QUESTION } from './confirmation-prompt.js';
 import { BOOKING_MANDATORY_GUIDANCE, BOOKING_OUTPUT_FORMAT, BOOKING_SYSTEM_PROMPT } from './booking-prompt.js';
 import { DEFAULT_KNOWLEDGE_BASE } from './default-knowledge-base.js';
 import { safeErrorCategory } from './debug-log.service.js';
@@ -52,7 +52,7 @@ export class PromptTestService {
   private async systemOne(request: Extract<PromptTestRequest, { system: 'one' }>): Promise<PromptTestResponse> {
     const signal = AbortSignal.timeout(10_000);
     if (request.promptId === 'routing') return { kind: 'decision', output: systemTwoPromptIdSchema.parse(await this.selector.select({ message: request.text, history: [], summary: '', hasPendingProposal: false }, signal)), sampleContext: false };
-    const question = request.promptId === 'approval' ? APPROVAL_QUESTION : request.promptId === 'rejection' ? REJECTION_QUESTION : 'Does the current client message explicitly and unconditionally approve the fixed sample proposal?';
+    const question = request.promptId === 'approval' ? APPROVAL_QUESTION : 'Does the current client message explicitly and unconditionally approve the fixed sample proposal?';
     const input = { question, context: sampleEvidence(request.text) };
     const result = request.promptId === 'probability' ? systemOneProbabilitySchema.parse(await this.selector.estimateProbability(input, signal)) : systemOneBooleanSchema.parse(await this.selector.answerBoolean(input, signal));
     return { kind: 'decision', output: String(result), sampleContext: true };

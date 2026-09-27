@@ -265,24 +265,24 @@ describe('natural confirmation', () => {
     expect(selector.select).not.toHaveBeenCalled();
     expect(selector.estimateProbability).not.toHaveBeenCalled();
   });
-  it('separately detects rejection and discards without executing', async () => {
+  it('discards after one false approval decision without executing', async () => {
     const { service, selector, tools, repository } = setup();
     repository.listMessages.mockResolvedValue([{ role: 'assistant', content: naturalProposal.confirmationText }]);
-    selector.answerBoolean.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    selector.answerBoolean.mockResolvedValueOnce(false);
     expect((await service.respond({ ...conversation, pendingAction: naturalProposal }, context, 'Ні, дякую')).text).toContain('Існуючі записи не змінено');
-    expect(selector.answerBoolean).toHaveBeenCalledTimes(2);
+    expect(selector.answerBoolean).toHaveBeenCalledOnce();
     expect(repository.replacePendingAction).toHaveBeenCalledWith('chat', 'alice', naturalProposal, undefined);
     expect(tools.execute).not.toHaveBeenCalled();
     expect(selector.select).not.toHaveBeenCalled();
   });
-  it('keeps ambiguous or changed-details replies out of execution and continues routing', async () => {
+  it('discards ambiguous or changed-details replies after one decision', async () => {
     const { service, selector, tools, repository } = setup();
     repository.listMessages.mockResolvedValue([{ role: 'assistant', content: naturalProposal.confirmationText }]);
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Please clarify' }] }] }) }));
-    await service.respond({ ...conversation, pendingAction: naturalProposal }, context, 'Maybe, can we change the time?');
-    expect(selector.answerBoolean).toHaveBeenCalledTimes(2);
-    expect(selector.select).toHaveBeenCalledOnce();
-    expect(repository.replacePendingAction).not.toHaveBeenCalled();
+    const result = await service.respond({ ...conversation, pendingAction: naturalProposal }, context, 'Maybe, can we change the time?');
+    expect(result.text).toContain('Існуючі записи не змінено');
+    expect(selector.answerBoolean).toHaveBeenCalledOnce();
+    expect(selector.select).not.toHaveBeenCalled();
+    expect(repository.replacePendingAction).toHaveBeenCalledWith('chat', 'alice', naturalProposal, undefined);
     expect(tools.execute).not.toHaveBeenCalled();
   });
   it.each(['error', 'invalid', 'stale'] as const)('never executes on %s confirmation', async (kind) => {

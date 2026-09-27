@@ -41,7 +41,7 @@ export const DebugLogs = ({ uid }: { uid: string }) => {
 
 const onePrompts = [
   { value: 'routing', label: 'Routing' }, { value: 'approval', label: 'Approval' },
-  { value: 'rejection', label: 'Rejection' }, { value: 'probability', label: 'Probability' },
+  { value: 'probability', label: 'Probability' },
 ] as const;
 const twoPrompts = [
   { value: 'general', label: 'General' }, { value: 'booking-conversation', label: 'Booking conversation' },
