@@ -109,3 +109,7 @@ All editable prompt fields allow 1–20,000 nonblank characters, covering the sh
 `localStorage['massage-admin-theme']` optionally holds `light` or `dark` for the booking admin, standalone AI workspace and their login screens. It contains no account or business data, is not sent to the API, and creates no Firestore document. Missing, invalid or unreadable values default to `dark`.
 
 Telegram `openaiConversationId` may be replaced transactionally after a specific first-request missing-tool-output rejection. Replacement compares the rejected ID, client identity and automation/human-pause state. No new fields; all proposals, human cases and booking operation state remain intact. Recovery seeds only the same chat/client's bounded recent messages; ordinary turns still send only the new message.
+
+### System One provider setting
+
+Backend-only `assistantSettings/systemOne` stores `provider` (`openai` or `typesafe`) and ISO `updatedAt`. A missing document means `openai`; no migration. Protected admin GET/PUT exposes only `provider`. Each System One decision reads it once. Existing deny-all client rules apply. No tokens or prompt content are stored here.

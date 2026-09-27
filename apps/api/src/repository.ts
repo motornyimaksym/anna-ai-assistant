@@ -1,3 +1,4 @@
+import { systemOneSettingsSchema, type SystemOneSettings } from '@booking/contracts';
 import { isDeepStrictEqual } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
@@ -342,6 +343,16 @@ export class BookingRepository {
   }
   async deleteAssistantPromptOverride(): Promise<void> {
     await this.db.collection('assistantSettings').doc('prompt').delete();
+  }
+  async getSystemOneSettings(): Promise<SystemOneSettings> {
+    const doc = await this.db.collection('assistantSettings').doc('systemOne').get();
+    if (!doc.exists) return { provider: 'openai' };
+    return systemOneSettingsSchema.parse({ provider: doc.data()?.provider });
+  }
+  async saveSystemOneSettings(settings: SystemOneSettings): Promise<SystemOneSettings> {
+    const value = systemOneSettingsSchema.parse(settings);
+    await this.db.collection('assistantSettings').doc('systemOne').set({ ...value, updatedAt: new Date().toISOString() });
+    return value;
   }
   async getBotSettingsOverride(): Promise<(BotSettings & { updatedAt: string }) | undefined> {
     const doc = await this.db.collection('assistantSettings').doc('behavior').get();

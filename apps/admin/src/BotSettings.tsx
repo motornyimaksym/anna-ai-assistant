@@ -1,3 +1,4 @@
+import { SystemOneSettings } from './SystemOneSettings.js';
 import { GoogleCalendarSettings } from './GoogleCalendarSettings.js';
 import { TelegramAccountSettings } from './TelegramAccountSettings.js';
 import { HumanAssistanceSettings } from './HumanAssistanceSettings.js';
@@ -71,6 +72,7 @@ export const BotSettings = () => {
   };
 
   return <Stack spacing={2}>
+    <SystemOneSettings /><Divider />
     {accessQuery.data?.canManage && <><GoogleCalendarSettings /><Divider /><TelegramAccountSettings /><Divider /></>}
     <HumanAssistanceSettings />
     <Divider />

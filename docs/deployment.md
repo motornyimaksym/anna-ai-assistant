@@ -1,6 +1,6 @@
 # Deployment
 
-System One now requires the backend secret `TYPESAFE_AI_TOKEN` for TypeSafe AI (`jev-latest`). Before the next explicitly authorized release, provision it with `npx -y firebase-tools@latest functions:secrets:set TYPESAFE_AI_TOKEN --project anna-ai-assistant`. The API declares this Secret Manager binding. Root `.env` is local only and does not provision production. Never export this token as a public runtime variable or frontend setting. OpenAI remains required for System Two and the booking planner. Existing human requests require explicit release through the admin flow after recovery; changing providers does not release them.
+System One defaults to OpenAI and uses the existing `OPENAI_API_KEY` secret and `OPENAI_MODEL`. Bot Settings can switch to TypeSafe AI without redeployment after this feature is deployed. The existing backend-only `TYPESAFE_AI_TOKEN` secret binding is retained for that option, which falls back to OpenAI on errors. Keep credentials out of frontend configuration. Changing providers neither recreates discarded proposals nor releases existing human requests.
 
 This repository deploys the React/Vite admin to **Firebase Hosting** and the NestJS API to a **2nd-gen Cloud Function** in `europe-west1`. Firebase App Hosting is a different product; its GitHub rollout tries to run the monorepo root with `pnpm start` and fails. The Hosting/Functions CLI release is independent of that backend; disconnect its automatic rollouts before the next GitHub push to avoid another failed App Hosting rollout.
 

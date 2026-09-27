@@ -10,6 +10,8 @@ import type { ServicePhotoService } from '../src/service-photo.service.js';
 
 const setup = () => {
   const repository = {
+    getSystemOneSettings: vi.fn(async () => ({ provider: 'openai' })),
+    saveSystemOneSettings: vi.fn(async (settings: { provider: string }) => settings),
     getAdminAccessOverride: vi.fn(async () => ({ emails: ['partner@example.com'], updatedAt: '2026-09-24T10:00:00.000Z' })),
     saveAdminAccessOverride: vi.fn(async (emails: string[]) => ({ emails, updatedAt: '2026-09-24T10:00:00.000Z' })),
     getBotSettingsOverride: vi.fn(async () => undefined),
@@ -129,4 +131,14 @@ describe('admin content endpoints', () => {
     await expect(controller.updateAdminAccess({ emails: ['x@example.com', 'X@example.com'] })).rejects.toThrow();
     expect(repository.saveAdminAccessOverride).not.toHaveBeenCalled();
   });
+});
+
+it('reads and saves validated System One selection without credentials', async () => {
+  const { controller, repository } = setup();
+  expect(await controller.systemOneSettings()).toEqual({ provider: 'openai' });
+  expect(await controller.updateSystemOneSettings({ provider: 'typesafe' })).toEqual({ provider: 'typesafe' });
+  expect(repository.saveSystemOneSettings).toHaveBeenCalledWith({ provider: 'typesafe' });
+  await expect(controller.updateSystemOneSettings({ provider: 'invalid' })).rejects.toThrow();
+  await expect(controller.updateSystemOneSettings({ provider: 'openai', token: 'secret' })).rejects.toThrow();
+  expect(repository.saveSystemOneSettings).toHaveBeenCalledTimes(1);
 });

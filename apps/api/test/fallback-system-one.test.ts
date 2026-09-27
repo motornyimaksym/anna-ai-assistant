@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { FallbackSystemOneSelector } from '../src/fallback-system-one.js';
-import { SystemOneSelector } from '../src/system-one.js';
 import type { TypeSafeSystemOneSelector } from '../src/typesafe-system-one.js';
 import type { OpenAiSystemOneSelector } from '../src/openai-system-one.js';
 import { TypeSafeSystemOneSelector as TypeSafeAdapter } from '../src/typesafe-system-one.js';
@@ -44,11 +43,6 @@ describe('System One provider fallback', () => {
     primary.answerBoolean.mockRejectedValueOnce(new Error('TypeSafe unavailable'));
     backup.answerBoolean.mockRejectedValueOnce(new Error('OpenAI unavailable'));
     await expect(selector.answerBoolean(decision, AbortSignal.timeout(1000))).rejects.toThrow('OpenAI unavailable');
-  });
-
-  it('is bound as the production System One provider', async () => {
-    const { AppModule } = await import('../src/app.module.js');
-    expect(Reflect.getMetadata('providers', AppModule)).toContainEqual({ provide: SystemOneSelector, useClass: FallbackSystemOneSelector });
   });
 
   it('calls OpenAI Responses with the same routing input after TypeSafe HTTP failure', async () => {

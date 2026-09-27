@@ -1,3 +1,4 @@
+import { systemOneSettingsSchema, type SystemOneSettings } from '@booking/contracts';
 import { fetchWithLinearBackoff } from '@booking/http';
 import { debugAccessSchema, debugEventsSchema, promptTestRequestSchema, promptTestResponseSchema, type PromptTestRequest } from '@booking/contracts';
 import { googleCalendarStatusSchema, googleCalendarStartSchema, googleCalendarListSchema } from '@booking/contracts';
@@ -82,6 +83,8 @@ export const adminApi = {
   assistantPrompt: () => request('/admin/assistant-prompt', assistantPromptResponseSchema),
   saveAssistantPrompt: (prompt: string) => request('/admin/assistant-prompt', assistantPromptResponseSchema, { method: 'PUT', body: JSON.stringify({ prompt }) }),
   resetAssistantPrompt: () => request('/admin/assistant-prompt', assistantPromptResponseSchema, { method: 'DELETE' }),
+  systemOneSettings: () => request('/admin/system-one-settings', systemOneSettingsSchema),
+  saveSystemOneSettings: (settings: SystemOneSettings) => request('/admin/system-one-settings', systemOneSettingsSchema, { method: 'PUT', body: JSON.stringify(settings) }),
   botSettings: () => request('/admin/bot-settings', botSettingsResponseSchema),
   saveBotSettings: (settings: BotSettings) => request('/admin/bot-settings', botSettingsResponseSchema, { method: 'PUT', body: JSON.stringify(settings) }),
   humanAssistanceSettings: () => request('/admin/human-assistance-settings', humanAssistanceSettingsResponseSchema),

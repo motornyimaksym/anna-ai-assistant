@@ -1,3 +1,4 @@
+import { systemOneSettingsSchema } from '@booking/contracts';
 import { BOOKING_SYSTEM_PROMPT } from './booking-prompt.js';
 import { Body, Controller, Delete, Get, Header, Headers, HttpCode, NotFoundException, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
 import { adminAccessResponseSchema, assistantPromptResponseSchema, promptCatalogResponseSchema, routingPromptResponseSchema, updateRoutingPromptSchema, availabilityRuleSchema, availableSlotsRequestSchema, botSettingsResponseSchema, createBookingRequestSchema, patchConversationSchema, rescheduleBookingRequestSchema, scheduleExceptionSchema, servicePhotoUploadSchema, serviceSchema, updateAdminAccessSchema, updateAssistantPromptSchema, updateBotSettingsSchema, knowledgeBaseResponseSchema, updateKnowledgeBaseSchema, updateBookingRequestSchema, humanAssistanceSettingsResponseSchema, humanReplySchema, updateHumanAssistanceSettingsSchema } from '@booking/contracts';
@@ -56,6 +57,8 @@ export class AdminController {
   @Get('knowledge-base') async knowledgeBase() { const [override, services] = await Promise.all([this.repository.getKnowledgeBaseOverride(), this.repository.listServices()]); return this.knowledgeBaseResponse(override, services.filter((service) => service.enabled)); }
   @Put('knowledge-base') async updateKnowledgeBase(@Body() body: unknown) { const { content } = updateKnowledgeBaseSchema.parse(body); const [override, services] = await Promise.all([this.repository.saveKnowledgeBaseOverride(content), this.repository.listServices()]); return this.knowledgeBaseResponse(override, services.filter((service) => service.enabled)); }
   @Delete('knowledge-base') async resetKnowledgeBase() { await this.repository.deleteKnowledgeBaseOverride(); return this.knowledgeBaseResponse(undefined, (await this.repository.listServices()).filter((service) => service.enabled)); }
+  @Get('system-one-settings') async systemOneSettings() { return systemOneSettingsSchema.parse(await this.repository.getSystemOneSettings()); }
+  @Put('system-one-settings') async updateSystemOneSettings(@Body() body: unknown) { return systemOneSettingsSchema.parse(await this.repository.saveSystemOneSettings(systemOneSettingsSchema.parse(body))); }
   @Get('bot-settings') async botSettings() { return this.botSettingsResponse(await this.repository.getBotSettingsOverride()); }
   @Put('bot-settings') async updateBotSettings(@Body() body: unknown) { const settings = updateBotSettingsSchema.parse(body); return this.botSettingsResponse(await this.repository.saveBotSettingsOverride(settings)); }
   @Get('human-assistance-settings') async humanAssistanceSettings() { return humanAssistanceSettingsResponseSchema.parse(await this.human.settingsView()); }
