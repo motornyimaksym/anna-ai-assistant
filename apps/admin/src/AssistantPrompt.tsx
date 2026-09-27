@@ -22,11 +22,11 @@ const RoutingPromptEditor = () => {
     { id: 'general', label: 'General criteria', rows: 4 },
     { id: 'booking', label: 'Booking criteria', rows: 4 },
   ] as const;
-  const canSave = fields.some(({ id }) => value[id] !== query.data[id]) && fields.every(({ id }) => value[id].trim().length > 0 && value[id].length <= 12_000) && !save.isPending && !reset.isPending;
+  const canSave = fields.some(({ id }) => value[id] !== query.data[id]) && fields.every(({ id }) => value[id].trim().length > 0 && value[id].length <= 20_000) && !save.isPending && !reset.isPending;
   return <Stack spacing={2}>
     <Typography variant="h5">Routing</Typography>
     <Stack direction="row" alignItems="center" spacing={1}><Chip size="small" color={query.data.isCustom ? 'primary' : 'default'} label={query.data.isCustom ? 'Custom prompt' : 'Default prompt'} /><Typography variant="body2" color="text.secondary">Instructions ask the question. Criteria describe when each workflow applies. Changes apply to the next request.</Typography></Stack>
-    {fields.map(({ id, label, rows }) => <TextField key={id} label={label} value={value[id]} onChange={(event) => { setDraft({ instructions: value.instructions, general: value.general, booking: value.booking, [id]: event.target.value }); setMessage(''); }} multiline minRows={rows} fullWidth inputProps={{ maxLength: 12_000, 'aria-label': label }} helperText={`${value[id].length.toLocaleString()} / 12,000 characters`} disabled={save.isPending || reset.isPending} />)}
+    {fields.map(({ id, label, rows }) => <TextField key={id} label={label} value={value[id]} onChange={(event) => { setDraft({ instructions: value.instructions, general: value.general, booking: value.booking, [id]: event.target.value }); setMessage(''); }} multiline minRows={rows} fullWidth inputProps={{ maxLength: 20_000, 'aria-label': label }} helperText={`${value[id].length.toLocaleString()} / 20,000 characters`} disabled={save.isPending || reset.isPending} />)}
     {message && <Alert severity="success">{message}</Alert>}
     {save.isError && <Alert severity="error">Could not save the prompt. {errorText(save.error)}</Alert>}
     {reset.isError && <Alert severity="error">Could not reset the prompt. {errorText(reset.error)}</Alert>}
@@ -44,14 +44,14 @@ const CatalogPromptEditor = ({ id, label, description }: { id: AssistantPromptId
   const reset = useMutation({ mutationFn: () => adminApi.resetPrompt(id), onSuccess: (value) => { queryClient.setQueryData(queryKey, value); setDraft(undefined); setMessage('Reset to the default prompt.'); } });
   if (query.isPending) return <Typography>Loading {label} prompt…</Typography>;
   if (query.isError) return <Alert severity="error">Could not load the {label} prompt. {errorText(query.error)}</Alert>;
-  const canSave = prompt !== query.data.prompt && prompt.trim().length > 0 && prompt.length <= 12_000 && !save.isPending && !reset.isPending;
+  const canSave = prompt !== query.data.prompt && prompt.trim().length > 0 && prompt.length <= 20_000 && !save.isPending && !reset.isPending;
   return <Stack spacing={2}>
     <Typography variant="h5">{label}</Typography>
     <Stack direction="row" alignItems="center" spacing={1}>
       <Chip size="small" color={query.data.isCustom ? 'primary' : 'default'} label={query.data.isCustom ? 'Custom prompt' : 'Default prompt'} />
       <Typography variant="body2" color="text.secondary">{description} Changes apply to the next request.</Typography>
     </Stack>
-    <TextField label={`${label} instructions`} value={prompt} onChange={(event) => { setDraft(event.target.value); setMessage(''); }} multiline minRows={12} fullWidth inputProps={{ maxLength: 12_000, 'aria-label': `${label} instructions` }} helperText={`${prompt.length.toLocaleString()} / 12,000 characters`} disabled={save.isPending || reset.isPending} />
+    <TextField label={`${label} instructions`} value={prompt} onChange={(event) => { setDraft(event.target.value); setMessage(''); }} multiline minRows={12} fullWidth inputProps={{ maxLength: 20_000, 'aria-label': `${label} instructions` }} helperText={`${prompt.length.toLocaleString()} / 20,000 characters`} disabled={save.isPending || reset.isPending} />
     {message && <Alert severity="success">{message}</Alert>}
     {save.isError && <Alert severity="error">Could not save the prompt. {errorText(save.error)}</Alert>}
     {reset.isError && <Alert severity="error">Could not reset the prompt. {errorText(reset.error)}</Alert>}

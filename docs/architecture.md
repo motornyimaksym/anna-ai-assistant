@@ -58,6 +58,8 @@ Eligible bot text → existing guards and optional Jev gate → System One → s
 
 The System Two registry owns route descriptions, prompt definitions and tool policies. General answers informational questions with its existing editable prompt. Booking starts with dedicated conversation instructions, resolves intent/owned booking IDs using its tools, then uses the existing editable structured planner. Thus Booking can use multiple calls, while General no longer acts as router. Shared default safety policies apply to both; General overrides apply only to General. The Booking editor continues to control structured planning, not routing or tool permissions. Client proposal approval/refusal uses the boolean decision flow below. Client chat has no command syntax.
 
+The concise default General prompt contains shared conversation and safety guidance. System Two appends first-person voice, Telegram formatting, media, route-specific tool policy, confirmation rules, and live business context once; those sections are not repeated in the General default. Existing custom overrides retain their stored text.
+
 The `/prompt` admin page groups instructions under System One and System Two tabs. Nested tabs show Routing, Approval, and Probability for System One; General, Booking conversation, and Booking planner for System Two. All six prompts have independent editors with save/reset and default/custom status. The protected backend prompt catalog supplies tab descriptions and code defaults. Tab switches preserve unsaved drafts.
 
 Routing editor exposes instructions plus General and Booking Choice criteria separately. TypeSafe receives each value in its native field; legacy single-prompt routing overrides supply instructions with default criteria.

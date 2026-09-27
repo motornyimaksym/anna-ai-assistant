@@ -31,6 +31,19 @@ describe('admin assistant prompt page', () => {
     await waitFor(() => expect(adminApi.savePrompt).toHaveBeenCalledWith('general', 'Use short replies.'));
     expect(await screen.findByText('Saved. Changes apply to the next request.')).toBeTruthy();
   });
+  it('allows editing a default General prompt longer than 12,000 characters', async () => {
+    const longDefault = 'x'.repeat(13_802);
+    vi.mocked(adminApi.prompt).mockImplementation(async (id) => ({ prompt: id === 'general' ? longDefault : `${id} default`, isCustom: false }));
+    show();
+    openSystemTwo();
+    const editor = await screen.findByRole('textbox', { name: 'General instructions' });
+    expect((editor as HTMLTextAreaElement).value).toHaveLength(13_802);
+    fireEvent.change(editor, { target: { value: `${longDefault} revised` } });
+    const save = screen.getByRole('button', { name: 'Save General prompt' });
+    expect(save.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(save);
+    await waitFor(() => expect(adminApi.savePrompt).toHaveBeenCalledWith('general', `${longDefault} revised`));
+  });
 
   it('resets a custom prompt to the default', async () => {
     vi.mocked(adminApi.prompt).mockImplementation(async (id) => ({ prompt: id === 'general' ? 'Custom prompt' : `${id} default`, isCustom: id === 'general' }));

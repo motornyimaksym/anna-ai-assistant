@@ -82,7 +82,7 @@ Bookings add optional public `calendarOperation` (create/reschedule/cancel) and 
 
 ## Booking planner and diagnostics
 
-`assistantSettings/bookingPrompt` stores `{ prompt, updatedAt }` with the same 12,000-character, nonblank validation as the conversation prompt. Absence selects `BOOKING_SYSTEM_PROMPT`; reset deletes only this override. The structured booking plan is validated in memory and is not stored as an alternative booking model. Only a ready creation/reschedule plan becomes an existing `conversations/{chatId}.pendingAction`; natural-language approval and durable Calendar operations apply.
+`assistantSettings/bookingPrompt` stores `{ prompt, updatedAt }` with the same 20,000-character, nonblank validation as the conversation prompt. Absence selects `BOOKING_SYSTEM_PROMPT`; reset deletes only this override. The structured booking plan is validated in memory and is not stored as an alternative booking model. Only a ready creation/reschedule plan becomes an existing `conversations/{chatId}.pendingAction`; natural-language approval and durable Calendar operations apply.
 
 `assistantDiagnostics/recent` stores `{ events }`, a transactionally capped array of the latest 200 typed diagnostic entries. Each contains a UUID, ISO timestamp, correlation UUID, anonymized chat reference, stage, severity, and bounded allowlisted details (context readiness/counts, plan status/timing, tool, request ID, safe error category). Raw messages, prompts, provider bodies, credentials and Calendar details are excluded. Old entries are removed when new entries exceed the cap, bounding storage without an external cleanup job. Backend-only access; the read API requires the single selected owner UID, not ordinary administrator privileges. No existing records require migration.
 
@@ -101,3 +101,5 @@ Compare-and-consume transactions verify the complete expected action and current
 `assistantSettings/systemOneApprovalPrompt`, `assistantSettings/systemOneProbabilityPrompt`, and `assistantSettings/bookingConversationPrompt` store optional `{ prompt, updatedAt }` overrides for their respective `/prompt` tabs. `assistantSettings/prompt` and `assistantSettings/bookingPrompt` remain the General and Booking planner overrides. Missing documents select code defaults. Only backend Admin SDK accesses these documents; saving one prompt never changes another.
 
 Routing overrides now store `{ instructions, general, booking, updatedAt }` in `assistantSettings/systemOneRoutingPrompt`. Legacy `{ prompt, updatedAt }` documents remain readable: `prompt` becomes instructions, while `general` and `booking` use defaults. Reset deletes the routing document. Other prompt override documents retain `{ prompt, updatedAt }`.
+
+All editable prompt fields allow 1–20,000 nonblank characters, covering the shipped General default. Knowledge-base limits remain separate.

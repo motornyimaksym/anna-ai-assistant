@@ -10,7 +10,8 @@ describe('admin content contracts', () => {
 
   it('rejects blank and oversized prompt overrides', () => {
     expect(updateAssistantPromptSchema.safeParse({ prompt: ' \n ' }).success).toBe(false);
-    expect(updateAssistantPromptSchema.safeParse({ prompt: 'x'.repeat(12_001) }).success).toBe(false);
+    expect(updateAssistantPromptSchema.safeParse({ prompt: 'x'.repeat(13_802) }).success).toBe(true);
+    expect(updateAssistantPromptSchema.safeParse({ prompt: 'x'.repeat(20_001) }).success).toBe(false);
   });
 
   it('validates spec content response', () => {
