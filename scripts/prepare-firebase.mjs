@@ -7,7 +7,6 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const destination = join(root, 'firebase', 'functions');
 const publicDirectory = join(root, 'firebase', 'public');
 const api = join(root, 'apps', 'api');
-const workspacePackages = ['config', 'contracts', 'domain'];
 
 const readManifest = async (path) => JSON.parse(await readFile(path, 'utf8'));
 const productionManifest = (manifest, isFunction = false) => ({
@@ -27,6 +26,9 @@ await cp(join(root, 'apps', 'admin', 'dist'), publicDirectory, { recursive: true
 await rm(destination, { recursive: true, force: true });
 await mkdir(destination, { recursive: true });
 const apiManifest = await readManifest(join(api, 'package.json'));
+const workspacePackages = Object.entries(apiManifest.dependencies ?? {})
+  .filter(([, version]) => version === 'workspace:*')
+  .map(([name]) => name.split('/').at(-1));
 await cp(join(api, 'dist'), join(destination, 'dist'), { recursive: true });
 await cp(join(root, 'SPEC.md'), join(destination, 'SPEC.md'));
 await writeFile(join(destination, 'package.json'), `${JSON.stringify(productionManifest(apiManifest, true), null, 2)}\n`);
