@@ -4,7 +4,8 @@ import { debugDetailsSchema, debugEventSchema, type DebugDetails, type DebugEven
 import { BookingRepository } from './repository.js';
 
 export type TraceContext = { telegramChatId: string; traceId?: string };
-type ErrorDiagnostic = { type: string; message?: string; code?: string; upstreamStatus?: number; providerRequestId?: string; issues?: Array<{ code: string; path: Array<string | number> }>; stack?: string[]; cause?: ErrorDiagnostic };
+type ProviderError = { code?: string; param?: string; message?: string };
+type ErrorDiagnostic = { type: string; message?: string; code?: string; providerError?: ProviderError; upstreamStatus?: number; providerRequestId?: string; issues?: Array<{ code: string; path: Array<string | number> }>; stack?: string[]; cause?: ErrorDiagnostic };
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const redact = (value: string, sensitiveValues: string[] = []): string => {
   let result = value
@@ -29,11 +30,25 @@ const redact = (value: string, sensitiveValues: string[] = []): string => {
   return result.slice(0, 2000);
 }
 
+export function sanitizeOpenAiError(value: unknown, sensitiveValues: string[] = []): ProviderError | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const object = value as Record<string, unknown>;
+  const result: ProviderError = {};
+  if (typeof object.code === 'string' && /^[a-zA-Z0-9_]{1,80}$/.test(object.code)) result.code = redact(object.code, sensitiveValues);
+  if (typeof object.param === 'string' && /^[a-zA-Z0-9_.[\]-]{1,120}$/.test(object.param)) result.param = redact(object.param, sensitiveValues);
+  if (typeof object.message === 'string') result.message = redact(object.message
+    .replace(/"[^"\n]*"|'[^'\n]*'|`[^`\n]*`/g, '[VALUE REDACTED]')
+    .replace(/\b(?:conv|resp|call|msg|file|thread|asst)_[A-Za-z0-9_-]+\b/g, '[ID REDACTED]'), sensitiveValues);
+  return Object.keys(result).length ? result : undefined;
+}
+
 function errorDiagnostic(error: unknown, depth = 0, sensitiveValues: string[] = []): ErrorDiagnostic {
   if (!error || typeof error !== 'object') return { type: typeof error };
-  const object = error as { name?: unknown; message?: unknown; code?: unknown; status?: unknown; upstreamStatus?: unknown; providerRequestId?: unknown; requestId?: unknown; stack?: unknown; cause?: unknown; issues?: unknown };
+  const object = error as { name?: unknown; message?: unknown; code?: unknown; providerError?: unknown; status?: unknown; upstreamStatus?: unknown; providerRequestId?: unknown; requestId?: unknown; stack?: unknown; cause?: unknown; issues?: unknown };
   const type = typeof object.name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,59}$/.test(object.name) ? object.name : 'Error';
   const result: ErrorDiagnostic = { type };
+  const providerError = sanitizeOpenAiError(object.providerError, sensitiveValues);
+  if (providerError) result.providerError = providerError;
   if (typeof object.message === 'string' && type !== 'ZodError' && type !== 'SyntaxError') result.message = redact(object.message, sensitiveValues);
   if (typeof object.code === 'string' && /^[A-Z0-9_]{1,50}$/.test(object.code)) result.code = object.code;
   const upstreamStatus = object.upstreamStatus ?? object.status;
