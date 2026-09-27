@@ -77,10 +77,12 @@ export class OpenAiService {
     const openaiConversationId = conversation.openaiConversationId ?? await this.repository.ensureOpenAiConversation(context.telegramChatId, context.clientId, await createOpenAiConversation(deadline));
     let input: unknown[] = [{ role: 'user', content: text }];
     let mediaAttempted = false;
+    let terminalReply: AssistantReply | undefined;
     for (let round = 0; round < 4; round++) {
-      const response = await requestOpenAiResponse({ model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini', conversation: openaiConversationId, instructions, input, tools: selectedTools, parallel_tool_calls: false, max_output_tokens: 800 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]));
+      const response = await requestOpenAiResponse({ model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini', conversation: openaiConversationId, instructions, input, tools: terminalReply ? [] : selectedTools, parallel_tool_calls: false, max_output_tokens: 800 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]));
       const { output } = outputSchema.parse(response);
       input = [];
+      if (terminalReply) return terminalReply;
       const calls = output.filter((item) => item.type === 'function_call');
       if (!calls.length) {
         const reply = output.flatMap((item) => item.type === 'message' ? item.content ?? [] : []).filter((part) => part.type === 'output_text').map((part) => part.text ?? '').join('\n').trim();
@@ -90,26 +92,37 @@ export class OpenAiService {
       for (const call of calls) {
         sensitiveValues.push(...collectSensitiveStrings(call.arguments));
         let result: unknown;
-        {
-          await this.debug.record(context, 'tool_called', { tool: call.name?.slice(0, 100) });
+        await this.debug.record(context, 'tool_called', { tool: call.name?.slice(0, 100) });
+        try {
           if (!selectedTools.some((item) => item.name === call.name)) throw new Error('Unsupported tool');
-          if (call.name === 'plan_booking') return this.planBooking(conversation, context, text, bookingPlanRequestSchema.parse(JSON.parse(call.arguments ?? '{}')), deadline);
-          if (call.name === 'request_human_assistance') return { ...localReply(fallback), needsHuman: true };
-          const parsed = assistantToolSchema.parse({ name: call.name, arguments: JSON.parse(call.arguments ?? '{}') });
-          if (parsed.name === 'cancel_booking') {
-            const booking = await this.repository.getBooking(parsed.arguments.bookingId);
-            if (!booking || booking.clientId !== context.clientId || booking.telegramChatId !== context.telegramChatId || booking.status !== 'confirmed' || booking.calendarOperation) throw new Error('Booking unavailable');
-            const service = await this.repository.getService(booking.serviceId);
-            const time = new Date(booking.startAt).toLocaleString('uk-UA', { timeZone: process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv' });
-            const confirmationText = `Скасувати запис: ${service?.name ?? booking.serviceId}\nЧас: ${time} (${process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv'}).\n${CONFIRMATION_INVITATION}`;
-            return this.stageProposal(conversation, context, parsed, confirmationText);
+          if (call.name === 'plan_booking') {
+            terminalReply = await this.planBooking(conversation, context, text, bookingPlanRequestSchema.parse(JSON.parse(call.arguments ?? '{}')), deadline);
+            result = { status: terminalReply.needsHuman ? 'needs_human' : 'completed', reply: terminalReply.text };
+          } else if (call.name === 'request_human_assistance') {
+            terminalReply = { ...localReply(fallback), needsHuman: true };
+            result = { status: 'handoff' };
+          } else {
+            const parsed = assistantToolSchema.parse({ name: call.name, arguments: JSON.parse(call.arguments ?? '{}') });
+            if (parsed.name === 'cancel_booking') {
+              const booking = await this.repository.getBooking(parsed.arguments.bookingId);
+              if (!booking || booking.clientId !== context.clientId || booking.telegramChatId !== context.telegramChatId || booking.status !== 'confirmed' || booking.calendarOperation) throw new Error('Booking unavailable');
+              const service = await this.repository.getService(booking.serviceId);
+              const time = new Date(booking.startAt).toLocaleString('uk-UA', { timeZone: process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv' });
+              const confirmationText = `Скасувати запис: ${service?.name ?? booking.serviceId}\nЧас: ${time} (${process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv'}).\n${CONFIRMATION_INVITATION}`;
+              terminalReply = await this.stageProposal(conversation, context, parsed, confirmationText);
+              result = { status: 'proposal_staged', confirmation: terminalReply.text };
+            } else if (parsed.name === 'send_media') {
+              if (mediaAttempted) { result = { status: 'unavailable', reason: 'Only one media attempt per turn' }; }
+              else { mediaAttempted = true; result = await this.assistantTools.execute(parsed, context); }
+            } else {
+              result = await this.assistantTools.execute(parsed, context);
+            }
           }
-          if (parsed.name === 'send_media') {
-            if (mediaAttempted) { result = { status: 'unavailable', reason: 'Only one media attempt per turn' }; }
-            else { mediaAttempted = true; result = await this.assistantTools.execute(parsed, context); }
-          } else result = await this.assistantTools.execute(parsed, context);
+        } catch (error) {
+          terminalReply = { ...localReply(fallback), needsHuman: true };
+          result = { status: 'failed', category: safeErrorCategory(error) };
         }
-        if (result && typeof result === 'object' && 'status' in result && ['failed', 'uncertain', 'unavailable'].includes(String(result.status))) throw new Error('Tool result requires human assistance');
+        if (result && typeof result === 'object' && 'status' in result && ['failed', 'uncertain', 'unavailable'].includes(String(result.status))) terminalReply = { ...localReply(fallback), needsHuman: true };
         sensitiveValues.push(...collectSensitiveStrings(result));
         input.push({ type: 'function_call_output', call_id: call.call_id, output: JSON.stringify(result) });
       }

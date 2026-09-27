@@ -128,13 +128,16 @@ describe('OpenAI conversation', () => {
   it('uses the separate planner for scheduling and replies with clarification without handoff', async () => {
     const { service, planner, tools } = setup('booking');
     planner.plan.mockResolvedValueOnce({ status: 'needs_clarification', serviceId: null, startAt: null, durationMinutes: null, candidateStarts: [], question: 'Яка тривалість?' } as never);
-    const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'plan_booking', arguments: JSON.stringify({ intent: 'availability', bookingId: null }) }] }) }));
+    const fetch = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'plan_booking', arguments: JSON.stringify({ intent: 'availability', bookingId: null }) }] }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Which time?' }] }] }) });
     vi.stubGlobal('fetch', fetch);
     expect(await service.respond(conversation, context, 'Чи вільно завтра?')).toEqual({ text: 'Яка тривалість?', fromOpenAI: false });
     expect(planner.plan).toHaveBeenCalledWith(conversation, context, 'Чи вільно завтра?', { intent: 'availability', bookingId: null }, expect.any(AbortSignal));
     expect(tools.execute).not.toHaveBeenCalled();
     const request = JSON.parse(fetch.mock.calls[0]![1]!.body as string);
     expect(request.tools.some((tool: { name: string }) => ['create_booking', 'reschedule_booking'].includes(tool.name))).toBe(false);
+    const closeout = JSON.parse(fetch.mock.calls[1]![1]!.body as string);
+    expect(closeout.input).toEqual([{ type: 'function_call_output', call_id: 'c1', output: JSON.stringify({ status: 'completed', reply: 'Яка тривалість?' }) }]);
+    expect(closeout.tools).toEqual([]);
   });
   it('uses the repo knowledge base when no override exists', async () => {
     const { service } = setup();
@@ -155,7 +158,7 @@ describe('OpenAI conversation', () => {
   it('stages mutation without executing and consumes it only on explicit confirmation', async () => {
     const { service, tools, repository, selector } = setup('booking');
     selector.answerBoolean.mockResolvedValueOnce(true);
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'plan_booking', arguments: JSON.stringify({ intent: 'create', bookingId: null }) }] }) })));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'plan_booking', arguments: JSON.stringify({ intent: 'create', bookingId: null }) }] }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Proposal ready.' }] }] }) }));
     expect((await service.respond(conversation, context, 'Запиши мене')).text).toContain('так, підтверджую');
     expect(tools.execute).not.toHaveBeenCalled();
     const saved = { ...conversation, pendingAction: repository.replacePendingAction.mock.calls[0]![3] };
@@ -188,7 +191,7 @@ describe('OpenAI conversation', () => {
 
 it('routes explicit model uncertainty to humans without executing a booking tool', async () => {
   const { service, tools } = setup();
-  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'request_human_assistance', arguments: '{}' }] }) })));
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'request_human_assistance', arguments: '{}' }] }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Need assistance.' }] }] }) }));
   expect((await service.respond(conversation, context, 'Uncertain request')).needsHuman).toBe(true);
   expect(tools.execute).not.toHaveBeenCalled();
 });
