@@ -7,8 +7,8 @@ import { adminApi } from './api.js';
 const queryKey = ['media'];
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : 'Please try again.';
 const Preview = ({ url, kind }: { url: string; kind: 'photo' | 'video' }) => kind === 'photo'
-  ? <Box component="img" src={url} alt="Media preview" sx={{ width: '100%', height: 200, objectFit: 'contain', bgcolor: 'grey.100' }} />
-  : <Box component="video" src={url} controls preload="metadata" sx={{ width: '100%', height: 200, bgcolor: 'grey.100' }} />;
+  ? <Box component="img" src={url} alt="Media preview" sx={{ width: '100%', height: 200, objectFit: 'contain', bgcolor: 'background.default' }} />
+  : <Box component="video" src={url} controls preload="metadata" sx={{ width: '100%', height: 200, bgcolor: 'background.default' }} />;
 
 function MediaEditor({ item, onClose }: { item?: MediaDto; onClose: () => void }) {
   const client = useQueryClient();

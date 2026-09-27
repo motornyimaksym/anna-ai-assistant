@@ -103,3 +103,7 @@ Compare-and-consume transactions verify the complete expected action and current
 Routing overrides now store `{ instructions, general, booking, updatedAt }` in `assistantSettings/systemOneRoutingPrompt`. Legacy `{ prompt, updatedAt }` documents remain readable: `prompt` becomes instructions, while `general` and `booking` use defaults. Reset deletes the routing document. Other prompt override documents retain `{ prompt, updatedAt }`.
 
 All editable prompt fields allow 1–20,000 nonblank characters, covering the shipped General default. Knowledge-base limits remain separate.
+
+### Browser admin appearance preference
+
+`localStorage['massage-admin-theme']` optionally holds `light` or `dark` for the booking admin and its login screen. It contains no account or business data, is not sent to the API, and creates no Firestore document. Missing, invalid or unreadable values default to `dark`.

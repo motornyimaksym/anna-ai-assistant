@@ -86,3 +86,9 @@ New proposals carry an ID and immutable client-facing summary. The transactional
 All six `/prompt` tabs have independent editable overrides. The active TypeSafe System One selector reads Routing, Approval and Probability overrides per request; System Two Booking conversation reads its own override. Existing General and Booking planner storage remains in place. Mandatory output schemas, tool policies, booking checks and factual context are server-authored after editable prompt text. Reset removes only the selected override; the next request uses its code default.
 
 OpenAI transport failures include a sanitized `providerError` object (`code`, `param`, `message`) in server exception logs. Error bodies are bounded to 16 KiB and discarded after extracting these fields; invalid/unreadable bodies retain HTTP status and request ID. Request content, credentials, quoted values and identifiers are redacted before exception attachment. Firestore and client errors retain their existing safe categories.
+
+### Admin presentation
+
+The booking admin shell owns a scoped MUI cyberpunk theme, grouped responsive navigation, page headings and a dashboard launchpad. Shared component overrides keep existing editors, tables and dialogs visually consistent. Mobile navigation uses a modal drawer; desktop navigation remains visible. The standalone AI workspace retains its own presentation. Dashboard shortcuts do not imply live integration health or fabricate operational metrics.
+
+Admin appearance supports day/night palettes through a scoped theme provider. Header and login controls update the same provider without remounting editors. A browser-local preference restores the selection; inaccessible storage degrades to an in-memory choice. The AI workspace remains outside this provider.

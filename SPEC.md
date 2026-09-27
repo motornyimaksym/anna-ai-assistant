@@ -908,13 +908,7 @@ Routes:
 
 ### 25.1. Dashboard
 
-Показувати:
-
-- bookings today;
-- bookings this week;
-- upcoming bookings;
-- assistant enabled / disabled;
-- calendar sync failures.
+Operational launchpad as specified in section 56. Live metrics are not currently provided by this page.
 
 ### 25.2. Bookings
 
@@ -1540,3 +1534,17 @@ Replay-safe requests (GET/HEAD/OPTIONS, read-only provider POSTs, deterministic 
 On assistant failures, server logs include underlying exception type, sanitized message, recursive causes, provider request ID when available, safe validation issue paths, and the full stack trace (capped at 20 frames). Redact credentials, tokens, request bodies, chat/prompt content, provider bodies, and secret-bearing URL components. Firestore debug events keep their existing allowlisted error categories and never store exception text. Tests cover linear waits, transient/permanent responses, safe vs unsafe replay, cancellation, and diagnostic redaction. This section supersedes provider-specific retry restrictions above while preserving uncertain-write safeguards.
 
 OpenAI Responses and Conversations HTTP failures retain only sanitized `error.code`, `error.param`, and `error.message` as `providerError` in server exception diagnostics, alongside HTTP status, request ID, and stack. Read at most 16 KiB of error JSON; malformed, oversized, missing or unreadable bodies must preserve the original HTTP failure. Redact request content, credentials, quoted values, and identifiers from provider messages before attaching them to exceptions. Never persist provider details in Firestore or expose them to client replies.
+
+## 56. Cyberpunk admin experience
+
+The booking admin uses a cohesive dark cyberpunk visual system: midnight backgrounds, elevated panels, restrained cyan/violet accents, readable high-contrast text, visible keyboard focus, and consistent controls, tables, tabs, dialogs and alerts. Decorative grids and orbital artwork are noninteractive and hidden from assistive technology; no flashing or continuous animation is required. Respect reduced-motion preferences.
+
+Replace the horizontal admin navigation with a persistent desktop sidebar grouped into Workspace (Dashboard, Bookings, Schedule, Conversations), Intelligence (Assistant prompt, Knowledge Base, Bot settings), and Resources (Media Store, Specs). Preserve all routes, legacy redirects and permission-gated Debug access. At narrow widths use an explicitly labeled menu button and dismissible drawer; selecting a destination closes the drawer. Active destinations have a visible highlight and `aria-current`. Include a keyboard skip link to main content. Tables and tab strips scroll within their panels on small screens.
+
+The dashboard is an operational launchpad with a prominent bookings action and descriptive shortcuts to schedule, conversations, media, prompts and knowledge. Do not invent booking counts, service health, or integration status. Page headings include concise purpose descriptions. Login shares the visual system, retains Google authentication, and shows pending and failure feedback. The standalone `/ai-chat` workspace keeps its independent layout and styling. No API, persisted data, authorization, or booking behavior changes.
+
+### 56.1. Day and night themes
+
+Provide a keyboard-accessible day/night theme button in the admin header (including mobile) and login screen. Its accessible name describes the target theme. Night remains the initial default; day uses light surfaces with dark text and teal/violet accents. The selected theme applies to navigation, dashboard artwork, forms, tables, dialogs, alerts and native controls. Switching must preserve active routes and unsaved form drafts.
+
+Store only `light` or `dark` in browser localStorage under `massage-admin-theme`; restore it on reload and when moving between login and the admin shell. Invalid or inaccessible storage falls back to night; storage write failures must not prevent switching for the current mounted view. This browser-only preference requires no API or Firestore change and does not affect `/ai-chat`.
