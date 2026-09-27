@@ -89,6 +89,6 @@ OpenAI transport failures include a sanitized `providerError` object (`code`, `p
 
 ### Admin presentation
 
-The booking admin shell owns a scoped MUI cyberpunk theme, grouped responsive navigation, page headings and a dashboard launchpad. Shared component overrides keep existing editors, tables and dialogs visually consistent. Mobile navigation uses a modal drawer; desktop navigation remains visible. The standalone AI workspace retains its own presentation. Dashboard shortcuts do not imply live integration health or fabricate operational metrics.
+The booking admin shell owns a scoped MUI cyberpunk theme, grouped responsive navigation, page headings and a dashboard launchpad. Shared component overrides keep existing editors, tables and dialogs visually consistent. Mobile navigation uses a modal drawer; desktop navigation remains visible. The standalone AI workspace shares the visual theme while retaining its own chat layout and navigation. Dashboard shortcuts do not imply live integration health or fabricate operational metrics.
 
-Admin appearance supports day/night palettes through a scoped theme provider. Header and login controls update the same provider without remounting editors. A browser-local preference restores the selection; inaccessible storage degrades to an in-memory choice. The AI workspace remains outside this provider.
+Admin appearance supports day/night palettes through a scoped theme provider. Header and login controls update the same provider without remounting editors. A browser-local preference restores the selection; inaccessible storage degrades to an in-memory choice. The AI workspace uses the same appearance provider and preference, with its own responsive thread drawer, conversation view and composer.

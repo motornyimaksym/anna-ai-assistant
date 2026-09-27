@@ -106,6 +106,6 @@ All editable prompt fields allow 1–20,000 nonblank characters, covering the sh
 
 ### Browser admin appearance preference
 
-`localStorage['massage-admin-theme']` optionally holds `light` or `dark` for the booking admin and its login screen. It contains no account or business data, is not sent to the API, and creates no Firestore document. Missing, invalid or unreadable values default to `dark`.
+`localStorage['massage-admin-theme']` optionally holds `light` or `dark` for the booking admin, standalone AI workspace and their login screens. It contains no account or business data, is not sent to the API, and creates no Firestore document. Missing, invalid or unreadable values default to `dark`.
 
 Telegram `openaiConversationId` may be replaced transactionally after a specific first-request missing-tool-output rejection. Replacement compares the rejected ID, client identity and automation/human-pause state. No new fields; all proposals, human cases and booking operation state remain intact. Recovery seeds only the same chat/client's bounded recent messages; ordinary turns still send only the new message.
