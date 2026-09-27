@@ -47,7 +47,7 @@ describe('OpenAI conversation', () => {
     const reply = await service.respond(conversation, context, 'Hello');
     expect(reply.needsHuman).toBe(true);
     expect(timeout).toHaveBeenCalledWith(60_000);
-    expect(timeout).toHaveBeenCalledWith(10_000);
+    expect(timeout).not.toHaveBeenCalledWith(10_000);
     expect(timeout).toHaveBeenCalledWith(30_000);
     expect(errorLog).toHaveBeenCalledOnce();
     expect(errorLog.mock.calls[0]![0]).toContain('TimeoutError');

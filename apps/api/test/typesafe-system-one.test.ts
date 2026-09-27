@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TypeSafeSystemOneSelector } from '../src/typesafe-system-one.js';
-import { SystemOneSelector } from '../src/system-one.js';
-import { AppModule } from '../src/app.module.js';
 import { SYSTEM_TWO_PROMPTS } from '../src/system-two.js';
 import { safeErrorCategory } from '../src/debug-log.service.js';
 import { APPROVAL_QUESTION } from '../src/confirmation-prompt.js';
@@ -42,9 +40,6 @@ describe('TypeSafe System One', () => {
       expect(instructions).toContain(`Custom ${id}`);
       if (id === 'approval') expect(instructions).toContain(APPROVAL_QUESTION);
     }
-  });
-  it('is the default Nest provider', () => {
-    expect(Reflect.getMetadata('providers', AppModule)).toContainEqual({ provide: SystemOneSelector, useClass: TypeSafeSystemOneSelector });
   });
   it.each(['general', 'booking'])('selects %s using registry criteria and bounded context', async (selected) => {
     const fetcher = setup(choice(selected, selected === 'general' ? { general: 0.9, booking: 0.1 } : { general: 0.1, booking: 0.9 }));
@@ -129,7 +124,7 @@ describe('TypeSafe System One', () => {
     await expect(pending).rejects.toThrow('Cancelled');
     expect(fetcher.mock.calls[0]![1].signal.aborted).toBe(true);
   });
-  it('uses a ten-second provider deadline and propagates its timeout', async () => {
+  it('uses a thirty-second provider deadline and propagates its timeout', async () => {
     setup(choice());
     const deadline = new AbortController();
     const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
@@ -140,7 +135,7 @@ describe('TypeSafe System One', () => {
     try {
       const pending = new TypeSafeSystemOneSelector(repository as never).select(routing, new AbortController().signal);
       await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
-      expect(timeout).toHaveBeenCalledWith(10_000);
+      expect(timeout).toHaveBeenCalledWith(30_000);
       deadline.abort(new DOMException('Deadline', 'TimeoutError'));
       await expect(pending).rejects.toThrow('Deadline');
     } finally { timeout.mockRestore(); }

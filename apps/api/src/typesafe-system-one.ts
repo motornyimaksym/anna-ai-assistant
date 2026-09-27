@@ -57,7 +57,7 @@ export class TypeSafeSystemOneSelector extends SystemOneSelector {
     const token = process.env.TYPESAFE_AI_TOKEN?.trim();
     if (!token) throw new Error('TypeSafe is not configured');
     const response = await fetchWithLinearBackoff('https://api.typesafe.ai/v1/systemone', {
-      method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+      method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'jev-latest', state, questions: { decision: question } }),
     }, { replaySafe: true });

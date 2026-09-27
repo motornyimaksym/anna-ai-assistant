@@ -54,14 +54,14 @@ export class OpenAiService {
     if (pending?.confirmationText) sensitiveValues.push(pending.confirmationText);
     if (pending?.id && pending.confirmationText && pending.expiresAt > new Date().toISOString() && history.some((item) => item.role === 'assistant' && item.content === pending.confirmationText)) {
       const evidence = JSON.stringify({ message: text, history, proposal: { action: pending.name, confirmationText: pending.confirmationText } });
-      const decide = async (question: string) => systemOneBooleanSchema.parse(await this.selector.answerBoolean({ question, context: evidence }, AbortSignal.any([deadline, AbortSignal.timeout(10_000)])));
+      const decide = async (question: string) => systemOneBooleanSchema.parse(await this.selector.answerBoolean({ question, context: evidence }, deadline));
       if (await decide(APPROVAL_QUESTION)) return this.confirmProposal(conversation, context);
       return this.discardProposal(conversation, context);
     }
     const promptId = systemTwoPromptIdSchema.parse(await this.selector.select({
       message: text, summary: conversation.summary.slice(0, 4000), history,
       hasPendingProposal: !!conversation.pendingAction && conversation.pendingAction.expiresAt > new Date().toISOString(),
-    }, AbortSignal.any([deadline, AbortSignal.timeout(10_000)])));
+    }, deadline));
     await this.debug.record(context, 'assistant_started', { intent: promptId, reason: 'system_one_selected' });
     const definition = SYSTEM_TWO_PROMPTS[promptId];
     const selectedTools = assistantToolDefinitions.filter((item) => definition.tools.includes(item.name));

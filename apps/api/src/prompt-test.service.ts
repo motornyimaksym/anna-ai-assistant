@@ -50,7 +50,7 @@ export class PromptTestService {
   }
 
   private async systemOne(request: Extract<PromptTestRequest, { system: 'one' }>): Promise<PromptTestResponse> {
-    const signal = AbortSignal.timeout(10_000);
+    const signal = AbortSignal.timeout(45_000);
     if (request.promptId === 'routing') return { kind: 'decision', output: systemTwoPromptIdSchema.parse(await this.selector.select({ message: request.text, history: [], summary: '', hasPendingProposal: false }, signal)), sampleContext: false };
     const question = request.promptId === 'approval' ? APPROVAL_QUESTION : 'Does the current client message explicitly and unconditionally approve the fixed sample proposal?';
     const input = { question, context: sampleEvidence(request.text) };
