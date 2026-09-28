@@ -113,3 +113,5 @@ Telegram `openaiConversationId` may be replaced transactionally after a specific
 ### System One provider setting
 
 Backend-only `assistantSettings/systemOne` stores `provider` (`openai` or `typesafe`) and ISO `updatedAt`. A missing document means `openai`; no migration. Protected admin GET/PUT exposes only `provider`. Each System One decision reads it once. Existing deny-all client rules apply. No tokens or prompt content are stored here.
+
+Outgoing Probability checks reuse `assistantSettings/humanAssistance.thresholdPercent`. `humanRequests.reason` additionally accepts `bot_detectability` (with validated probability) and `probability_unavailable` (without score). The existing bounded `question` field carries labeled client-question and unsent-draft excerpts; no withheld draft is appended to delivered message history. Notification chat links are resolved transiently; no new fields, collections or indexes.

@@ -10,7 +10,7 @@ function RequestCard({ request }: { request: Awaited<ReturnType<typeof adminApi.
   const release = useMutation({ mutationFn: () => adminApi.releaseHumanRequest(request.id), onSuccess: async () => client.invalidateQueries({ queryKey: ['human-requests'] }) });
   return <Card variant="outlined"><CardContent><Stack spacing={1.5}>
     <Typography variant="subtitle1">Request {request.id} · {request.status}</Typography>
-    <Typography variant="body2">Client chat: {request.telegramChatId} · {request.createdAt} · {request.reason}{request.probability === undefined ? '' : ` · Jev ${Math.round(request.probability * 100)}%`}</Typography>
+    <Typography variant="body2">Client chat: {request.telegramChatId} · {request.createdAt} · {request.reason}{request.probability === undefined ? '' : ` · Probability ${Math.round(request.probability * 100)}%`}</Typography>
     <Typography>{request.question}</Typography>
     {request.queuedMessages.map((message, index) => <Typography key={index} variant="body2">Follow-up: {message}</Typography>)}
     {request.lastAnswer && <Typography variant="body2">Last human answer: {request.lastAnswer}</Typography>}

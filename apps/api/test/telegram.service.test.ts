@@ -28,7 +28,7 @@ const setup = (settings = { maxReadDelayMs: 0, typingDelayPerSymbolMs: 600, upda
   const send = vi.fn(async (url: string, _init?: RequestInit) => { order.push(url.split('/').at(-1)!); return { ok: true, json: async () => ({ ok: true }) }; });
   vi.stubGlobal('fetch', send);
   const assistant = { respond: vi.fn(async (): Promise<AssistantReply> => { order.push('assistant'); return { text: 'OK', fromOpenAI: true }; }) };
-  const human = { decide: vi.fn(async () => ({ route: 'openai' as const })), isConfiguredUsername: vi.fn(async () => false), authorizedResponder: vi.fn(async () => undefined), enroll: vi.fn(async () => true), send: vi.fn(), reply: vi.fn(), queueExisting: vi.fn(), escalate: vi.fn(), escalateError: vi.fn() };
+  const human = { approveOutgoing: vi.fn(async () => true), decide: vi.fn(async () => ({ route: 'openai' as const })), isConfiguredUsername: vi.fn(async () => false), authorizedResponder: vi.fn(async () => undefined), enroll: vi.fn(async () => true), send: vi.fn(), reply: vi.fn(), queueExisting: vi.fn(), escalate: vi.fn(), escalateError: vi.fn() };
   const scheduleImport = { syncIfDue: vi.fn(async () => undefined) };
   return { service: new TelegramService(repository as unknown as BookingRepository, assistant as unknown as OpenAiService, human as unknown as HumanAssistanceService, scheduleImport as never, { record: vi.fn(async () => {}) } as never), repository, send, assistant, human, scheduleImport, order };
 };
@@ -316,4 +316,21 @@ it('routes assistant errors directly to configured responders without sending fa
   await service.handle('webhook-secret', update('user61785'));
   expect(human.escalateError).toHaveBeenCalledWith('123', 'connection-1', 101, 'Hello', 'Booking safe-id requires human review.');
   expect(send.mock.calls.some(([url]) => url.endsWith('/sendMessage'))).toBe(false);
+});
+
+
+it.each([true, false])('gates generated and fixed outgoing text: fromOpenAI=%s', async (fromOpenAI) => {
+  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+  vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
+  vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+  const { service, human, repository, send, assistant } = setup({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0, updatedAt: '2026-09-24T10:00:00.000Z' });
+  assistant.respond.mockResolvedValue({ text: '**Draft**', fromOpenAI });
+  human.approveOutgoing.mockImplementation(async () => {
+    expect(repository.appendMessage).toHaveBeenCalledWith('123', 'user', 'Hello');
+    return false;
+  });
+  await service.handle('webhook-secret', update('user61785'));
+  expect(human.approveOutgoing).toHaveBeenCalledWith('123', 'connection-1', 101, 'Hello', fromOpenAI ? '<b>Draft</b>' : '**Draft**');
+  expect(send.mock.calls.some(([url]) => url.endsWith('/sendMessage'))).toBe(false);
+  expect(repository.appendMessage).not.toHaveBeenCalledWith('123', 'assistant', expect.any(String));
 });

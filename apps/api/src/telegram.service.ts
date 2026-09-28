@@ -124,6 +124,7 @@ export class TelegramService {
     }
     await this.repository.appendMessage(chatId, 'user', message.text.slice(0, 4000));
     try {
+      if (!await this.human.approveOutgoing(chatId, message.business_connection_id, update.update_id, message.text, reply)) return;
       await this.reply(chatId, message.business_connection_id, reply, parseMode);
       await this.repository.appendMessage(chatId, 'assistant', reply);
       await this.debug.record(trace, 'reply_sent');
