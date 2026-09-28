@@ -319,16 +319,29 @@ export class BookingRepository {
   }
   async deleteBookingPromptOverride() { await this.db.collection('assistantSettings').doc('bookingPrompt').delete(); }
   async appendDebugEvent(event: DebugEvent) {
-    const ref = this.db.collection('assistantDiagnostics').doc('recent');
+    if (Buffer.byteLength(JSON.stringify(event), 'utf8') > 32 * 1024) throw new Error('Diagnostic event exceeds size limit');
+    const collection = this.db.collection('assistantDiagnostics');
+    const ref = collection.doc('recent');
     await this.db.runTransaction(async (tx) => {
-      const current = (await tx.get(ref)).data()?.events;
-      const events = Array.isArray(current) ? current : [];
-      tx.set(ref, { events: withoutUndefined([...events, event].slice(-200)) });
+      const data = (await tx.get(ref)).data();
+      const legacy = debugEventsSchema.parse(data?.events ?? []);
+      const ids: string[] = Array.isArray(data?.ids) ? data.ids : legacy.map((item) => item.id);
+      const retained = [...ids.filter((id) => id !== event.id), event.id].slice(-200);
+      for (const item of legacy) if (retained.includes(item.id)) tx.set(collection.doc(item.id), withoutUndefined(item));
+      for (const id of ids) if (!retained.includes(id)) tx.delete(collection.doc(id));
+      tx.set(collection.doc(event.id), withoutUndefined(event));
+      tx.set(ref, { ids: retained });
     });
   }
   async listDebugEvents(): Promise<DebugEvent[]> {
-    const data = (await this.db.collection('assistantDiagnostics').doc('recent').get()).data();
-    return debugEventsSchema.parse(data?.events ?? []).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const collection = this.db.collection('assistantDiagnostics');
+    return this.db.runTransaction(async (tx) => {
+      const data = (await tx.get(collection.doc('recent'))).data();
+      if (!Array.isArray(data?.ids)) return debugEventsSchema.parse(data?.events ?? []).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      const ids = data.ids.slice(-200) as string[];
+      const documents = ids.length ? await tx.getAll(...ids.map((id) => collection.doc(id))) : [];
+      return debugEventsSchema.parse(documents.filter((doc) => doc.exists).map((doc) => doc.data())).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    });
   }
   async getAssistantPromptOverride(): Promise<{ prompt: string; updatedAt: string } | undefined> {
     const doc = await this.db.collection('assistantSettings').doc('prompt').get();

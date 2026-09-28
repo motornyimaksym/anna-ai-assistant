@@ -1,3 +1,4 @@
+import type { DebugRequest } from '@booking/contracts';
 import { Alert, Button, Chip, MenuItem, Paper, Stack, Tab, Tabs, TextField, Typography } from '@mui/material';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -22,7 +23,7 @@ export const DebugLogs = ({ uid }: { uid: string }) => {
       <Tab value="test" label="Prompt test" />
     </Tabs>
     {tab === 'test' ? <PromptTest /> : <>
-    <Typography variant="body2">Latest 200 diagnostic events. Messages, prompts, credentials, and private Calendar details are excluded. Events begin after this feature is deployed.</Typography>
+    <Typography variant="body2">Latest 200 records retained globally. AI request details include bounded prompt/context and response previews. Credentials and hidden reasoning are excluded. Older records are deleted automatically.</Typography>
     <Stack direction="row" spacing={2}>
       <TextField label="Filter stage, status or trace" value={filter} onChange={(event) => setFilter(event.target.value)} fullWidth size="small" />
       <Button onClick={() => void logs.refetch()} disabled={logs.isFetching}>Refresh</Button>
@@ -33,9 +34,22 @@ export const DebugLogs = ({ uid }: { uid: string }) => {
     {logs.data?.filter((event) => JSON.stringify(event).toLowerCase().includes(filter.toLowerCase())).map((event) => <Paper key={event.id} variant="outlined" sx={{ p: 2 }}>
       <Stack direction="row" spacing={1} alignItems="center"><Chip size="small" label={event.level} color={event.level === 'error' ? 'error' : event.level === 'warn' ? 'warning' : 'default'} /><Typography fontWeight="bold">{event.stage}</Typography><Typography variant="body2">{new Date(event.createdAt).toLocaleString()}</Typography></Stack>
       <Typography variant="caption" sx={{ overflowWrap: 'anywhere' }}>Trace: {event.traceId} · Chat reference: {event.chatRef}</Typography>
-      <Typography component="pre" variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', mb: 0 }}>{JSON.stringify(event.details, null, 2)}</Typography>
+      <Typography component="pre" variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', mb: 0 }}>{JSON.stringify({ ...event.details, request: undefined }, null, 2)}</Typography>
+      {event.details.request && <RequestDetails request={event.details.request} />}
     </Paper>)}
     </>}
+  </Stack>;
+};
+
+const RequestDetails = ({ request }: { request: DebugRequest }) => {
+  const { requestPreview, responsePreview, ...metadata } = request;
+  return <Stack spacing={1} sx={{ mt: 1 }}>
+    <Typography fontWeight="bold">{request.provider} · {request.operation}</Typography>
+    <Typography variant="body2">{request.method} {request.endpoint} · {request.durationMs} ms · {request.attempts} HTTP attempts</Typography>
+    <Typography variant="body2">Conversation: {request.conversationAttached ? request.conversationId : 'isolated'} · Model: {request.model ?? 'not applicable'} · Status: {request.responseStatus ?? request.httpStatus ?? request.errorCategory ?? 'unknown'}</Typography>
+    <details><summary>Request metadata</summary><Typography component="pre" variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(metadata, null, 2)}</Typography></details>
+    <details><summary>Request payload{request.requestTruncated ? ' (truncated)' : ''}</summary><Typography component="pre" variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{requestPreview}</Typography></details>
+    <details><summary>Response payload{request.responseTruncated ? ' (truncated)' : ''}</summary><Typography component="pre" variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{responsePreview}</Typography></details>
   </Stack>;
 };
 

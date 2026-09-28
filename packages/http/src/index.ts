@@ -1,4 +1,6 @@
 export type LinearBackoffOptions = {
+  /** Best-effort diagnostics callback, one-based attempt number. */
+  onAttempt?: (attempt: number) => void;
   /** Set only when repeating the request cannot repeat its side effect. */
   replaySafe?: boolean;
   /** Retry count after the initial request. Capped at three. */
@@ -70,6 +72,7 @@ export async function fetchWithLinearBackoff(
       : overallSignal;
     const attemptInit = { ...init, ...(signal ? { signal } : {}) };
 
+    try { options.onAttempt?.(attempt + 1); } catch { /* Observability must not affect delivery. */ }
     let response: Response;
     try {
       response = requestTemplate

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { safeErrorDiagnostic } from '../src/debug-log.service.js';
+import { safeErrorCategory, safeErrorDiagnostic } from '../src/debug-log.service.js';
 
 describe('safeErrorDiagnostic', () => {
   it('keeps underlying cause and stack while redacting credential-bearing URLs', () => {
@@ -61,4 +61,14 @@ describe('safeErrorDiagnostic', () => {
     expect(diagnostic).not.toContain('/private/path');
     expect(diagnostic).not.toContain('token=secret');
   });
+});
+
+
+it.each([
+  ['OPENAI_DECISION_TOKEN_LIMIT', 'provider output token limit'],
+  ['OPENAI_DECISION_INCOMPLETE', 'provider response incomplete'],
+])('categorizes safe System One failure %s', (code, category) => {
+  const error = Object.assign(new Error('System One decision failed'), { code });
+  expect(safeErrorCategory(error)).toBe(category);
+  expect(safeErrorDiagnostic(error).code).toBe(code);
 });

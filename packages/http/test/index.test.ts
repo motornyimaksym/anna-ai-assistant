@@ -85,3 +85,13 @@ describe('fetchWithLinearBackoff', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+
+it('reports attempts without allowing observer failures to change delivery', async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(new Response(null, { status: 503 })).mockResolvedValueOnce(new Response('ok'));
+  vi.stubGlobal('fetch', fetcher);
+  const onAttempt = vi.fn(() => { throw new Error('diagnostic unavailable'); });
+  const response = await fetchWithLinearBackoff('https://example.test', {}, { baseDelayMs: 0, onAttempt });
+  expect(await response.text()).toBe('ok');
+  expect(onAttempt.mock.calls).toEqual([[1], [2]]);
+});

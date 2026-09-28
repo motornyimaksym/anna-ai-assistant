@@ -1,3 +1,5 @@
+import { withRequestDiagnostics } from '../src/request-diagnostics.js';
+import type { DebugRequest } from '@booking/contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createOpenAiConversation, requestOpenAiResponse } from '../src/openai-transport.js';
 import { safeErrorDiagnostic, safeErrorCategory } from '../src/debug-log.service.js';
@@ -57,4 +59,19 @@ describe('OpenAI HTTP transport retries', () => {
     expect(firstHeaders['Idempotency-Key']).toBeTruthy();
     expect(secondHeaders['Idempotency-Key']).toBe(firstHeaders['Idempotency-Key']);
   });
+});
+
+
+it('records the actual wire payload, HTTP retries, and final response inside a trace', async () => {
+  vi.stubEnv('OPENAI_API_KEY', 'test-private-key');
+  const fetcher = vi.fn().mockResolvedValueOnce(new Response(null, { status: 503 })).mockResolvedValueOnce(new Response(JSON.stringify({ status: 'completed', usage: { input_tokens: 20, output_tokens: 5 }, output: [] }), { status: 200, headers: { 'x-request-id': 'req_final' } }));
+  vi.stubGlobal('fetch', fetcher);
+  const write = vi.fn(async (_request: DebugRequest) => {});
+  await withRequestDiagnostics(write, () => requestOpenAiResponse({ model: 'test-model', input: 'Hello', max_output_tokens: 4096, text: { format: { name: 'system_two_selection' } } }, new AbortController().signal));
+  expect(write).toHaveBeenCalledTimes(1);
+  const detail = write.mock.calls[0]![0];
+  expect(detail).toMatchObject({ operation: 's1_routing', attempts: 2, store: false, conversationAttached: false, providerRequestId: 'req_final', httpStatus: 200 });
+  expect(JSON.parse(detail.requestPreview)).toEqual(JSON.parse(fetcher.mock.calls[1]![1].body));
+  expect(detail.usage).toContain('output_tokens');
+  expect(JSON.stringify(detail)).not.toContain('test-private-key');
 });

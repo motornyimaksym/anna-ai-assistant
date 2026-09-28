@@ -28,7 +28,7 @@ const setup = (settings = { maxReadDelayMs: 0, typingDelayPerSymbolMs: 600, upda
   const send = vi.fn(async (url: string, _init?: RequestInit) => { order.push(url.split('/').at(-1)!); return { ok: true, json: async () => ({ ok: true }) }; });
   vi.stubGlobal('fetch', send);
   const assistant = { respond: vi.fn(async (): Promise<AssistantReply> => { order.push('assistant'); return { text: 'OK', fromOpenAI: true }; }) };
-  const human = { approveOutgoing: vi.fn(async () => true), decide: vi.fn(async () => ({ route: 'openai' as const })), isConfiguredUsername: vi.fn(async () => false), authorizedResponder: vi.fn(async () => undefined), enroll: vi.fn(async () => true), send: vi.fn(), reply: vi.fn(), queueExisting: vi.fn(), escalate: vi.fn(), escalateError: vi.fn() };
+  const human = { approveOutgoing: vi.fn(async () => true), isConfiguredUsername: vi.fn(async () => false), authorizedResponder: vi.fn(async () => undefined), enroll: vi.fn(async () => true), send: vi.fn(), reply: vi.fn(), queueExisting: vi.fn(), escalate: vi.fn(), escalateError: vi.fn() };
   const scheduleImport = { syncIfDue: vi.fn(async () => undefined) };
   return { service: new TelegramService(repository as unknown as BookingRepository, assistant as unknown as OpenAiService, human as unknown as HumanAssistanceService, scheduleImport as never, { record: vi.fn(async () => {}) } as never), repository, send, assistant, human, scheduleImport, order };
 };
@@ -250,31 +250,6 @@ it('does not automatically send legacy text service cards', async () => {
   expect(send.mock.calls.some(([, init]) => (JSON.parse(init?.body as string) as { text?: string }).text?.startsWith('Second'))).toBe(false);
 });
 
-it('routes high Jev scores to a human without typing or calling OpenAI', async () => {
-  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
-  vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
-  vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
-  const { service, human, assistant, repository, send } = setup();
-  human.decide.mockResolvedValueOnce({ route: 'human', reason: 'knowledge_gap', probability: 0.7, thresholdPercent: 60 } as never);
-  await service.handle('webhook-secret', { update_id: 600, message: { ...update('user61785').business_message, chat: { id: 123, type: 'private' } } });
-  expect(human.escalate).toHaveBeenCalledWith('123', 'connection-1', 600, 'Hello', expect.objectContaining({ reason: 'knowledge_gap' }));
-  expect(repository.appendMessage).toHaveBeenCalledWith('123', 'user', 'Hello');
-  expect(assistant.respond).not.toHaveBeenCalled();
-  expect(send).not.toHaveBeenCalled();
-});
-
-it('continues with OpenAI and creates no human case when Jev is unavailable', async () => {
-  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
-  vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
-  vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
-  const { service, human, assistant } = setup();
-  human.decide.mockResolvedValueOnce({ route: 'openai' });
-  await service.handle('webhook-secret', { update_id: 602, message: { ...update('user61785').business_message, chat: { id: 123, type: 'private' } } });
-  expect(human.decide).toHaveBeenCalledOnce();
-  expect(assistant.respond).toHaveBeenCalledOnce();
-  expect(human.escalate).not.toHaveBeenCalled();
-});
-
 it('keeps later client messages in an active human case', async () => {
   vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
   vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
@@ -282,7 +257,6 @@ it('keeps later client messages in an active human case', async () => {
   repository.getConversation.mockResolvedValueOnce({ telegramChatId: '123', clientId: '456', assistantEnabled: true, state: 'active', summary: '', activeHumanRequestId: 'case-1', createdAt: '2026-09-25T10:00:00.000Z', updatedAt: '2026-09-25T10:00:00.000Z' } as never);
   await service.handle('webhook-secret', { update_id: 601, message: { ...update('user61785').business_message, chat: { id: 123, type: 'private' } } });
   expect(human.queueExisting).toHaveBeenCalledWith('case-1', 'Hello', 601);
-  expect(human.decide).not.toHaveBeenCalled();
   expect(assistant.respond).not.toHaveBeenCalled();
 });
 

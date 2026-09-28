@@ -29,6 +29,23 @@ const responseSchema = z.object({
 @Injectable()
 export class OpenAiSystemOneSelector extends SystemOneSelector {
   constructor(private readonly repository: BookingRepository) { super(); }
+  private async requestDecision(body: Record<string, unknown>, signal: AbortSignal) {
+    const deadline = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
+    for (const maxOutputTokens of [4096, 8192]) {
+      deadline.throwIfAborted();
+      const response = await requestOpenAiResponse({ ...body, max_output_tokens: maxOutputTokens }, deadline);
+      if (response && typeof response === 'object' && 'status' in response && response.status === 'incomplete') {
+        const details = 'incomplete_details' in response ? response.incomplete_details : undefined;
+        const exhausted = !!details && typeof details === 'object' && 'reason' in details && details.reason === 'max_output_tokens';
+        if (exhausted && maxOutputTokens === 4096) continue;
+        throw Object.assign(new Error(exhausted ? 'OpenAI System One output token limit reached' : 'OpenAI System One response incomplete'), {
+          code: exhausted ? 'OPENAI_DECISION_TOKEN_LIMIT' : 'OPENAI_DECISION_INCOMPLETE',
+        });
+      }
+      return responseSchema.parse(response);
+    }
+    throw new Error('OpenAI System One decision unavailable');
+  }
   async answerBoolean(input: SystemOneDecisionInput, signal: AbortSignal): Promise<boolean> {
     const override = await this.repository.getPromptOverride('approval');
     const value = await this.decision(`${override?.prompt ?? ''}\n${SYSTEM_ONE_BOOLEAN_PROMPT}`, 'boolean_answer', 'answer', { type: 'boolean' }, input, signal);
@@ -40,20 +57,19 @@ export class OpenAiSystemOneSelector extends SystemOneSelector {
     return z.object({ probability: systemOneProbabilitySchema }).strict().parse(value).probability;
   }
   private async decision(instructions: string, name: string, field: string, property: Record<string, unknown>, input: SystemOneDecisionInput, signal: AbortSignal): Promise<unknown> {
-    const response = responseSchema.parse(await requestOpenAiResponse({
+    const response = await this.requestDecision({
       instructions,
       input: [{ role: 'user', content: JSON.stringify(systemOneDecisionInputSchema.parse(input)) }],
       text: { format: { type: 'json_schema', name, strict: true, schema: {
         type: 'object', additionalProperties: false, properties: { [field]: property }, required: [field],
       } } },
-      max_output_tokens: 100,
-    }, AbortSignal.any([signal, AbortSignal.timeout(10_000)])));
+    }, signal);
     return JSON.parse(response.output[0]!.content[0]!.text);
   }
   async select(input: SystemOneInput, signal: AbortSignal): Promise<SystemTwoPromptId> {
     const override = await this.repository.getRoutingPromptOverride();
     const criteria = { general: override?.general ?? SYSTEM_TWO_PROMPTS.general.description, booking: override?.booking ?? SYSTEM_TWO_PROMPTS.booking.description };
-    const response = responseSchema.parse(await requestOpenAiResponse({
+    const response = await this.requestDecision({
       instructions: `${override?.instructions ?? SYSTEM_ONE_PROMPT}\n${Object.entries(criteria).map(([id, description]) => `${id}: ${description}`).join('\n')}`,
       input: [{ role: 'user', content: JSON.stringify(input) }],
       text: { format: {
@@ -64,8 +80,7 @@ export class OpenAiSystemOneSelector extends SystemOneSelector {
           required: ['promptId'],
         },
       } },
-      max_output_tokens: 100,
-    }, AbortSignal.any([signal, AbortSignal.timeout(10_000)])));
+    }, signal);
     return selectionSchema.parse(JSON.parse(response.output[0]!.content[0]!.text)).promptId;
   }
 }

@@ -1,6 +1,17 @@
 import { z } from 'zod';
 const short = z.string().max(100);
+export const debugRequestSchema = z.object({
+  provider: z.enum(['openai', 'typesafe']), operation: short, endpoint: z.string().max(200), method: z.literal('POST'),
+  model: short.optional(), conversationAttached: z.boolean(), conversationId: z.string().max(200).optional(), previousResponseId: z.string().max(200).optional(),
+  store: z.boolean().optional(), maxOutputTokens: z.number().optional(), attempts: z.number().int().min(0).max(4), durationMs: z.number().nonnegative(),
+  httpStatus: z.number().int().optional(), providerRequestId: z.string().max(120).optional(), responseStatus: short.optional(), incompleteReason: short.optional(),
+  errorDiagnostic: z.string().max(3000).optional(), usage: z.string().max(2000).optional(), outputTypes: z.array(short).max(20), errorCategory: short.optional(),
+  requestBytes: z.number().nonnegative(), responseBytes: z.number().nonnegative(),
+  requestPreview: z.string().max(16384), responsePreview: z.string().max(8192), requestTruncated: z.boolean(), responseTruncated: z.boolean(),
+});
+export type DebugRequest = z.infer<typeof debugRequestSchema>;
 export const debugDetailsSchema = z.object({
+  request: debugRequestSchema.optional(),
   status: short.optional(), intent: short.optional(), tool: short.optional(), reason: short.optional(),
   serviceId: short.optional(), startAt: z.string().datetime().optional(), durationMinutes: z.number().optional(),
   responderCount: z.number().optional(), candidateCount: z.number().optional(), messageCount: z.number().optional(), busyCount: z.number().optional(),
@@ -9,7 +20,7 @@ export const debugDetailsSchema = z.object({
 });
 export const debugEventSchema = z.object({
   id: z.string().uuid(), createdAt: z.string().datetime(), traceId: z.string().uuid(), chatRef: z.string().max(16),
-  stage: z.enum(['received', 'ignored', 'human_paused', 'jev_decision', 'assistant_started', 'tool_called', 'booking_context', 'booking_result', 'proposal_created', 'confirmation_result', 'handoff', 'reply_sent', 'reply_failed', 'error']),
+  stage: z.enum(['provider_request', 'received', 'ignored', 'human_paused', 'jev_decision', 'assistant_started', 'tool_called', 'booking_context', 'booking_result', 'proposal_created', 'confirmation_result', 'handoff', 'reply_sent', 'reply_failed', 'error']),
   level: z.enum(['info', 'warn', 'error']), details: debugDetailsSchema,
 });
 export const debugAccessSchema = z.object({ canView: z.boolean() });

@@ -79,7 +79,7 @@ export class OpenAiService {
     let mediaAttempted = false;
     let terminalReply: AssistantReply | undefined;
     for (let round = 0; round <= 4; round++) {
-      const request = () => requestOpenAiResponse({ model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini', conversation: openaiConversationId, instructions, input, tools: terminalReply || round === 4 ? [] : selectedTools, parallel_tool_calls: false, max_output_tokens: 800 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]));
+      const request = () => requestOpenAiResponse({ model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini', conversation: openaiConversationId, instructions, input, tools: terminalReply || round === 4 ? [] : selectedTools, parallel_tool_calls: false, max_output_tokens: 800 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]), `s2_${promptId}`);
       let response: unknown;
       try { response = await request(); }
       catch (error) {

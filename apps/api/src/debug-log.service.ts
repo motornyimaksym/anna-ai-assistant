@@ -92,6 +92,9 @@ export function collectSensitiveStrings(value: unknown, limit = 500): string[] {
 
 export const safeErrorCategory = (error: unknown): string => {
   if (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name)) return 'timeout';
+  const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+  if (code === 'OPENAI_DECISION_TOKEN_LIMIT') return 'provider output token limit';
+  if (code === 'OPENAI_DECISION_INCOMPLETE') return 'provider response incomplete';
   const status = error instanceof Error ? /^OpenAI HTTP (\d{3})$/.exec(error.message)?.[1] : undefined;
   if (status) return `provider HTTP ${status}`;
   const typesafeStatus = error instanceof Error ? /^TypeSafe HTTP (\d{3})$/.exec(error.message)?.[1] : undefined;

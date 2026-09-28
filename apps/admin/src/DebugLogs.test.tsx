@@ -51,3 +51,18 @@ describe('debug page access', () => {
     expect(await screen.findByText('Sample context used.')).toBeTruthy();
   });
 });
+
+
+it('shows request metadata with separately expandable, marked payload previews', async () => {
+  vi.mocked(adminApi.debugAccess).mockResolvedValue({ canView: true });
+  vi.mocked(adminApi.debugLogs).mockResolvedValue([{ id: '00000000-0000-4000-8000-000000000000', createdAt: '2026-09-27T00:00:00.000Z', traceId: '00000000-0000-4000-8000-000000000001', chatRef: 'anonymous', stage: 'provider_request', level: 'warn', details: { request: {
+    provider: 'openai', operation: 's1_routing', endpoint: 'https://api.openai.com/v1/responses', method: 'POST', model: 'test-model', conversationAttached: false, store: false, maxOutputTokens: 4096, attempts: 1, durationMs: 250, responseStatus: 'incomplete', incompleteReason: 'max_output_tokens', outputTypes: ['reasoning'], requestBytes: 30000, responseBytes: 80, requestPreview: 'Request preview', responsePreview: 'Response preview', requestTruncated: true, responseTruncated: false,
+  } } }]);
+  show();
+  expect(await screen.findByText('openai · s1_routing')).toBeTruthy();
+  expect(screen.getByText(/Conversation: isolated/)).toBeTruthy();
+  expect(screen.getByText(/Request payload.*truncated/)).toBeTruthy();
+  expect(screen.getByText('Response payload')).toBeTruthy();
+  fireEvent.click(screen.getByText(/Request payload.*truncated/));
+  expect(screen.getByText('Request preview')).toBeTruthy();
+});

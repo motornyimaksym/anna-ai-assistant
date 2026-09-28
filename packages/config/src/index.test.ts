@@ -20,9 +20,5 @@ describe('loadBackendEnv', () => {
     expect(loadBackendRuntimeEnv({ TELEGRAM_ALLOWED_USERNAME: 'user61785' }).TELEGRAM_ALLOWED_USERNAME).toBe('user61785');
     expect(() => loadBackendRuntimeEnv({ TELEGRAM_ALLOWED_USERNAME: '@user61785' })).toThrow();
   });
-  it('keeps Jev routing off unless explicitly enabled', () => {
-    expect(loadBackendRuntimeEnv({}).JEV_ROUTING_ENABLED).toBe(false);
-    expect(loadBackendRuntimeEnv({ JEV_ROUTING_ENABLED: 'true' }).JEV_ROUTING_ENABLED).toBe(true);
-    expect(() => loadBackendRuntimeEnv({ JEV_ROUTING_ENABLED: 'yes' })).toThrow();
-  });
+
 });

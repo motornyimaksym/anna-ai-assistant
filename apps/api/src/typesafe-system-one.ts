@@ -1,3 +1,4 @@
+import { traceProviderRequest } from './request-diagnostics.js';
 import { Injectable } from '@nestjs/common';
 import { fetchWithLinearBackoff } from '@booking/http';
 import { z } from 'zod';
@@ -56,12 +57,18 @@ export class TypeSafeSystemOneSelector extends SystemOneSelector {
   private async request(state: unknown, question: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
     const token = process.env.TYPESAFE_AI_TOKEN?.trim();
     if (!token) throw new Error('TypeSafe is not configured');
-    const response = await fetchWithLinearBackoff('https://api.typesafe.ai/v1/systemone', {
-      method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'jev-latest', state, questions: { decision: question } }),
-    }, { replaySafe: true });
-    if (!response.ok) throw Object.assign(new Error(`TypeSafe HTTP ${response.status}`), { upstreamStatus: response.status, providerRequestId: response.headers?.get('x-request-id') ?? undefined });
-    return envelopeSchema.parse(await response.json()).answers.decision;
+    const payload = { model: 'jev-latest', state, questions: { decision: question } };
+    const operation = question.type === 'noul' ? 's1_probability' : Object.hasOwn(question.criteria as object, 'yes') ? 's1_approval' : 's1_routing';
+    const raw = await traceProviderRequest({ provider: 'typesafe', operation, endpoint: 'https://api.typesafe.ai/v1/systemone' }, payload, async (observer) => {
+      const response = await fetchWithLinearBackoff('https://api.typesafe.ai/v1/systemone', {
+        method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }, { replaySafe: true, onAttempt: observer.attempt });
+      observer.response(response);
+      if (!response.ok) throw Object.assign(new Error(`TypeSafe HTTP ${response.status}`), { upstreamStatus: response.status, providerRequestId: response.headers?.get('x-request-id') ?? undefined });
+      return response.json();
+    });
+    return envelopeSchema.parse(raw).answers.decision;
   }
 }

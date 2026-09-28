@@ -1,3 +1,4 @@
+import { traceProviderRequest } from './request-diagnostics.js';
 import { randomUUID } from 'node:crypto';
 import { fetchWithLinearBackoff } from '@booking/http';
 import { collectSensitiveStrings, sanitizeOpenAiError } from './debug-log.service.js';
@@ -28,21 +29,30 @@ async function openAiHttpError(response: Response, request: unknown, key: string
 export async function createOpenAiConversation(signal: AbortSignal): Promise<string> {
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new Error('OpenAI is not configured');
-  const response = await fetchWithLinearBackoff('https://api.openai.com/v1/conversations', {
-    method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Idempotency-Key': randomUUID() }, signal, body: '{}',
-  }, { replaySafe: true, timeoutMs: 15_000 });
-  if (!response.ok) throw await openAiHttpError(response, {}, key);
-  const data: unknown = await response.json();
-  if (!data || typeof data !== 'object' || !('id' in data) || typeof data.id !== 'string' || !data.id) throw new Error('Invalid OpenAI conversation');
-  return data.id;
+  return traceProviderRequest({ provider: 'openai', operation: 'conversation_create', endpoint: 'https://api.openai.com/v1/conversations' }, {}, async (observer) => {
+    const response = await fetchWithLinearBackoff('https://api.openai.com/v1/conversations', {
+      method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Idempotency-Key': randomUUID() }, signal, body: '{}',
+    }, { replaySafe: true, timeoutMs: 15_000, onAttempt: observer.attempt });
+    observer.response(response);
+    if (!response.ok) throw await openAiHttpError(response, {}, key);
+    const data: unknown = await response.json();
+    if (!data || typeof data !== 'object' || !('id' in data) || typeof data.id !== 'string' || !data.id) throw new Error('Invalid OpenAI conversation');
+    return data.id;
+  });
 }
-export async function requestOpenAiResponse(body: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
+export async function requestOpenAiResponse(body: Record<string, unknown>, signal: AbortSignal, operationOverride?: string): Promise<unknown> {
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new Error('OpenAI is not configured');
-  const response = await fetchWithLinearBackoff('https://api.openai.com/v1/responses', {
-    method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Idempotency-Key': randomUUID() }, signal,
-    body: JSON.stringify({ model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini', ...(!body.conversation ? { store: false } : {}), ...body }),
-  }, { replaySafe: true, timeoutMs: 30_000 });
-  if (!response.ok) throw await openAiHttpError(response, body, key);
-  return response.json();
+  const payload = { model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini', ...(!body.conversation ? { store: false } : {}), ...body };
+  const format = (body.text as { format?: { name?: string } } | undefined)?.format?.name;
+  const operation = operationOverride ?? (format === 'system_two_selection' ? 's1_routing' : format === 'boolean_answer' ? 's1_approval' : format === 'probability_estimate' ? 's1_probability' : body.conversation ? 's2_conversation' : 'booking_planner');
+  return traceProviderRequest({ provider: 'openai', operation, endpoint: 'https://api.openai.com/v1/responses' }, payload, async (observer) => {
+    const response = await fetchWithLinearBackoff('https://api.openai.com/v1/responses', {
+      method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Idempotency-Key': randomUUID() }, signal,
+      body: JSON.stringify(payload),
+    }, { replaySafe: true, timeoutMs: 30_000, onAttempt: observer.attempt });
+    observer.response(response);
+    if (!response.ok) throw await openAiHttpError(response, body, key);
+    return response.json();
+  });
 }

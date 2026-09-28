@@ -1,3 +1,4 @@
+import { withRequestDiagnostics } from './request-diagnostics.js';
 import { randomUUID } from 'node:crypto';
 import { DebugLogService, safeErrorCategory, safeErrorDiagnostic } from './debug-log.service.js';
 import { waitForRandomReadDelay, waitForResponsePacing } from './response-pacing.js';
@@ -46,6 +47,10 @@ export class TelegramService {
   private async processUpdate(update: z.infer<typeof updateSchema>): Promise<void> {
     const message = update.business_message ?? (update.message?.chat.type === 'private' ? update.message : undefined);
     const trace = { telegramChatId: String(message?.chat.id ?? 'unknown'), traceId: randomUUID() };
+    return withRequestDiagnostics((request) => this.debug.record(trace, 'provider_request', { request }, request.errorCategory ? 'error' : request.responseStatus === 'incomplete' ? 'warn' : 'info'), () => this.processTracedUpdate(update, trace));
+  }
+  private async processTracedUpdate(update: z.infer<typeof updateSchema>, trace: { telegramChatId: string; traceId: string }): Promise<void> {
+    const message = update.business_message ?? (update.message?.chat.type === 'private' ? update.message : undefined);
     const responder = update.message?.chat.type === 'private' ? update.message : undefined;
     const responderCommand = responder?.text?.trim();
     if (responder?.from?.username && !responder.from.is_bot && responderCommand && (responderCommand === '/start' || responderCommand.startsWith('/answer '))) {
@@ -87,16 +92,6 @@ export class TelegramService {
       await this.repository.appendMessage(chatId, 'user', message.text.slice(0, 4000));
       await this.human.queueExisting(conversation.activeHumanRequestId, message.text, update.update_id);
       return;
-    }
-    if (message.text.length <= 4000) {
-      const decision = await this.human.decide(conversation, message.text, trace.traceId);
-      await this.debug.record(trace, 'jev_decision', { status: decision.route, reason: decision.reason });
-      if (decision.route === 'human') {
-        await this.repository.appendMessage(chatId, 'user', message.text);
-        await this.human.escalate(chatId, message.business_connection_id, update.update_id, message.text, decision);
-        await this.debug.record(trace, 'handoff', { reason: decision.reason });
-        return;
-      }
     }
     await this.debug.record(trace, 'assistant_started');
     const stopTyping = await this.startTyping(chatId, message.business_connection_id);
