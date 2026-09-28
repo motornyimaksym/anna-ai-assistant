@@ -1,14 +1,16 @@
 import { systemOneSettingsSchema, type SystemOneSettings } from '@booking/contracts';
 import { isDeepStrictEqual } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { FieldValue, getFirestore, type DocumentData, type Firestore } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
 import {
-  debugEventsSchema, type DebugEvent, type AssistantPromptId, availabilityRuleSchema, bookingSchema, botSettingsSchema, conversationSchema, scheduleExceptionSchema, serviceSchema, updateAdminAccessSchema,
+  debugEventsSchema, debugEventSchema, debugPayloadSchema, type DebugEvent, type DebugPayload, type AssistantPromptId, availabilityRuleSchema, bookingSchema, botSettingsSchema, conversationSchema, scheduleExceptionSchema, serviceSchema, updateAdminAccessSchema,
   type AvailabilityRuleDto, type BookingDto, type BotSettings, type ConversationDto, type ScheduleExceptionDto, type ServiceDto,
 } from '@booking/contracts';
 import { BookingConflictError, BookingNotFoundError, lockedSlotKeys, serviceEndAt } from '@booking/domain';
 import { FirebaseAdminService } from './firebase-admin.js';
+import type { RequestBodies } from './request-diagnostics.js';
 
 export type CreateStoredBooking = Omit<BookingDto, 'id' | 'createdAt' | 'updatedAt'> & { lockedSlots: string[]; bufferMinutes: number };
 export type BookingOperation = { id: string; kind: 'create' | 'reschedule' | 'cancel'; targetStartAt?: string; targetEndAt?: string; leaseId?: string; leaseUntil?: number };
@@ -318,20 +320,52 @@ export class BookingRepository {
     return value;
   }
   async deleteBookingPromptOverride() { await this.db.collection('assistantSettings').doc('bookingPrompt').delete(); }
-  async appendDebugEvent(event: DebugEvent) {
-    if (Buffer.byteLength(JSON.stringify(event), 'utf8') > 32 * 1024) throw new Error('Diagnostic event exceeds size limit');
+  private diagnosticBodyFile(id: string, kind: 'request' | 'response') { return getStorage().bucket().file(`assistant-diagnostics/${id}/${kind}.json`); }
+  private async deleteDiagnosticBodies(id: string) {
+    await Promise.all((['request', 'response'] as const).map(async (kind) => {
+      try { await this.diagnosticBodyFile(id, kind).delete({ ignoreNotFound: true }); } catch { /* Retention cleanup is best effort. */ }
+    }));
+  }
+  async appendDebugEvent(event: DebugEvent, bodies?: RequestBodies) {
+    let bodyStorageStatus: 'complete' | 'partial' | 'unavailable' | undefined;
+    if (bodies && event.details.request) {
+      try {
+        await this.diagnosticBodyFile(event.id, 'request').save(Buffer.from(bodies.requestBody, 'utf8'), { resumable: false, metadata: { contentType: 'application/json; charset=utf-8', cacheControl: 'private, no-store' } });
+        if (bodies.responseBody === undefined) bodyStorageStatus = 'partial';
+        else {
+          await this.diagnosticBodyFile(event.id, 'response').save(Buffer.from(bodies.responseBody, 'utf8'), { resumable: false, metadata: { contentType: 'application/json; charset=utf-8', cacheControl: 'private, no-store' } });
+          bodyStorageStatus = 'complete';
+        }
+      } catch {
+        await this.deleteDiagnosticBodies(event.id);
+        bodyStorageStatus = 'unavailable';
+      }
+    }
+    const storedEvent = bodyStorageStatus ? debugEventSchema.parse({ ...event, details: { ...event.details, request: { ...event.details.request, bodyStorageStatus } } }) : event;
+    if (Buffer.byteLength(JSON.stringify(storedEvent), 'utf8') > 32 * 1024) {
+      if (bodyStorageStatus && bodyStorageStatus !== 'unavailable') await this.deleteDiagnosticBodies(event.id);
+      throw new Error('Diagnostic event exceeds size limit');
+    }
     const collection = this.db.collection('assistantDiagnostics');
     const ref = collection.doc('recent');
-    await this.db.runTransaction(async (tx) => {
-      const data = (await tx.get(ref)).data();
-      const legacy = debugEventsSchema.parse(data?.events ?? []);
-      const ids: string[] = Array.isArray(data?.ids) ? data.ids : legacy.map((item) => item.id);
-      const retained = [...ids.filter((id) => id !== event.id), event.id].slice(-200);
-      for (const item of legacy) if (retained.includes(item.id)) tx.set(collection.doc(item.id), withoutUndefined(item));
-      for (const id of ids) if (!retained.includes(id)) tx.delete(collection.doc(id));
-      tx.set(collection.doc(event.id), withoutUndefined(event));
-      tx.set(ref, { ids: retained });
-    });
+    let evicted: string[] = [];
+    try {
+      await this.db.runTransaction(async (tx) => {
+        const data = (await tx.get(ref)).data();
+        const legacy = debugEventsSchema.parse(data?.events ?? []);
+        const ids: string[] = Array.isArray(data?.ids) ? data.ids : legacy.map((item) => item.id);
+        const retained = [...ids.filter((id) => id !== storedEvent.id), storedEvent.id].slice(-200);
+        evicted = ids.filter((id) => !retained.includes(id));
+        for (const item of legacy) if (retained.includes(item.id)) tx.set(collection.doc(item.id), withoutUndefined(item));
+        for (const id of evicted) tx.delete(collection.doc(id));
+        tx.set(collection.doc(storedEvent.id), withoutUndefined(storedEvent));
+        tx.set(ref, { ids: retained });
+      });
+    } catch (error) {
+      if (bodyStorageStatus && bodyStorageStatus !== 'unavailable') await this.deleteDiagnosticBodies(event.id);
+      throw error;
+    }
+    await Promise.all(evicted.map((id) => this.deleteDiagnosticBodies(id)));
   }
   async listDebugEvents(): Promise<DebugEvent[]> {
     const collection = this.db.collection('assistantDiagnostics');
@@ -342,6 +376,28 @@ export class BookingRepository {
       const documents = ids.length ? await tx.getAll(...ids.map((id) => collection.doc(id))) : [];
       return debugEventsSchema.parse(documents.filter((doc) => doc.exists).map((doc) => doc.data())).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     });
+  }
+  async getDebugPayload(rawId: string): Promise<DebugPayload> {
+    const id = debugEventSchema.shape.id.parse(rawId);
+    const ref = this.db.collection('assistantDiagnostics').doc(id);
+    const snapshot = await ref.get();
+    if (!snapshot.exists) throw new NotFoundException('Diagnostic event not found');
+    const event = debugEventSchema.parse(snapshot.data());
+    if (event.stage !== 'provider_request' || !event.details.request) throw new NotFoundException('Diagnostic payload not found');
+    const request = event.details.request;
+    if (request.bodyStorageStatus === 'complete' || request.bodyStorageStatus === 'partial') {
+      try {
+        const [requestFile, responseFile] = await Promise.all([
+          this.diagnosticBodyFile(id, 'request').download(),
+          request.bodyStorageStatus === 'complete' ? this.diagnosticBodyFile(id, 'response').download() : Promise.resolve(undefined),
+        ]);
+        return debugPayloadSchema.parse({ status: request.bodyStorageStatus, requestBody: requestFile[0].toString('utf8'), ...(responseFile ? { responseBody: responseFile[0].toString('utf8') } : {}) });
+      } catch { return { status: 'unavailable' }; }
+    }
+    if (request.requestPreview !== undefined || request.responsePreview !== undefined) {
+      return debugPayloadSchema.parse({ status: 'legacy_preview', ...(request.requestPreview === undefined ? {} : { requestBody: request.requestPreview }), ...(request.responsePreview === undefined ? {} : { responseBody: request.responsePreview }), ...(request.requestTruncated === undefined ? {} : { requestTruncated: request.requestTruncated }), ...(request.responseTruncated === undefined ? {} : { responseTruncated: request.responseTruncated }) });
+    }
+    return { status: 'unavailable' };
   }
   async getAssistantPromptOverride(): Promise<{ prompt: string; updatedAt: string } | undefined> {
     const doc = await this.db.collection('assistantSettings').doc('prompt').get();

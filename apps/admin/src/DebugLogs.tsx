@@ -23,7 +23,7 @@ export const DebugLogs = ({ uid }: { uid: string }) => {
       <Tab value="test" label="Prompt test" />
     </Tabs>
     {tab === 'test' ? <PromptTest /> : <>
-    <Typography variant="body2">Latest 200 records retained globally. AI request details include bounded prompt/context and response previews. Credentials and hidden reasoning are excluded. Older records are deleted automatically.</Typography>
+    <Typography variant="body2">Latest 200 records retained globally. Complete sanitized AI request and response bodies load when expanded. Credentials and hidden reasoning are excluded. Older records are deleted automatically.</Typography>
     <Stack direction="row" spacing={2}>
       <TextField label="Filter stage, status or trace" value={filter} onChange={(event) => setFilter(event.target.value)} fullWidth size="small" />
       <Button onClick={() => void logs.refetch()} disabled={logs.isFetching}>Refresh</Button>
@@ -35,21 +35,39 @@ export const DebugLogs = ({ uid }: { uid: string }) => {
       <Stack direction="row" spacing={1} alignItems="center"><Chip size="small" label={event.level} color={event.level === 'error' ? 'error' : event.level === 'warn' ? 'warning' : 'default'} /><Typography fontWeight="bold">{event.stage}</Typography><Typography variant="body2">{new Date(event.createdAt).toLocaleString()}</Typography></Stack>
       <Typography variant="caption" sx={{ overflowWrap: 'anywhere' }}>Trace: {event.traceId} · Chat reference: {event.chatRef}</Typography>
       <Typography component="pre" variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', mb: 0 }}>{JSON.stringify({ ...event.details, request: undefined }, null, 2)}</Typography>
-      {event.details.request && <RequestDetails request={event.details.request} />}
+      {event.details.request && <RequestDetails eventId={event.id} request={event.details.request} />}
     </Paper>)}
     </>}
   </Stack>;
 };
 
-const RequestDetails = ({ request }: { request: DebugRequest }) => {
-  const { requestPreview, responsePreview, ...metadata } = request;
+const RequestDetails = ({ eventId, request }: { eventId: string; request: DebugRequest }) => {
+  const [requestOpen, setRequestOpen] = useState(false);
+  const [responseOpen, setResponseOpen] = useState(false);
+  const legacy = request.bodyStorageStatus === undefined;
+  const payload = useQuery({ queryKey: ['debug-payload', eventId], queryFn: () => adminApi.debugLogPayload(eventId), enabled: (requestOpen || responseOpen) && !legacy && request.bodyStorageStatus !== 'unavailable', retry: false, gcTime: 0 });
+  const { requestPreview, responsePreview, requestTruncated, responseTruncated, ...metadata } = request;
+  const renderBody = (kind: 'request' | 'response') => {
+    const opened = kind === 'request' ? requestOpen : responseOpen;
+    if (!opened) return null;
+    if (legacy) {
+      const body = kind === 'request' ? requestPreview : responsePreview;
+      const truncated = kind === 'request' ? requestTruncated : responseTruncated;
+      return body === undefined ? <Typography variant="body2">No legacy payload available.</Typography> : <><Typography variant="caption">Legacy preview{truncated ? ' (truncated)' : ''}</Typography><Typography component="pre" variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{body}</Typography></>;
+    }
+    if (request.bodyStorageStatus === 'unavailable') return <Typography variant="body2">Payload storage unavailable.</Typography>;
+    if (payload.isPending) return <Typography variant="body2">Loading complete payload…</Typography>;
+    if (payload.isError || !payload.data || payload.data.status === 'unavailable') return <Typography variant="body2">Payload unavailable.</Typography>;
+    const body = kind === 'request' ? payload.data.requestBody : payload.data.responseBody;
+    return body === undefined ? <Typography variant="body2">No response body received.</Typography> : <Typography component="pre" variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{body}</Typography>;
+  };
   return <Stack spacing={1} sx={{ mt: 1 }}>
     <Typography fontWeight="bold">{request.provider} · {request.operation}</Typography>
     <Typography variant="body2">{request.method} {request.endpoint} · {request.durationMs} ms · {request.attempts} HTTP attempts</Typography>
     <Typography variant="body2">Conversation: {request.conversationAttached ? request.conversationId : 'isolated'} · Model: {request.model ?? 'not applicable'} · Status: {request.responseStatus ?? request.httpStatus ?? request.errorCategory ?? 'unknown'}</Typography>
     <details><summary>Request metadata</summary><Typography component="pre" variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(metadata, null, 2)}</Typography></details>
-    <details><summary>Request payload{request.requestTruncated ? ' (truncated)' : ''}</summary><Typography component="pre" variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{requestPreview}</Typography></details>
-    <details><summary>Response payload{request.responseTruncated ? ' (truncated)' : ''}</summary><Typography component="pre" variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{responsePreview}</Typography></details>
+    <details open={requestOpen}><summary onClick={(event) => { event.preventDefault(); setRequestOpen((open) => !open); }}>Request body</summary>{renderBody('request')}</details>
+    <details open={responseOpen}><summary onClick={(event) => { event.preventDefault(); setResponseOpen((open) => !open); }}>Response body</summary>{renderBody('response')}</details>
   </Stack>;
 };
 

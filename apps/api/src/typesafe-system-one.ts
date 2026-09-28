@@ -65,7 +65,7 @@ export class TypeSafeSystemOneSelector extends SystemOneSelector {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       }, { replaySafe: true, onAttempt: observer.attempt });
-      observer.response(response);
+      await observer.response(response);
       if (!response.ok) throw Object.assign(new Error(`TypeSafe HTTP ${response.status}`), { upstreamStatus: response.status, providerRequestId: response.headers?.get('x-request-id') ?? undefined });
       return response.json();
     });

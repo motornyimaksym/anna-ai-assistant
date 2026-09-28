@@ -7,9 +7,16 @@ export const debugRequestSchema = z.object({
   httpStatus: z.number().int().optional(), providerRequestId: z.string().max(120).optional(), responseStatus: short.optional(), incompleteReason: short.optional(),
   errorDiagnostic: z.string().max(3000).optional(), usage: z.string().max(2000).optional(), outputTypes: z.array(short).max(20), errorCategory: short.optional(),
   requestBytes: z.number().nonnegative(), responseBytes: z.number().nonnegative(),
-  requestPreview: z.string().max(16384), responsePreview: z.string().max(8192), requestTruncated: z.boolean(), responseTruncated: z.boolean(),
+  bodyStorageStatus: z.enum(['complete', 'partial', 'unavailable']).optional(),
+  requestPreview: z.string().max(16384).optional(), responsePreview: z.string().max(8192).optional(), requestTruncated: z.boolean().optional(), responseTruncated: z.boolean().optional(),
 });
 export type DebugRequest = z.infer<typeof debugRequestSchema>;
+export const debugPayloadSchema = z.object({
+  status: z.enum(['complete', 'partial', 'unavailable', 'legacy_preview']),
+  requestBody: z.string().optional(), responseBody: z.string().optional(),
+  requestTruncated: z.boolean().optional(), responseTruncated: z.boolean().optional(),
+});
+export type DebugPayload = z.infer<typeof debugPayloadSchema>;
 export const debugDetailsSchema = z.object({
   request: debugRequestSchema.optional(),
   status: short.optional(), intent: short.optional(), tool: short.optional(), reason: short.optional(),

@@ -33,6 +33,12 @@ describe('OpenAI HTTP transport retries', () => {
     expect(safeErrorCategory(error)).toBe('provider HTTP 400');
     expect(safeErrorDiagnostic(error).providerError).toBeUndefined();
   });
+  it('parses complete valid error JSON larger than the former 16 KiB limit', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { padding: 'x'.repeat(20_000), code: 'invalid_request_error', param: 'input', message: 'invalid input' } }), { status: 400 })));
+    const error = await requestOpenAiResponse({}, new AbortController().signal).catch((value: unknown) => value);
+    expect(safeErrorDiagnostic(error).providerError).toMatchObject({ code: 'invalid_request_error', param: 'input' });
+  });
   it.each([
     ['conversation creation', 'conversation'] as const,
     ['Responses request', 'response'] as const,
@@ -66,12 +72,27 @@ it('records the actual wire payload, HTTP retries, and final response inside a t
   vi.stubEnv('OPENAI_API_KEY', 'test-private-key');
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(null, { status: 503 })).mockResolvedValueOnce(new Response(JSON.stringify({ status: 'completed', usage: { input_tokens: 20, output_tokens: 5 }, output: [] }), { status: 200, headers: { 'x-request-id': 'req_final' } }));
   vi.stubGlobal('fetch', fetcher);
-  const write = vi.fn(async (_request: DebugRequest) => {});
+  const write = vi.fn(async (_request: DebugRequest, _bodies: { requestBody: string; responseBody?: string }) => {});
   await withRequestDiagnostics(write, () => requestOpenAiResponse({ model: 'test-model', input: 'Hello', max_output_tokens: 4096, text: { format: { name: 'system_two_selection' } } }, new AbortController().signal));
   expect(write).toHaveBeenCalledTimes(1);
   const detail = write.mock.calls[0]![0];
+  const bodies = write.mock.calls[0]![1];
   expect(detail).toMatchObject({ operation: 's1_routing', attempts: 2, store: false, conversationAttached: false, providerRequestId: 'req_final', httpStatus: 200 });
-  expect(JSON.parse(detail.requestPreview)).toEqual(JSON.parse(fetcher.mock.calls[1]![1].body));
+  expect(JSON.parse(bodies.requestBody)).toEqual(JSON.parse(fetcher.mock.calls[1]![1].body));
+  expect(JSON.parse(bodies.responseBody!).status).toBe('completed');
   expect(detail.usage).toContain('output_tokens');
   expect(JSON.stringify(detail)).not.toContain('test-private-key');
+});
+
+it('captures full sanitized HTTP error responses in the owner diagnostic payload', async () => {
+  vi.stubEnv('OPENAI_API_KEY', 'test-private-key');
+  const fullError = { error: { code: 'invalid_request_error', padding: 'ї'.repeat(20_000), message: 'token test-private-key' } };
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(fullError), { status: 400 })));
+  const write = vi.fn(async (_request: DebugRequest, _bodies: { requestBody: string; responseBody?: string }) => {});
+  await withRequestDiagnostics(write, () => requestOpenAiResponse({ input: 'private user text' }, new AbortController().signal).catch(() => undefined));
+  const [detail, bodies] = write.mock.calls[0]!;
+  expect(detail.httpStatus).toBe(400);
+  expect(Buffer.byteLength(bodies.responseBody!)).toBeGreaterThan(20_000);
+  expect(JSON.parse(bodies.responseBody!).error.padding).toBe('ї'.repeat(20_000));
+  expect(bodies.responseBody).not.toContain('test-private-key');
 });

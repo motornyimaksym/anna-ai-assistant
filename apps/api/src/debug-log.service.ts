@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
+import type { RequestBodies } from './request-diagnostics.js';
 import { debugDetailsSchema, debugEventSchema, type DebugDetails, type DebugEvent } from '@booking/contracts';
 import { BookingRepository } from './repository.js';
 
@@ -106,10 +107,10 @@ export const safeErrorCategory = (error: unknown): string => {
 export class DebugLogService {
   private readonly logger = new Logger(DebugLogService.name);
   constructor(private readonly repository: BookingRepository) {}
-  async record(context: TraceContext, stage: DebugEvent['stage'], details: DebugDetails = {}, level: DebugEvent['level'] = 'info'): Promise<void> {
+  async record(context: TraceContext, stage: DebugEvent['stage'], details: DebugDetails = {}, level: DebugEvent['level'] = 'info', bodies?: RequestBodies): Promise<void> {
     try {
       const event = debugEventSchema.parse({ id: randomUUID(), createdAt: new Date().toISOString(), traceId: context.traceId ?? randomUUID(), chatRef: createHash('sha256').update(context.telegramChatId).digest('hex').slice(0, 12), stage, level, details: debugDetailsSchema.parse(details) });
-      await this.repository.appendDebugEvent(event);
+      await this.repository.appendDebugEvent(event, bodies);
     } catch { this.logger.warn('Diagnostic event could not be saved'); }
   }
 }

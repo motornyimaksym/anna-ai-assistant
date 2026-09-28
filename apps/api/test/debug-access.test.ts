@@ -22,9 +22,10 @@ describe('private diagnostics', () => {
     vi.stubEnv('DEBUG_OWNER_UID', 'outsider');
     expect(canViewDebug({ uid: 'outsider', isOwner: true })).toBe(false);
   });
-  it('protects the logs route with authentication and exact owner guards', () => {
+  it('protects log and payload routes with authentication and exact owner guards', () => {
     expect(Reflect.getMetadata('__guards__', AdminController)).toContain(AdminGuard);
     expect(Reflect.getMetadata('__guards__', AdminController.prototype.debugLogs)).toContain(AdminDebugGuard);
+    expect(Reflect.getMetadata('__guards__', AdminController.prototype.debugLogPayload)).toContain(AdminDebugGuard);
   });
   it('strips unknown detail fields and hashes chat identifiers', async () => {
     const repository = { appendDebugEvent: vi.fn(async () => {}) };

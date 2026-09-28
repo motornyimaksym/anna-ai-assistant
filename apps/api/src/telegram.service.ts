@@ -47,7 +47,7 @@ export class TelegramService {
   private async processUpdate(update: z.infer<typeof updateSchema>): Promise<void> {
     const message = update.business_message ?? (update.message?.chat.type === 'private' ? update.message : undefined);
     const trace = { telegramChatId: String(message?.chat.id ?? 'unknown'), traceId: randomUUID() };
-    return withRequestDiagnostics((request) => this.debug.record(trace, 'provider_request', { request }, request.errorCategory ? 'error' : request.responseStatus === 'incomplete' ? 'warn' : 'info'), () => this.processTracedUpdate(update, trace));
+    return withRequestDiagnostics((request, bodies) => this.debug.record(trace, 'provider_request', { request }, request.errorCategory ? 'error' : request.responseStatus === 'incomplete' ? 'warn' : 'info', bodies), () => this.processTracedUpdate(update, trace));
   }
   private async processTracedUpdate(update: z.infer<typeof updateSchema>, trace: { telegramChatId: string; traceId: string }): Promise<void> {
     const message = update.business_message ?? (update.message?.chat.type === 'private' ? update.message : undefined);

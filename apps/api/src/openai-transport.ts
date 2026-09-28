@@ -9,12 +9,9 @@ async function openAiHttpError(response: Response, request: unknown, key: string
   if (!reader) return error;
   try {
     const chunks: Uint8Array[] = [];
-    let size = 0;
     while (true) {
       const chunk = await reader.read();
       if (chunk.done) break;
-      size += chunk.value.byteLength;
-      if (size > 16_384) { await reader.cancel(); return error; }
       chunks.push(chunk.value);
     }
     const body: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -33,7 +30,7 @@ export async function createOpenAiConversation(signal: AbortSignal): Promise<str
     const response = await fetchWithLinearBackoff('https://api.openai.com/v1/conversations', {
       method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Idempotency-Key': randomUUID() }, signal, body: '{}',
     }, { replaySafe: true, timeoutMs: 15_000, onAttempt: observer.attempt });
-    observer.response(response);
+    await observer.response(response);
     if (!response.ok) throw await openAiHttpError(response, {}, key);
     const data: unknown = await response.json();
     if (!data || typeof data !== 'object' || !('id' in data) || typeof data.id !== 'string' || !data.id) throw new Error('Invalid OpenAI conversation');
@@ -51,7 +48,7 @@ export async function requestOpenAiResponse(body: Record<string, unknown>, signa
       method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Idempotency-Key': randomUUID() }, signal,
       body: JSON.stringify(payload),
     }, { replaySafe: true, timeoutMs: 30_000, onAttempt: observer.attempt });
-    observer.response(response);
+    await observer.response(response);
     if (!response.ok) throw await openAiHttpError(response, body, key);
     return response.json();
   });

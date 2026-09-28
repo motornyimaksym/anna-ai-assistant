@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DebugLogs } from './DebugLogs.js';
 import { adminApi } from './api.js';
-vi.mock('./api.js', () => ({ adminApi: { debugAccess: vi.fn(), debugLogs: vi.fn(), promptTest: vi.fn() } }));
+vi.mock('./api.js', () => ({ adminApi: { debugAccess: vi.fn(), debugLogs: vi.fn(), debugLogPayload: vi.fn(), promptTest: vi.fn() } }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 const show = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><DebugLogs uid="owner" /></QueryClientProvider>);
 describe('debug page access', () => {
@@ -53,7 +53,7 @@ describe('debug page access', () => {
 });
 
 
-it('shows request metadata with separately expandable, marked payload previews', async () => {
+it('shows existing request metadata and marks old truncated previews', async () => {
   vi.mocked(adminApi.debugAccess).mockResolvedValue({ canView: true });
   vi.mocked(adminApi.debugLogs).mockResolvedValue([{ id: '00000000-0000-4000-8000-000000000000', createdAt: '2026-09-27T00:00:00.000Z', traceId: '00000000-0000-4000-8000-000000000001', chatRef: 'anonymous', stage: 'provider_request', level: 'warn', details: { request: {
     provider: 'openai', operation: 's1_routing', endpoint: 'https://api.openai.com/v1/responses', method: 'POST', model: 'test-model', conversationAttached: false, store: false, maxOutputTokens: 4096, attempts: 1, durationMs: 250, responseStatus: 'incomplete', incompleteReason: 'max_output_tokens', outputTypes: ['reasoning'], requestBytes: 30000, responseBytes: 80, requestPreview: 'Request preview', responsePreview: 'Response preview', requestTruncated: true, responseTruncated: false,
@@ -61,8 +61,27 @@ it('shows request metadata with separately expandable, marked payload previews',
   show();
   expect(await screen.findByText('openai · s1_routing')).toBeTruthy();
   expect(screen.getByText(/Conversation: isolated/)).toBeTruthy();
-  expect(screen.getByText(/Request payload.*truncated/)).toBeTruthy();
-  expect(screen.getByText('Response payload')).toBeTruthy();
-  fireEvent.click(screen.getByText(/Request payload.*truncated/));
+  expect(screen.getByText('Request body')).toBeTruthy();
+  expect(screen.getByText('Response body')).toBeTruthy();
+  fireEvent.click(screen.getByText('Request body'));
+  expect(screen.getByText('Legacy preview (truncated)')).toBeTruthy();
   expect(screen.getByText('Request preview')).toBeTruthy();
+});
+
+it('loads complete bodies only when expanded and displays them without truncation', async () => {
+  vi.mocked(adminApi.debugAccess).mockResolvedValue({ canView: true });
+  const id = '00000000-0000-4000-8000-000000000002';
+  const requestBody = 'request '.repeat(3_000);
+  vi.mocked(adminApi.debugLogs).mockResolvedValue([{ id, createdAt: '2026-09-27T00:00:00.000Z', traceId: '00000000-0000-4000-8000-000000000001', chatRef: 'anonymous', stage: 'provider_request', level: 'info', details: { request: {
+    provider: 'openai', operation: 's1_routing', endpoint: 'https://api.openai.com/v1/responses', method: 'POST', model: 'test-model', conversationAttached: false, attempts: 1, durationMs: 10, outputTypes: [], requestBytes: requestBody.length, responseBytes: 20, bodyStorageStatus: 'complete',
+  } } }]);
+  vi.mocked(adminApi.debugLogPayload).mockResolvedValue({ status: 'complete', requestBody, responseBody: '{"status":"completed"}' });
+  show();
+  expect(await screen.findByText('openai · s1_routing')).toBeTruthy();
+  expect(adminApi.debugLogPayload).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByText('Request body'));
+  await waitFor(() => expect(adminApi.debugLogPayload).toHaveBeenCalledWith(id));
+  await waitFor(() => expect([...document.querySelectorAll('pre')].some((element) => element.textContent === requestBody)).toBe(true));
+  expect([...document.querySelectorAll('pre')].some((element) => element.textContent === requestBody)).toBe(true);
+  expect(screen.getByText('Response body')).toBeTruthy();
 });

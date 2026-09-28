@@ -54,6 +54,7 @@ export class AdminController {
   @Delete('booking-prompt') async resetBookingPrompt() { await this.repository.deleteBookingPromptOverride(); return this.bookingPrompt(); }
   @Get('debug/access') @Header('Cache-Control', 'no-store') debugAccess(@Req() request: AdminRequest) { return { canView: canViewDebug(request.admin) }; }
   @Get('debug/logs') @Header('Cache-Control', 'no-store') @UseGuards(AdminDebugGuard) debugLogs() { return this.repository.listDebugEvents(); }
+  @Get('debug/logs/:id/payload') @Header('Cache-Control', 'no-store') @UseGuards(AdminDebugGuard) debugLogPayload(@Param('id') id: string) { return this.repository.getDebugPayload(id); }
   @Get('knowledge-base') async knowledgeBase() { const [override, services] = await Promise.all([this.repository.getKnowledgeBaseOverride(), this.repository.listServices()]); return this.knowledgeBaseResponse(override, services.filter((service) => service.enabled)); }
   @Put('knowledge-base') async updateKnowledgeBase(@Body() body: unknown) { const { content } = updateKnowledgeBaseSchema.parse(body); const [override, services] = await Promise.all([this.repository.saveKnowledgeBaseOverride(content), this.repository.listServices()]); return this.knowledgeBaseResponse(override, services.filter((service) => service.enabled)); }
   @Delete('knowledge-base') async resetKnowledgeBase() { await this.repository.deleteKnowledgeBaseOverride(); return this.knowledgeBaseResponse(undefined, (await this.repository.listServices()).filter((service) => service.enabled)); }
