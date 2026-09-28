@@ -24,6 +24,19 @@ const setup = (promptId: SystemTwoPromptId = 'general') => {
 };
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 describe('OpenAI conversation', () => {
+  it('reserves reasoning headroom and safely rejects incomplete Booking output', async () => {
+    const { service, tools, repository } = setup('booking');
+    vi.stubEnv('OPENAI_MODEL', 'gpt-6-luna');
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output: [{ type: 'reasoning' }] }) });
+    vi.stubGlobal('fetch', fetch);
+    const reply = await service.respond(conversation, context, 'Запиши мене');
+    const request = JSON.parse(fetch.mock.calls[0]![1].body);
+    expect(request.max_output_tokens).toBe(4096);
+    expect(request.reasoning).toEqual({ effort: 'low' });
+    expect(reply.needsHuman).toBe(true);
+    expect(tools.execute).not.toHaveBeenCalled();
+    expect(repository.replacePendingAction).not.toHaveBeenCalled();
+  });
   it('recovers a poisoned conversation once without replaying historical tools', async () => {
     const { service, repository, tools } = setup();
     repository.listMessages.mockResolvedValue([{ role: 'user', content: 'Earlier question' }, { role: 'assistant', content: 'Earlier reply' }]);

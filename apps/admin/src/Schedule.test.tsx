@@ -28,4 +28,22 @@ describe('imported schedule slots', () => {
     show();
     expect(await screen.findByText(/No imported free slots yet/)).toBeTruthy();
   });
+
+  it('shows Calendar busy intervals captured by synchronization', async () => {
+    vi.mocked(adminApi.telegramScheduleSlots).mockResolvedValue({
+      slots: [], calendarAvailability: {
+        status: 'ready', checkedAt: '2026-09-25T10:00:00.000Z', rangeStart: '2026-09-25T10:00:00.000Z', rangeEnd: '2026-10-25T10:00:00.000Z',
+        busy: [{ start: '2026-09-26T10:00:00.000Z', end: '2026-09-26T11:00:00.000Z' }],
+      },
+    });
+    show();
+    expect(await screen.findByText(/Calendar busy times/)).toBeTruthy();
+    expect(screen.getByText(/26.09.2026.*13:00.*14:00/)).toBeTruthy();
+  });
+
+  it('shows when Calendar was unavailable during sync', async () => {
+    vi.mocked(adminApi.telegramScheduleSlots).mockResolvedValue({ slots: [], calendarAvailability: { status: 'unavailable', checkedAt: '2026-09-25T10:00:00.000Z' } });
+    show();
+    expect(await screen.findByText(/Calendar was unavailable during the last sync/)).toBeTruthy();
+  });
 });

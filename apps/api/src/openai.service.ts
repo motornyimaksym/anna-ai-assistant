@@ -26,7 +26,7 @@ export const assistantToolDefinitions = [
   tool('plan_booking', 'Required for every availability question, new booking or rescheduling request. A separate planner checks schedule and Calendar. Return its clarification or proposal to the client.', { intent: { type: 'string', enum: ['availability', 'create', 'reschedule'] }, bookingId: { type: ['string', 'null'], description: 'Owned booking ID for reschedule, otherwise null. Use get_bookings if unknown.' } }),
   tool('cancel_booking', 'Propose cancellation of an existing client booking. Requires subsequent explicit client approval.', { bookingId: string }),
 ];
-const outputSchema = z.object({ output: z.array(z.object({ type: z.string(), name: z.string().optional(), arguments: z.string().optional(), call_id: z.string().optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()).optional() }).passthrough()) });
+const outputSchema = z.object({ status: z.string().optional(), incomplete_details: z.object({ reason: z.string().optional() }).optional(), output: z.array(z.object({ type: z.string(), name: z.string().optional(), arguments: z.string().optional(), call_id: z.string().optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()).optional() }).passthrough()) });
 const fallback = 'Потрібна допомога відповідальної людини. Будь ласка, зачекайте.';
 export type AssistantReply = { text: string; fromOpenAI: boolean; needsHuman?: boolean; humanContext?: string };
 type PlannedReply = { reply: AssistantReply; status: 'ready' | 'needs_clarification' | 'unavailable'; candidateStarts: string[]; evidence?: BookingPlanningEvidence };
@@ -86,7 +86,7 @@ export class OpenAiService {
     let mediaAttempted = false;
     let terminalReply: AssistantReply | undefined;
     for (let round = 0; round <= 4; round++) {
-      const request = () => requestOpenAiResponse({ model, conversation: openaiConversationId, ...(round === 0 ? requestContext : {}), input, tools: selectedTools, ...(terminalReply || round === 4 ? { tool_choice: 'none' } : {}), parallel_tool_calls: false, max_output_tokens: 800 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]), `s2_${promptId}`);
+      const request = () => requestOpenAiResponse({ model, conversation: openaiConversationId, ...(model === 'gpt-6-luna' ? { reasoning: { effort: 'low' } } : {}), ...(round === 0 ? requestContext : {}), input, tools: selectedTools, ...(terminalReply || round === 4 ? { tool_choice: 'none' } : {}), parallel_tool_calls: false, max_output_tokens: 4096 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]), `s2_${promptId}`);
       let response: unknown;
       try { response = await request(); }
       catch (error) {
@@ -101,7 +101,8 @@ export class OpenAiService {
         this.logger.warn(`Recovered incomplete OpenAI conversation trace=${context.traceId ?? 'unknown'}`);
         response = await request();
       }
-      const { output } = outputSchema.parse(response);
+      const { status, incomplete_details, output } = outputSchema.parse(response);
+      if (status && status !== 'completed') throw Object.assign(new Error('OpenAI System Two response incomplete'), { code: incomplete_details?.reason === 'max_output_tokens' ? 'OPENAI_S2_TOKEN_LIMIT' : 'OPENAI_S2_INCOMPLETE' });
       input = [];
       if (terminalReply) return terminalReply;
       const calls = output.filter((item) => item.type === 'function_call');

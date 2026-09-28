@@ -93,6 +93,11 @@ export class BookingPlannerService {
       if (response.status && response.status !== 'completed') throw new Error('Incomplete planner response');
       const text = response.output.filter((item) => item.type === 'message').flatMap((item) => item.content ?? []).filter((item) => item.type === 'output_text').map((item) => item.text ?? '').join('');
       const plan = bookingPlanSchema.parse(JSON.parse(text));
+      if (plan.status === 'ready' && (plan.serviceId === null || plan.durationMinutes === null)) {
+        const question = plan.serviceId === null ? 'Яку послугу бажаєте обрати?' : 'Яка тривалість масажу вам підходить?';
+        await this.debug.record(context, 'booking_result', { status: 'needs_clarification', reason: plan.serviceId === null ? 'service_missing' : 'duration_missing' });
+        return { plan: { status: 'needs_clarification', serviceId: null, startAt: null, durationMinutes: null, candidateStarts: [], question }, evidence };
+      }
       if (plan.status !== 'ready') {
         if (!plan.question || plan.serviceId !== null || plan.startAt !== null || plan.durationMinutes !== null || plan.candidateStarts.length) throw new Error('Invalid non-ready plan');
       } else {

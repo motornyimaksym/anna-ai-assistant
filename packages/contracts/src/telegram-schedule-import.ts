@@ -7,6 +7,10 @@ export const telegramScheduleSlotSchema = z.object({
   text: z.string().min(1).max(4_000).refine((text) => text.trim().length > 0, 'Slot text must not be blank'),
   createdAt: z.string().datetime(),
 });
+export const calendarAvailabilitySchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('ready'), checkedAt: z.string().datetime(), rangeStart: z.string().datetime(), rangeEnd: z.string().datetime(), busy: z.array(z.object({ start: z.string().datetime(), end: z.string().datetime() })).max(500) }),
+  z.object({ status: z.literal('unavailable'), checkedAt: z.string().datetime() }),
+]);
 export const telegramScheduleSlotsResponseSchema = z.object({
   sourcePeerId: z.string().optional(),
   sourceTopicId: telegramScheduleTopicIdSchema.optional(),
@@ -17,6 +21,7 @@ export const telegramScheduleSlotsResponseSchema = z.object({
   sourceChatTitle: z.string().min(1).max(255).optional(),
   syncedAt: z.string().datetime().optional(),
   slots: z.array(telegramScheduleSlotSchema).max(5),
+  calendarAvailability: calendarAvailabilitySchema.optional(),
 });
 
 export type TelegramScheduleSlot = z.infer<typeof telegramScheduleSlotSchema>;

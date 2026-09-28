@@ -1,8 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { getFirestore } from 'firebase-admin/firestore';
-import { telegramScheduleSlotsResponseSchema, type TelegramScheduleSlot, type TelegramScheduleSlotsResponse } from '@booking/contracts';
-import { z } from 'zod';
+import { calendarAvailabilitySchema, telegramScheduleSlotsResponseSchema, type TelegramScheduleSlot, type TelegramScheduleSlotsResponse } from '@booking/contracts';
 import { FirebaseAdminService } from './firebase-admin.js';
 import type { BusyInterval } from './calendar.js';
 
@@ -14,11 +13,6 @@ export type ScheduleSyncClaim = { allowed: boolean; sourcePeerId?: string; sourc
 export type ManualScheduleSyncClaim = ScheduleSyncClaim & { runId?: string };
 const manualRetryable = new Set<ScheduleSyncStatus>(['account_busy', 'connection_failed', 'timeout']);
 const failureStatuses = new Set<ScheduleSyncStatus>(['source_not_found', 'disconnected', 'account_busy', 'connection_failed', 'timeout']);
-const timestamp = z.string().datetime({ offset: true });
-const calendarAvailabilitySchema = z.discriminatedUnion('status', [
-  z.object({ status: z.literal('ready'), checkedAt: timestamp, rangeStart: timestamp, rangeEnd: timestamp, busy: z.array(z.object({ start: timestamp, end: timestamp })).max(500) }),
-  z.object({ status: z.literal('unavailable'), checkedAt: timestamp }),
-]);
 const syncClaim = (attemptId: string, now: number) => ({
   nextAttemptAt: now + 5 * 60_000,
   lastAttemptAt: new Date(now).toISOString(),
@@ -104,6 +98,7 @@ export class TelegramScheduleImportStore {
 
   async readSnapshot(): Promise<TelegramScheduleSlotsResponse> {
     const data = (await this.ref.get()).data() ?? {};
+    const calendarAvailability = calendarAvailabilitySchema.safeParse(data.calendarAvailability).data;
     let status = data.status ?? (data.syncedAt ? 'success' : 'idle');
     if (status === 'syncing' && typeof data.lastAttemptAt === 'string' && Date.parse(data.lastAttemptAt) + 60_000 < Date.now()) status = 'timeout';
     return telegramScheduleSlotsResponseSchema.parse({
@@ -112,6 +107,7 @@ export class TelegramScheduleImportStore {
       syncedAt: data.syncedAt, lastAttemptAt: data.lastAttemptAt, status,
       ...(typeof data.nextAttemptAt === 'number' ? { nextAttemptAt: new Date(data.nextAttemptAt).toISOString() } : {}),
       slots: Array.isArray(data.slots) ? data.slots : [],
+      ...(calendarAvailability ? { calendarAvailability } : {}),
     });
   }
 

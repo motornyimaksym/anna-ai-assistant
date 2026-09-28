@@ -20,6 +20,18 @@ export function Schedule() {
           <ListItemText primary={slot.text} secondary={`Telegram message · ${formatKyiv(slot.createdAt)} (Europe/Kyiv)`} />
         </ListItem>)}
       </List> : <Alert severity="info">No imported free slots yet. Select the source chat in Bot Settings, then refresh when the cooldown allows.</Alert>}
+      <Typography variant="h6">Calendar busy times</Typography>
+      {!query.data.calendarAvailability ? <Alert severity="info">No Calendar snapshot yet. Refresh the schedule to load it.</Alert>
+        : query.data.calendarAvailability.status === 'unavailable' ? <Alert severity="warning">Calendar was unavailable during the last sync ({formatKyiv(query.data.calendarAvailability.checkedAt)}). Refresh to try again.</Alert>
+          : <Stack spacing={1}>
+            <Typography variant="body2">Checked: {formatKyiv(query.data.calendarAvailability.checkedAt)} · Coverage: {formatKyiv(query.data.calendarAvailability.rangeStart)} – {formatKyiv(query.data.calendarAvailability.rangeEnd)} (Europe/Kyiv)</Typography>
+            <Typography variant="body2" color="text.secondary">Read-only busy periods. Booking availability is checked live.</Typography>
+            {query.data.calendarAvailability.busy.length ? <List aria-label="Calendar busy times" disablePadding>
+              {query.data.calendarAvailability.busy.map((interval, index) => <ListItem key={`${interval.start}-${interval.end}-${index}`} divider disableGutters>
+                <ListItemText primary={`${formatKyiv(interval.start)} – ${formatKyiv(interval.end)} (Europe/Kyiv)`} />
+              </ListItem>)}
+            </List> : <Alert severity="info">No busy periods in the synchronized Calendar range.</Alert>}
+          </Stack>}
     </Stack>}
   </Box>;
 }

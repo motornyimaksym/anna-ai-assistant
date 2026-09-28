@@ -50,6 +50,18 @@ describe('structured booking planner', () => {
     output(result);
     expect(await plan()).toEqual(result);
   });
+  it.each([
+    [{ serviceId: null, durationMinutes: 60 }, 'послугу'],
+    [{ serviceId: 'massage', durationMinutes: null }, 'тривалість'],
+  ])('clarifies missing selection in a ready plan', async (missing, expected) => {
+    const { plan, output } = setup();
+    output({ ...ready(), ...missing });
+    const result = await plan();
+    expect(result.status).toBe('needs_clarification');
+    expect(result.question).toContain(expected);
+    expect(result.startAt).toBeNull();
+    expect(result.candidateStarts).toEqual([]);
+  });
   it('returns unavailable without a provider call when Calendar is unreadable', async () => {
     const { plan, calendar, fetcher, debug } = setup();
     calendar.getBusyIntervals.mockRejectedValue(new Error('Secret provider detail'));

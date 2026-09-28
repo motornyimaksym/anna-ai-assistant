@@ -96,6 +96,8 @@ export const safeErrorCategory = (error: unknown): string => {
   const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
   if (code === 'OPENAI_DECISION_TOKEN_LIMIT') return 'provider output token limit';
   if (code === 'OPENAI_DECISION_INCOMPLETE') return 'provider response incomplete';
+  if (code === 'OPENAI_S2_TOKEN_LIMIT') return 'System Two output token limit';
+  if (code === 'OPENAI_S2_INCOMPLETE') return 'System Two response incomplete';
   const status = error instanceof Error ? /^OpenAI HTTP (\d{3})$/.exec(error.message)?.[1] : undefined;
   if (status) return `provider HTTP ${status}`;
   const typesafeStatus = error instanceof Error ? /^TypeSafe HTTP (\d{3})$/.exec(error.message)?.[1] : undefined;
