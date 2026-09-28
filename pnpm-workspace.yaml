@@ -3,6 +3,7 @@ packages:
   - packages/*
 allowBuilds:
   '@firebase/util': true
+  '@scarf/scarf': false
   bufferutil: false
   es5-ext: false
   esbuild: true
