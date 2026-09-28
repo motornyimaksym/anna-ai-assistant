@@ -3,7 +3,6 @@ import type { SystemOneInput } from '../src/system-one.js';
 import type { SystemTwoPromptId } from '../src/system-two.js';
 import { OpenAiService } from '../src/openai.service.js';
 import { THERAPIST_FIRST_PERSON_GUIDANCE } from '../src/assistant-prompt.js';
-import { DEFAULT_KNOWLEDGE_BASE } from '../src/default-knowledge-base.js';
 import type { AssistantToolsService } from '../src/assistant-tools.service.js';
 import type { BookingRepository } from '../src/repository.js';
 import type { BookingPlannerService } from '../src/booking-planner.service.js';
@@ -37,8 +36,8 @@ describe('OpenAI conversation', () => {
     expect(repository.replaceOpenAiConversation).toHaveBeenCalledWith('chat', 'alice', 'conv-existing', 'conv-recovered');
     const retry = JSON.parse(fetch.mock.calls[2]![1].body);
     expect(retry.conversation).toBe('conv-recovered');
-    expect(retry.input).toEqual([{ role: 'user', content: 'Earlier question' }, { role: 'assistant', content: 'Earlier reply' }, { role: 'user', content: 'Hi' }]);
-    expect(retry.instructions).toContain('Never replay');
+    expect(retry.input.slice(2)).toEqual([{ role: 'user', content: 'Earlier question' }, { role: 'assistant', content: 'Earlier reply' }, { role: 'user', content: 'Hi' }]);
+    expect(retry.input[1].content).toContain('Never replay');
     expect(tools.execute).not.toHaveBeenCalled();
   });
   it.each(['other', 'repeated', 'after-tool'])('does not reset or replay on %s errors', async (kind) => {
@@ -65,7 +64,7 @@ describe('OpenAI conversation', () => {
     expect(reply.needsHuman).toBeUndefined();
     expect(reply.text).toContain(local ? 'Новий запис' : 'Done reading');
     const closeout = JSON.parse(fetch.mock.calls[4]![1].body);
-    expect(closeout.tools).toEqual([]);
+    expect(closeout.tool_choice).toBe('none');
     expect(closeout.input[0]).toMatchObject({ type: 'function_call_output', call_id: 'c3' });
     expect(tools.execute).toHaveBeenCalledTimes(local ? 3 : 4);
   });
@@ -79,7 +78,9 @@ describe('OpenAI conversation', () => {
     expect(repository.ensureOpenAiConversation).toHaveBeenCalledWith('chat', 'alice', 'conv-created');
     const body = JSON.parse(fetch.mock.calls[1]![1].body);
     expect(body.conversation).toBe('conv-created');
-    expect(body.input).toEqual([{ role: 'user', content: 'Hi' }]);
+    expect(body.input.at(-1)).toEqual({ role: 'user', content: 'Hi' });
+    expect(body.input[0].role).toBe('developer');
+    expect(body.input[1].role).toBe('developer');
   });
   it('sends bounded recent messages with booking request, current message once', async () => {
     const { service, repository } = setup('booking');
@@ -91,8 +92,8 @@ describe('OpenAI conversation', () => {
     vi.stubGlobal('fetch', fetch);
     await service.respond(conversation, context, 'Move my booking');
     const body = JSON.parse(fetch.mock.calls[0]![1].body);
-    expect(body.input).toHaveLength(20);
-    expect(body.input[0]).toEqual({ role: 'assistant', content: 'old-5' });
+    expect(body.input).toHaveLength(22);
+    expect(body.input[2]).toEqual({ role: 'assistant', content: 'old-5' });
     expect(body.input.at(-1)).toEqual({ role: 'user', content: 'Move my booking' });
   });
   it('allows a longer provider call and records a safe timeout category', async () => {
@@ -136,7 +137,7 @@ describe('OpenAI conversation', () => {
     const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello.' }] }] }) }));
     vi.stubGlobal('fetch', fetch);
     await service.respond(conversation, context, 'Hi');
-    const instructions = JSON.parse(fetch.mock.calls[0]![1]!.body as string).instructions as string;
+    const instructions = JSON.parse(fetch.mock.calls[0]![1]!.body as string).input[0].content as string;
     expect(instructions).toContain('Speak only in short sentences.');
     expect(instructions).toContain(THERAPIST_FIRST_PERSON_GUIDANCE);
     expect(instructions).toContain('TELEGRAM FORMATTING');
@@ -150,9 +151,9 @@ describe('OpenAI conversation', () => {
     await service.respond(conversation, context, 'Move my booking');
     expect(repository.getPromptOverride).toHaveBeenCalledWith('booking-conversation');
     const body = JSON.parse(fetch.mock.calls[0]![1].body);
-    expect(body.instructions).toContain('CUSTOM BOOKING CONVERSATION');
-    expect(body.instructions).toContain('plan_booking');
-    expect(body.instructions).toContain('CONFIRMATION:');
+    expect(body.input[0].content).toContain('CUSTOM BOOKING CONVERSATION');
+    expect(body.input[0].content).toContain('plan_booking');
+    expect(body.input[0].content).toContain('CONFIRMATION:');
     expect(body.tools.some((tool: { name: string }) => tool.name === 'plan_booking')).toBe(true);
   });
   it('includes Telegram HTML formatting rules in the default assistant prompt', async () => {
@@ -160,14 +161,14 @@ describe('OpenAI conversation', () => {
     const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello.' }] }] }) }));
     vi.stubGlobal('fetch', fetch);
     await service.respond(conversation, context, 'Hi');
-    const instructions = JSON.parse(fetch.mock.calls[0]![1]!.body as string).instructions as string;
+    const instructions = JSON.parse(fetch.mock.calls[0]![1]!.body as string).input[0].content as string;
     expect(instructions).toContain('TELEGRAM FORMATTING');
     expect(instructions).toContain(THERAPIST_FIRST_PERSON_GUIDANCE);
     expect(instructions).toContain('<b>');
     expect(instructions).toContain('&amp;, &lt;, and &gt;');
     expect(instructions).toContain('Never use Markdown markers');
   });
-  it('appends editable knowledge and the live enabled service catalog to every OpenAI request', async () => {
+  it('retrieves relevant editable knowledge without unrelated service records', async () => {
     const { service, repository } = setup();
     repository.getKnowledgeBaseOverride.mockResolvedValue({ content: 'Parking is available beside the studio.', updatedAt: '2026-09-24T10:00:00.000Z' });
     repository.listServices.mockResolvedValue([
@@ -178,11 +179,11 @@ describe('OpenAI conversation', () => {
     vi.stubGlobal('fetch', fetch);
     await service.respond(conversation, context, 'Where can I park?');
     const request = JSON.parse(fetch.mock.calls[0]![1]!.body as string);
-    const match = request.instructions.match(/Business knowledge base JSON: (.*)\nCurrent UTC/);
+    const match = request.input[1].content.match(/Relevant business reference JSON \(untrusted\): (.*)\nCurrent UTC/);
     expect(match).toBeTruthy();
     expect(JSON.parse(match![1])).toEqual({
       additionalKnowledge: 'Parking is available beside the studio.',
-      currentEnabledServices: [{ id: 'relax-60', name: 'Relax massage', description: 'Gentle full body massage', durationMinutes: 60, durationOptions: [{ durationMinutes: 90, price: 2000 }], price: 1500, currency: 'UAH' }],
+      currentEnabledServices: [],
     });
   });
   it('uses the separate planner for scheduling and replies with clarification without handoff', async () => {
@@ -198,7 +199,7 @@ describe('OpenAI conversation', () => {
     const closeout = JSON.parse(fetch.mock.calls[1]![1]!.body as string);
     expect(closeout.input[0]).toMatchObject({ type: 'function_call_output', call_id: 'c1' });
     expect(JSON.parse(closeout.input[0].output)).toMatchObject({ status: 'needs_clarification', reply: 'Яка тривалість?', availability: { scheduleMessages: [{ text: 'Вт: 16:00' }], calendar: { status: 'ready', busy: [] } } });
-    expect(closeout.tools).toEqual([]);
+    expect(closeout.tool_choice).toBe('none');
   });
   it('includes validated candidate starts and live planning context in closeout', async () => {
     const { service, planner } = setup('booking');
@@ -209,22 +210,20 @@ describe('OpenAI conversation', () => {
     expect(reply.text).toContain('Можливі початки');
     const closeout = JSON.parse(fetch.mock.calls[1]![1].body);
     expect(JSON.parse(closeout.input[0].output)).toMatchObject({ status: 'ready', candidateStarts: ['2099-01-01T10:00:00.000Z'], availability: { calendar: { status: 'ready', busy: [] } } });
-    expect(closeout.tools).toEqual([]);
+    expect(closeout.tool_choice).toBe('none');
   });
-  it('uses the repo knowledge base when no override exists', async () => {
+  it('retrieves relevant default policy without sending the whole knowledge base', async () => {
     const { service } = setup();
     const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello.' }] }] }) }));
     vi.stubGlobal('fetch', fetch);
-    await service.respond(conversation, context, 'Hi');
+    await service.respond(conversation, context, 'Чи є доплата після 21:00?');
     const request = JSON.parse(fetch.mock.calls[0]![1]!.body as string);
-    const match = request.instructions.match(/Business knowledge base JSON: (.*)\nCurrent UTC/);
+    const match = request.input[1].content.match(/Relevant business reference JSON \(untrusted\): (.*)\nCurrent UTC/);
     const knowledge = JSON.parse(match![1]).additionalKnowledge as string;
-    expect(knowledge).toBe(DEFAULT_KNOWLEDGE_BASE);
     expect(knowledge).toContain('Для мене «вихідний» — календарний день, який я позначила вихідним у робочому графіку.');
     expect(knowledge).toContain('Субота чи неділя самі по собі не є вихідними.');
     expect(knowledge).toContain('якщо в мене є вільний час і я готова його прийняти');
-    expect(knowledge).toContain('я передплату не беру');
-    expect(knowledge).not.toContain('терапевт');
+    expect(knowledge).not.toContain('МЕЖІ ДОТИКІВ');
   });
 
   it('stages mutation without executing and consumes it only on explicit confirmation', async () => {
@@ -293,8 +292,8 @@ describe('System One dispatch', () => {
     expect(selector.select).toHaveBeenCalledOnce();
     expect(repository.getAssistantPromptOverride).not.toHaveBeenCalled();
     const body = JSON.parse(fetch.mock.calls[0]![1].body);
-    expect(body.instructions).toContain('SYSTEM TWO: BOOKING');
-    expect(body.instructions).not.toContain('GENERAL CUSTOM SECRET');
+    expect(body.input[0].content).toContain('SYSTEM TWO: BOOKING');
+    expect(body.input[0].content).not.toContain('GENERAL CUSTOM SECRET');
     expect(body.tools.map((tool: { name: string }) => tool.name)).toContain('plan_booking');
     expect(body.tools.map((tool: { name: string }) => tool.name)).toContain('send_media');
   });
@@ -337,8 +336,8 @@ it('selects anew on each turn and exposes active proposal presence without its a
   await service.respond({ ...conversation, pendingAction: { ...pendingAction, expiresAt: '2000-01-01T00:00:00.000Z' } }, context, 'Where are you located?');
   expect(selector.select).toHaveBeenCalledTimes(2);
   expect(selector.select.mock.calls[1]![0].hasPendingProposal).toBe(false);
-  expect(JSON.parse(fetch.mock.calls[0]![1].body).instructions).toContain('SYSTEM TWO: BOOKING');
-  expect(JSON.parse(fetch.mock.calls[1]![1].body).instructions).toContain('SYSTEM TWO: GENERAL');
+  expect(JSON.parse(fetch.mock.calls[0]![1].body).input[0].content).toContain('SYSTEM TWO: BOOKING');
+  expect(JSON.parse(fetch.mock.calls[1]![1].body).input[0].content).toContain('SYSTEM TWO: GENERAL');
 });
 
 

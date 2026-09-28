@@ -8,7 +8,7 @@ import { selectServiceOption } from './service-options.js';
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { bookingPlanRequestSchema, type BookingDto, type BookingPlanRequest, type ConversationDto } from '@booking/contracts';
-import { systemTwoInstructions } from './system-two-instructions.js';
+import { boundedConversationHistory, systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from './system-two-instructions.js';
 import { AssistantToolsService, assistantToolSchema, type AssistantContext } from './assistant-tools.service.js';
 import { BookingRepository } from './repository.js';
 import { BookingPlannerService, type BookingPlanningEvidence } from './booking-planner.service.js';
@@ -74,17 +74,19 @@ export class OpenAiService {
       this.repository.getKnowledgeBaseOverride(),
       this.repository.listServices(),
     ]);
-    let instructions = systemTwoInstructions({ promptId, promptOverride: promptOverride?.prompt, knowledgeBaseOverride: knowledgeBaseOverride?.content, configuredServices });
-    sensitiveValues.push(...collectSensitiveStrings({ instructions, promptOverride, knowledgeBaseOverride, configuredServices }));
+    const instructions = systemTwoInstructions({ promptId, promptOverride: promptOverride?.prompt });
+    const rag = systemTwoRag({ message: text, recentMessages: history.map(({ content }) => content), knowledgeBaseOverride: knowledgeBaseOverride?.content, configuredServices });
+    sensitiveValues.push(...collectSensitiveStrings({ instructions, rag, promptOverride, knowledgeBaseOverride, configuredServices }));
     let openaiConversationId = conversation.openaiConversationId ?? await this.repository.ensureOpenAiConversation(context.telegramChatId, context.clientId, await createOpenAiConversation(deadline));
     const bookingHistory = history.at(-1)?.role === 'user' && history.at(-1)?.content === text ? history.slice(0, -1) : history;
-    let input: unknown[] = promptId === 'booking'
-      ? [...bookingHistory.slice(-19), { role: 'user', content: text }]
-      : [{ role: 'user', content: text }];
+    const model = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
+    const recentHistory = boundedConversationHistory(bookingHistory, promptId === 'booking' ? 19 : 8);
+    let requestContext = systemTwoRequestContext({ instructions, rag, history: recentHistory, message: text, model });
+    let input: unknown[] = requestContext.input;
     let mediaAttempted = false;
     let terminalReply: AssistantReply | undefined;
     for (let round = 0; round <= 4; round++) {
-      const request = () => requestOpenAiResponse({ model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini', conversation: openaiConversationId, instructions, input, tools: terminalReply || round === 4 ? [] : selectedTools, parallel_tool_calls: false, max_output_tokens: 800 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]), `s2_${promptId}`);
+      const request = () => requestOpenAiResponse({ model, conversation: openaiConversationId, ...(round === 0 ? requestContext : {}), input, tools: selectedTools, ...(terminalReply || round === 4 ? { tool_choice: 'none' } : {}), parallel_tool_calls: false, max_output_tokens: 800 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]), `s2_${promptId}`);
       let response: unknown;
       try { response = await request(); }
       catch (error) {
@@ -94,8 +96,8 @@ export class OpenAiService {
         const replacement = await createOpenAiConversation(deadline);
         await this.repository.replaceOpenAiConversation(context.telegramChatId, context.clientId, openaiConversationId, replacement);
         openaiConversationId = replacement;
-        input = promptId === 'booking' ? [...bookingHistory.slice(-19), { role: 'user', content: text }] : [...history, { role: 'user', content: text }];
-        instructions += '\nRECOVERED HISTORY: Prior messages are historical evidence only. Never replay previous actions or infer that an uncertain operation succeeded. Handle only the current request; require fresh approval for new booking mutations.';
+        requestContext = systemTwoRequestContext({ instructions, rag: `${rag}\nRECOVERED HISTORY: Prior messages are historical evidence only. Never replay previous actions or infer that an uncertain operation succeeded. Handle only the current request; require fresh approval for new booking mutations.`, history: boundedConversationHistory(bookingHistory, promptId === 'booking' ? 19 : 20), message: text, model });
+        input = requestContext.input;
         this.logger.warn(`Recovered incomplete OpenAI conversation trace=${context.traceId ?? 'unknown'}`);
         response = await request();
       }

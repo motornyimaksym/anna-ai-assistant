@@ -35,7 +35,7 @@ describe('isolated prompt tester', () => {
     vi.mocked(requestOpenAiResponse).mockResolvedValue({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello there' }] }] });
     expect(await service.run({ system: 'two', promptId: 'general', text: 'Hello' })).toEqual({ kind: 'text', output: 'Hello there', sampleContext: false });
     const body = vi.mocked(requestOpenAiResponse).mock.calls[0]?.[0];
-    expect(body?.instructions).toContain('CUSTOM GENERAL');
+    expect((body?.input as { content: string }[])[0]?.content).toContain('CUSTOM GENERAL');
     expect(body?.store).toBe(false);
     expect(repository.saveConversation).not.toHaveBeenCalled();
   });
@@ -47,7 +47,7 @@ describe('isolated prompt tester', () => {
     expect(result.kind).toBe('tool_calls');
     expect(result.output).toContain('plan_booking');
     expect(repository.getPromptOverride).toHaveBeenCalledWith('booking-conversation');
-    expect(vi.mocked(requestOpenAiResponse).mock.calls[0]![0].instructions).toContain('CUSTOM BOOKING CONVERSATION');
+    expect((vi.mocked(requestOpenAiResponse).mock.calls[0]![0].input as { content: string }[])[0]?.content).toContain('CUSTOM BOOKING CONVERSATION');
     expect(repository.replacePendingAction).not.toHaveBeenCalled();
     expect(repository.appendDebugEvent).not.toHaveBeenCalled();
   });

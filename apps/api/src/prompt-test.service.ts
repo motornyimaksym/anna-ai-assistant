@@ -10,7 +10,7 @@ import { requestOpenAiResponse } from './openai-transport.js';
 import { BookingRepository } from './repository.js';
 import { SystemOneSelector, systemOneBooleanSchema, systemOneProbabilitySchema } from './system-one.js';
 import { SYSTEM_TWO_PROMPTS, systemTwoPromptIdSchema } from './system-two.js';
-import { systemTwoInstructions } from './system-two-instructions.js';
+import { systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from './system-two-instructions.js';
 import { TextUtils } from './text-utils.js';
 
 const responseSchema = z.object({
@@ -65,9 +65,12 @@ export class PromptTestService {
       promptId === 'general' ? this.repository.getAssistantPromptOverride() : this.repository.getPromptOverride('booking-conversation'),
       this.repository.getKnowledgeBaseOverride(), this.repository.listServices(),
     ]);
-    const instructions = systemTwoInstructions({ promptId, promptOverride: override?.prompt, knowledgeBaseOverride: knowledge?.content, configuredServices: services });
+    const instructions = systemTwoInstructions({ promptId, promptOverride: override?.prompt });
+    const rag = systemTwoRag({ message: request.text, knowledgeBaseOverride: knowledge?.content, configuredServices: services });
+    const model = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
+    const requestContext = systemTwoRequestContext({ instructions, rag, history: [], message: request.text, model });
     const selectedTools = assistantToolDefinitions.filter((item) => SYSTEM_TWO_PROMPTS[promptId].tools.includes(item.name));
-    const response = responseSchema.parse(await requestOpenAiResponse({ store: false, instructions, input: [{ role: 'user', content: request.text }], tools: selectedTools, parallel_tool_calls: false, max_output_tokens: 800 }, AbortSignal.timeout(30_000)));
+    const response = responseSchema.parse(await requestOpenAiResponse({ store: false, model, ...requestContext, tools: selectedTools, parallel_tool_calls: false, max_output_tokens: 800 }, AbortSignal.timeout(30_000)));
     const calls = response.output.filter((item) => item.type === 'function_call');
     if (calls.some(({ name }) => !selectedTools.some((tool) => tool.name === name))) throw new Error('Unsupported tool');
     if (calls.length) return { kind: 'tool_calls', output: TextUtils.replaceLongDashes(JSON.stringify(calls.map(({ name, arguments: args }) => ({ name, arguments: args ? JSON.parse(args) : {} })), null, 2)), sampleContext: false };
