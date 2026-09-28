@@ -310,6 +310,8 @@ POST /telegram/webhook
 - `edited_business_message`
 - `deleted_business_messages`
 
+On `deleted_business_messages`, authenticate and claim the update, then clear the affected chat's stored conversation messages, pending action, and `openaiConversationId`. Do not call System One, System Two, schedule import, or Telegram send methods for this update. This resets assistant context even for legacy messages without Telegram message IDs and prevents approval of a proposal no longer visible in chat; booking records and human-assistance cases remain unchanged. The next eligible message starts a fresh OpenAI conversation. A deletion received after an already-started model request cannot retract that request or erase provider-side records; normal application processing of later turns must not reuse the old context.
+
 Для відповідей від імені business account використовувати:
 
 ```text

@@ -13,7 +13,7 @@ import { HumanAssistanceService } from './human-assistance.service.js';
 import { TelegramScheduleImportService } from './telegram-schedule-import.service.js';
 import { fetchWithLinearBackoff } from '@booking/http';
 const messageSchema = z.object({ message_id: z.number().int(), chat: z.object({ id: z.union([z.string(), z.number()]), type: z.string().optional() }), from: z.object({ id: z.union([z.string(), z.number()]), username: z.string().optional(), is_bot: z.boolean().optional() }).optional(), text: z.string().optional(), business_connection_id: z.string().optional() });
-const updateSchema = z.object({ update_id: z.number().int(), business_message: messageSchema.optional(), message: messageSchema.optional() });
+const updateSchema = z.object({ update_id: z.number().int(), business_message: messageSchema.optional(), message: messageSchema.optional(), deleted_business_messages: z.object({ business_connection_id: z.string().min(1), chat: z.object({ id: z.union([z.string(), z.number()]) }), message_ids: z.array(z.number().int()).min(1) }).optional() });
 const escapeHtml = (value: string) => value.replace(/&(?!(?:amp|lt|gt|quot|#39|#\d+|#x[\da-f]+);)/gi, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 export const formatTelegramHtml = (value: string): string => {
   const markdown = value.replace(/\*\*([^*\n]+)\*\*|__([^_\n]+)__/g, (_match, a: string | undefined, b: string | undefined) => `<b>${a ?? b}</b>`).replace(/\*\*|__/g, '').replace(/[—–]/g, '-');
@@ -39,6 +39,11 @@ export class TelegramService {
   async handle(secret: string | undefined, body: unknown): Promise<void> {
     if (!process.env.TELEGRAM_WEBHOOK_SECRET || secret !== process.env.TELEGRAM_WEBHOOK_SECRET) throw new UnauthorizedException('Invalid webhook secret');
     const update = updateSchema.parse(body);
+    if (update.deleted_business_messages) {
+      if (!await this.repository.claimTelegramUpdate(update.update_id)) return;
+      await this.repository.resetDeletedBusinessChat(String(update.deleted_business_messages.chat.id), update.deleted_business_messages.business_connection_id);
+      return;
+    }
     if (!update.business_message && !update.message) return;
     const scheduleRefresh = this.scheduleImport.syncIfDue().catch(() => { this.logger.warn('Telegram schedule import failed; incoming message processing continues'); });
     await scheduleRefresh;

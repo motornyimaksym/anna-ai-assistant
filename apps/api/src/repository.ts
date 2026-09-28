@@ -295,6 +295,25 @@ export class BookingRepository {
   async appendMessage(chatId: string, role: 'user' | 'assistant' | 'human', text: string): Promise<void> {
     await this.db.collection('conversations').doc(chatId).collection('messages').add({ role, text, createdAt: new Date().toISOString() });
   }
+  async resetDeletedBusinessChat(chatId: string, businessConnectionId: string): Promise<boolean> {
+    const conversationRef = this.db.collection('conversations').doc(chatId);
+    const matches = await this.db.runTransaction(async (tx) => {
+      const conversation = await tx.get(conversationRef);
+      if (!conversation.exists || conversation.data()?.businessConnectionId !== businessConnectionId) return false;
+      tx.update(conversationRef, { openaiConversationId: FieldValue.delete(), pendingAction: FieldValue.delete() });
+      return true;
+    });
+    if (!matches) return false;
+    const messages = conversationRef.collection('messages');
+    while (true) {
+      const page = await messages.limit(400).get();
+      if (page.empty) break;
+      const batch = this.db.batch();
+      for (const message of page.docs) batch.delete(message.ref);
+      await batch.commit();
+    }
+    return true;
+  }
   async getKnowledgeBaseOverride(): Promise<{ content: string; updatedAt: string } | undefined> {
     const doc = await this.db.collection('assistantSettings').doc('knowledgeBase').get();
     if (!doc.exists) return undefined;

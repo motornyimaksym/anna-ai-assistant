@@ -164,4 +164,21 @@ describe.skipIf(!withEmulator)('Firestore booking transactions', () => {
     expect((await repository.getConversation('history-test'))?.pendingAction).toBeUndefined();
   });
 
+  it('clears deleted business chat context and pending action', async () => {
+    const { repository } = await setup();
+    const now = new Date().toISOString();
+    const chatId = 'deleted-history-test';
+    await repository.saveConversation({ telegramChatId: chatId, clientId: 'test', businessConnectionId: 'connection-1', openaiConversationId: 'conv-old', assistantEnabled: true, state: 'active', summary: '', pendingAction: { name: 'cancel_booking', arguments: { bookingId: 'test-booking' }, expiresAt: now }, createdAt: now, updatedAt: now });
+    await repository.appendMessage(chatId, 'user', 'Deleted client text');
+    await repository.appendMessage(chatId, 'assistant', 'Old assistant text');
+
+    expect(await repository.resetDeletedBusinessChat(chatId, 'other-connection')).toBe(false);
+    expect(await repository.listMessages(chatId)).toHaveLength(2);
+    expect(await repository.resetDeletedBusinessChat(chatId, 'connection-1')).toBe(true);
+    expect(await repository.listMessages(chatId)).toEqual([]);
+    expect(await repository.getConversation(chatId)).toMatchObject({ assistantEnabled: true });
+    expect((await repository.getConversation(chatId))?.pendingAction).toBeUndefined();
+    expect((await repository.getConversation(chatId))?.openaiConversationId).toBeUndefined();
+  });
+
 });

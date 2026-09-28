@@ -19,6 +19,7 @@ const setup = (settings = { maxReadDelayMs: 0, typingDelayPerSymbolMs: 600, upda
   const order: string[] = [];
   const repository = {
     appendMessage: vi.fn(),
+    resetDeletedBusinessChat: vi.fn(async () => true),
     claimTelegramUpdate: vi.fn(async () => true),
     getConversation: vi.fn(async () => undefined),
     getBotSettingsOverride: vi.fn(async () => settings),
@@ -41,6 +42,23 @@ afterEach(() => {
 });
 
 describe('Telegram private test restriction', () => {
+  it('clears context for deleted business messages without invoking the assistant', async () => {
+    vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+    const { service, repository, assistant, scheduleImport, send } = setup();
+    const deleted = { update_id: 701, deleted_business_messages: { business_connection_id: 'connection-1', chat: { id: 123 }, message_ids: [9] } };
+
+    await service.handle('webhook-secret', deleted);
+    expect(repository.claimTelegramUpdate).toHaveBeenCalledWith(701);
+    expect(repository.resetDeletedBusinessChat).toHaveBeenCalledWith('123', 'connection-1');
+    expect(scheduleImport.syncIfDue).not.toHaveBeenCalled();
+    expect(assistant.respond).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+
+    repository.claimTelegramUpdate.mockResolvedValueOnce(false);
+    await service.handle('webhook-secret', deleted);
+    expect(repository.resetDeletedBusinessChat).toHaveBeenCalledTimes(1);
+  });
+
   it('checks for schedule refresh on each incoming message and tolerates refresh failure', async () => {
     vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
     vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
