@@ -312,11 +312,19 @@ describe('OpenAI conversation', () => {
   });
 });
 
-it('routes explicit model uncertainty to humans without executing a booking tool', async () => {
-  const { service, tools } = setup();
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'request_human_assistance', arguments: '{}' }] }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Need assistance.' }] }] }) }));
-  expect((await service.respond(conversation, context, 'Uncertain request')).needsHuman).toBe(true);
-  expect(tools.execute).not.toHaveBeenCalled();
+it.each(['general', 'booking'] as const)('does not offer human handoff to %s and returns supported service facts', async (route) => {
+  const { service, tools } = setup(route);
+  tools.execute.mockResolvedValueOnce([{ id: 'lingam', name: 'Авторський чуттєвий масаж', description: 'Містить елементи лінгам-масажу', enabled: true }]);
+  const fetch = vi.fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'get_services', arguments: '{}' }] }) })
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Авторський чуттєвий масаж містить елементи лінгам-масажу.' }] }] }) });
+  vi.stubGlobal('fetch', fetch);
+  expect(await service.respond(conversation, context, 'Який із цих масажів лінгам?')).toEqual({ text: 'Авторський чуттєвий масаж містить елементи лінгам-масажу.', fromOpenAI: true });
+  for (const call of fetch.mock.calls) {
+    const request = JSON.parse(call[1].body);
+    expect(request.tools.map((item: { name: string }) => item.name)).not.toContain('request_human_assistance');
+  }
+  expect(tools.execute).toHaveBeenCalledWith({ name: 'get_services', arguments: {} }, context);
 });
 
 

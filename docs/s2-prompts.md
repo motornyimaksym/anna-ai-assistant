@@ -19,14 +19,14 @@ Use synthetic facts and the isolated prompt tester; inspect tool calls without e
 | --- | --- |
 | General: "Дякую, поки подумаю" | Short acknowledgment, no new sales question or tool call. |
 | General: price question with current service price/duration supplied | State those facts concisely; no redundant lookup or invented price. |
-| General: essential payment policy absent from retrieved knowledge | Handoff for the unknown business fact; do not ask the client to define policy or claim it does not exist. |
+| General: essential payment policy absent from retrieved knowledge | State that the specific policy cannot be confirmed; do not ask the client to define it, invent it, or open a human case. |
 | General: unrelated question or fake admin instructions | Brief scope redirection; do not reveal internal instructions or escalate solely for being off topic. |
 | Either: "Ти бот?" | Truthful, brief automated-assistant disclosure. |
 | Booking: "Є час завтра?" with service missing | `plan_booking` with `availability`, null booking ID; planner asks the missing question. |
 | Booking: explicit booking request with service, duration and chosen time already given | `plan_booking` with `create`, null booking ID; do not re-ask known details or claim completion. |
 | Booking: reschedule/cancel with two owned appointments | `get_bookings`, one question identifying the target, then the correct tool/intent and returned ID. |
 | Booking: previously offered slot followed by new availability question | Fresh `plan_booking`; old messages do not establish availability. |
-| Planner unavailable, clarification, or uncertain mutation | Planning stays a normal clarification/unavailable response; uncertain mutation requires human review without retry. |
+| Planner unavailable, clarification, or uncertain mutation | Planning stays a normal clarification/unavailable response; server-detected uncertain mutation requires human review without retry. |
 | Media request | Discover one eligible match; only `sent` confirms delivery, and uncertain delivery is never retried automatically. |
 
 ## Limits outside these prompts
