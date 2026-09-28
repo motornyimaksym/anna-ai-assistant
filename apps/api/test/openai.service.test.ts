@@ -24,6 +24,11 @@ const setup = (promptId: SystemTwoPromptId = 'general') => {
 };
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 describe('OpenAI conversation', () => {
+  it('accepts a completed response with null incomplete details', async () => {
+    const { service } = setup('booking');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: 'completed', incomplete_details: null, output: [{ type: 'message', content: [{ type: 'output_text', text: 'Яку послугу бажаєте?' }] }] }) }));
+    expect(await service.respond(conversation, context, 'Хочу записатися')).toEqual({ text: 'Яку послугу бажаєте?', fromOpenAI: true });
+  });
   it('reserves reasoning headroom and safely rejects incomplete Booking output', async () => {
     const { service, tools, repository } = setup('booking');
     vi.stubEnv('OPENAI_MODEL', 'gpt-6-luna');
