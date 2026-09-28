@@ -8,8 +8,8 @@ export const telegramScheduleSlotSchema = z.object({
   createdAt: z.string().datetime(),
 });
 export const calendarAvailabilitySchema = z.discriminatedUnion('status', [
-  z.object({ status: z.literal('ready'), checkedAt: z.string().datetime(), rangeStart: z.string().datetime(), rangeEnd: z.string().datetime(), busy: z.array(z.object({ start: z.string().datetime(), end: z.string().datetime() })).max(500) }),
-  z.object({ status: z.literal('unavailable'), checkedAt: z.string().datetime() }),
+  z.object({ status: z.literal('ready'), checkedAt: z.string().datetime({ offset: true }), rangeStart: z.string().datetime({ offset: true }), rangeEnd: z.string().datetime({ offset: true }), busy: z.array(z.object({ start: z.string().datetime({ offset: true }), end: z.string().datetime({ offset: true }) })).max(500) }),
+  z.object({ status: z.literal('unavailable'), checkedAt: z.string().datetime({ offset: true }) }),
 ]);
 export const telegramScheduleSlotsResponseSchema = z.object({
   sourcePeerId: z.string().optional(),

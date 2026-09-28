@@ -47,7 +47,7 @@ describe('Telegram schedule import storage', () => {
   it('exposes validated Calendar busy times to admins and clears them when the source changes', async () => {
     const { store, get } = fixture();
     const claim = await store.claimSync(1_000);
-    const calendarAvailability = { status: 'ready' as const, checkedAt: '2026-09-25T10:00:00.000Z', rangeStart: '2026-09-25T10:00:00.000Z', rangeEnd: '2026-10-25T10:00:00.000Z', busy: [{ start: '2026-09-26T10:00:00.000Z', end: '2026-09-26T11:00:00.000Z' }] };
+    const calendarAvailability = { status: 'ready' as const, checkedAt: '2026-09-25T10:00:00.000Z', rangeStart: '2026-09-25T10:00:00.000Z', rangeEnd: '2026-10-25T10:00:00.000Z', busy: [{ start: '2026-09-26T13:00:00+03:00', end: '2026-09-26T14:00:00+03:00' }] };
     await store.complete(claim.attemptId!, 'success', { sourcePeerId: '42', sourceChatTitle: 'Chat', syncedAt: '2026-09-25T10:00:00.000Z', slots: [], calendarAvailability });
     expect(get()?.calendarAvailability).toEqual(calendarAvailability);
     expect(await store.readCalendarAvailability()).toEqual(calendarAvailability);

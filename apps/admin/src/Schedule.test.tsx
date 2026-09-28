@@ -29,6 +29,18 @@ describe('imported schedule slots', () => {
     expect(await screen.findByText(/No imported free slots yet/)).toBeTruthy();
   });
 
+  it('explains when a Calendar refresh is still on cooldown', async () => {
+    vi.mocked(adminApi.telegramScheduleSlots).mockResolvedValue({ slots: [], status: 'idle', nextAttemptAt: '2099-09-25T10:00:00.000Z' });
+    show();
+    expect(await screen.findByText(/Refresh did not start a new import/)).toBeTruthy();
+  });
+
+  it('points to the sync diagnostic after a failed import', async () => {
+    vi.mocked(adminApi.telegramScheduleSlots).mockResolvedValue({ slots: [], status: 'connection_failed' });
+    show();
+    expect(await screen.findByText(/Calendar snapshot needs a successful sync/)).toBeTruthy();
+  });
+
   it('shows Calendar busy intervals captured by synchronization', async () => {
     vi.mocked(adminApi.telegramScheduleSlots).mockResolvedValue({
       slots: [], calendarAvailability: {
