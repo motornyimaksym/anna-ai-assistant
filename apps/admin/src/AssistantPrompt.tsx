@@ -42,7 +42,7 @@ export const AssistantPrompt = () => {
   const oneEntries = catalog.data?.systemOne ?? [];
   const twoEntries = catalog.data?.systemTwo ?? [];
   return <Stack spacing={2}>
-    <Typography variant="body2">System Two writes all replies and handles booking dialogue. System One assesses human handoff for knowledge gaps, bot-like wording, or booking confirmation. Humans finalize appointments.</Typography>
+    <Typography variant="body2">System Two writes replies and can book a confirmed appointment in Calendar. System One checks whether the proposed reply sounds automated.</Typography>
     <Tabs value={system} onChange={(_, value: 'one' | 'two') => setSystem(value)} aria-label="Prompt systems">
       <Tab value="one" label="System One" id="system-one-tab" aria-controls="system-one-panel" />
       <Tab value="two" label="System Two" id="system-two-tab" aria-controls="system-two-panel" />

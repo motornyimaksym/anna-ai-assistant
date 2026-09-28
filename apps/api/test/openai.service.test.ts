@@ -147,6 +147,16 @@ it('lets the model write availability and confirmation wording after reading evi
   expect(fetcher).toHaveBeenCalledTimes(2);
 });
 
+it('passes the current client message to confirmed Calendar creation', async () => {
+  const { service, tools } = setup();
+  tools.execute.mockResolvedValueOnce({ status: 'created', booking: { id: 'booking-1' } });
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'create_booking', arguments: '{}', call_id: 'create-1' }] }) })
+    .mockResolvedValueOnce(answer('Запис підтверджено.')));
+  expect(await service.respond(conversation, context, 'Так, підтверджую')).toEqual({ text: 'Запис підтверджено.', fromOpenAI: true });
+  expect(tools.execute).toHaveBeenCalledWith({ name: 'create_booking', arguments: {} }, { ...context, currentMessage: 'Так, підтверджую' });
+});
+
 it('ignores legacy pending actions even on explicit approval', async () => {
   const { service, tools, repository } = setup();
   const fetcher = vi.fn().mockResolvedValue(answer('Дякую.'));
@@ -158,12 +168,12 @@ it('ignores legacy pending actions even on explicit approval', async () => {
   expect(repository.replacePendingAction).not.toHaveBeenCalled();
 });
 
-it.each(['create_booking', 'cancel_booking', 'reschedule_booking', 'plan_booking'])('rejects removed tool %s without executing it', async (name) => {
+it.each(['cancel_booking', 'reschedule_booking', 'plan_booking'])('rejects removed tool %s without executing it', async (name) => {
   const { service, tools } = setup();
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name, arguments: '{}', call_id: 'bad' }] }) }));
   expect(await service.respond(conversation, context, 'Запиши мене')).toMatchObject({ needsHuman: true, text: '' });
   expect(tools.execute).not.toHaveBeenCalled();
-  expect(assistantToolDefinitions.map(({ name }) => name)).toEqual(['get_media', 'send_media', 'get_services', 'get_bookings', 'get_booking_context']);
+  expect(assistantToolDefinitions.map(({ name }) => name)).toEqual(['get_media', 'send_media', 'get_services', 'get_bookings', 'get_booking_context', 'prepare_booking', 'create_booking']);
 });
 
 it.each(['', 'x'.repeat(4001)])('fails closed on empty/oversized output without local messages', async (text) => {
@@ -183,7 +193,7 @@ it('uses the unified override for every turn and keeps full knowledge and catalo
   expect(repository.getPromptOverride).toHaveBeenCalledWith('assistant');
   const body = JSON.parse(fetcher.mock.calls[0]![1].body);
   expect(JSON.stringify(body.input[0])).toContain('Unified custom style');
-  expect(JSON.stringify(body.input[0])).toContain('human finalizes');
+  expect(JSON.stringify(body.input[0])).toContain('create_booking');
   expect(body.input[1].content).toContain('Unrelated policy still retained');
   expect(body.input[1].content).toContain('bufferMinutes');
 });

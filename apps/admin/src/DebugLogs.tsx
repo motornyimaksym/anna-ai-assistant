@@ -103,7 +103,7 @@ const PromptTest = () => {
         {(system === 'one' ? onePrompts : twoPrompts).map(({ value, label }) => <MenuItem key={value} value={value}>{label}</MenuItem>)}
       </TextField>
     </Stack>
-    {system === 'one' && <Alert severity="info">Uses a synthetic delivered proposal (60-minute massage tomorrow at 10:00), your example as the client reply, and a sample unsent draft. Confirmation must return 1 (100%).</Alert>}
+    {system === 'one' && <Alert severity="info">Uses a sample recent reply, your example as the client message, and an unsent draft. The score measures whether the draft sounds automated; copied text alone is not proof.</Alert>}
     <TextField label="Example text" value={example} onChange={(event) => { setExample(event.target.value); test.reset(); }} multiline minRows={4} fullWidth disabled={test.isPending} inputProps={{ maxLength: 4_000 }} helperText={`${example.length.toLocaleString()} / 4,000 characters`} />
     <Button variant="contained" onClick={run} disabled={!example.trim() || test.isPending} sx={{ alignSelf: 'flex-start' }}>{test.isPending ? 'Running…' : 'Run test'}</Button>
     {test.isError && <Alert severity="error">{test.error instanceof Error ? test.error.message : 'Prompt test failed.'}</Alert>}

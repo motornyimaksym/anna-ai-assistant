@@ -20,10 +20,10 @@ describe('isolated prompt tester', () => {
   it('protects the route with admin and designated debug owner guards', () => {
     expect(Reflect.getMetadata('__guards__', PromptTestController)).toEqual([AdminGuard, AdminDebugGuard]);
   });
-  it('tests handoff against synthetic delivered history and current knowledge', async () => {
+  it('tests handoff against synthetic delivered history and draft', async () => {
     const { service, selector } = setup();
     expect(await service.run({ system: 'one', promptId: 'handoff', text: 'Так' })).toEqual({ kind: 'decision', output: '0.75', sampleContext: true });
-    expect(selector.estimateProbability).toHaveBeenCalledWith({ question: expect.stringContaining('exactly 1'), context: expect.stringContaining('Sample proposal') }, expect.any(AbortSignal));
+    expect(selector.estimateProbability).toHaveBeenCalledWith({ question: expect.stringContaining('Cop'), context: expect.stringContaining('recent_messages') }, expect.any(AbortSignal));
   });
   it('uses current General override and returns model text', async () => {
     const { service, repository } = setup();

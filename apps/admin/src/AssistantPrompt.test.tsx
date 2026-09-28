@@ -20,7 +20,7 @@ describe('admin assistant prompt page', () => {
     openSystemTwo();
     const editor = await screen.findByRole('textbox', { name: 'Assistant instructions' });
     expect((editor as HTMLTextAreaElement).value).toBe('assistant default');
-    expect(screen.getByText(/System Two writes all replies/)).toBeTruthy();
+    expect(screen.getByText(/System Two writes replies and can book a confirmed appointment/)).toBeTruthy();
     expect(screen.getAllByText(/Changes apply to the next request/).length).toBeGreaterThan(0);
     fireEvent.change(editor, { target: { value: 'Use short replies.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save Assistant prompt' }));

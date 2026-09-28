@@ -124,7 +124,7 @@ describe('System One output budget', () => {
   });
 });
 
-it('uses merged editable Handoff instructions with mandatory exact-100% confirmation rule', async () => {
+it('uses merged editable Handoff instructions with mandatory bot-like assessment', async () => {
   vi.stubEnv('OPENAI_API_KEY', 'test');
   repository.getPromptOverride.mockResolvedValueOnce({ prompt: 'Custom handoff guidance', updatedAt: new Date().toISOString() });
   const fetcher = vi.fn().mockResolvedValue(response('{"probability":1}'));
@@ -133,9 +133,8 @@ it('uses merged editable Handoff instructions with mandatory exact-100% confirma
   expect(repository.getPromptOverride).toHaveBeenCalledWith('handoff');
   const body = JSON.parse(fetcher.mock.calls[0]![1].body);
   expect(body.instructions).toContain('Custom handoff guidance');
-  expect(body.instructions).toContain('exactly 1 (100%)');
-  expect(body.instructions).toContain('knowledge base');
-  expect(body.instructions).toContain('automated bot response');
+  expect(body.instructions).toContain('look like a bot response');
+  expect(body.instructions).toContain('copy-paste');
   expect(body.store).toBe(false);
   expect(body.tools).toBeUndefined();
 });

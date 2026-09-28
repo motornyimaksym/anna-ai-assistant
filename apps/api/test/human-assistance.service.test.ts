@@ -109,10 +109,8 @@ describe('outgoing Probability gate', () => {
     expect(context.recent_messages[0].content).toBe('message 5');
     expect(context.recent_messages.at(-1).content).toBe('message 24');
     expect(context.proposed_reply).toBe('<b>Exact draft</b>');
-    expect(context.current_message).toBe('message 24');
-    expect(context.knowledge).toBe('Open 10:00–20:00');
-    expect(context.services[0].id).toBe('massage-60');
-    expect(input.question).toContain('exactly 1');
+    expect(Object.keys(context)).toEqual(['recent_messages', 'proposed_reply']);
+    expect(input.question).toContain('Copied and pasted');
   });
 
   it.each([NaN, -0.1, 1.1, '0.5', null])('withholds invalid score %s', async (value) => {

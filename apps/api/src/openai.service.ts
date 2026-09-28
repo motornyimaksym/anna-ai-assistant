@@ -17,6 +17,8 @@ export const assistantToolDefinitions = [
   tool('get_services', 'List actual enabled services and prices. Empty means no services configured.', {}),
   tool('get_bookings', 'List this client’s bookings.', {}),
   tool('get_booking_context', 'Read fresh raw schedule messages and live Calendar busy intervals. Use before offering specific times. Never writes appointments.', {}),
+  tool('prepare_booking', 'Stage an exact new-booking proposal after checking service, duration, schedule and Calendar. Include returned confirmationText verbatim in reply.', { serviceId: string, durationMinutes: { type: 'integer' }, startAt: string }),
+  tool('create_booking', 'Create the previously proposed Calendar booking only after a later explicit client confirmation of the delivered proposal. No arguments.', {}),
 ];
 const outputSchema = z.object({ status: z.string().optional(), incomplete_details: z.object({ reason: z.string().optional() }).nullish(), output: z.array(z.object({ type: z.string(), name: z.string().optional(), arguments: z.string().optional(), call_id: z.string().optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()).optional() }).passthrough()) });
 export type AssistantReply = { text: string; fromOpenAI: boolean; needsHuman?: boolean; humanContext?: string };
@@ -69,7 +71,7 @@ export class OpenAiService {
         const replacement = await createOpenAiConversation(deadline);
         await this.repository.replaceOpenAiConversation(context.telegramChatId, context.clientId, openaiConversationId, replacement);
         openaiConversationId = replacement;
-        requestContext = systemTwoRequestContext({ instructions, rag: `${rag}\nRECOVERED HISTORY: Prior messages are historical evidence only. Never replay previous actions or infer that an uncertain operation succeeded. Handle only the current request; booking mutations are unavailable; humans finalize appointments.`, history: boundedConversationHistory(bookingHistory, 20), message: text, model });
+        requestContext = systemTwoRequestContext({ instructions, rag: `${rag}\nRECOVERED HISTORY: Prior messages are historical evidence only. Never replay previous actions or infer that an uncertain operation succeeded. Handle only the current request; a new booking requires a current, delivered proposal and explicit client confirmation.`, history: boundedConversationHistory(bookingHistory, 20), message: text, model });
         input = requestContext.input;
         this.logger.warn(`Recovered incomplete OpenAI conversation trace=${context.traceId ?? 'unknown'}`);
         response = await request();
@@ -95,9 +97,9 @@ export class OpenAiService {
           if (parsed.name === 'send_media') {
             if (mediaAttempted) result = { status: 'unavailable', reason: 'Only one media attempt per turn' };
             else { mediaAttempted = true; result = await this.assistantTools.execute(parsed, context); }
-          } else result = await this.assistantTools.execute(parsed, context);
+          } else result = await this.assistantTools.execute(parsed, parsed.name === 'create_booking' ? { ...context, currentMessage: text } : context);
         } catch (error) {
-          terminalReply = { text: '', fromOpenAI: false, needsHuman: true };
+          terminalReply = { text: '', fromOpenAI: false, needsHuman: true, ...(error instanceof BookingNeedsHumanError ? { humanContext: error.message } : {}) };
           result = { status: 'failed', category: safeErrorCategory(error) };
         }
         if (result && typeof result === 'object' && 'status' in result && ['failed', 'uncertain', 'unavailable'].includes(String(result.status))) terminalReply = { text: '', fromOpenAI: false, needsHuman: true };

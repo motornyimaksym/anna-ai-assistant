@@ -44,7 +44,7 @@ describe('admin content endpoints', () => {
     const catalog = controller.promptCatalog();
     expect(catalog.systemOne.map(({ id }) => id)).toEqual(['handoff']);
     expect(catalog.systemTwo.map(({ id }) => id)).toEqual(['assistant']);
-    expect(catalog.systemOne[0]?.content).toContain('human to take over');
+    expect(catalog.systemOne[0]?.content).toContain('look like a bot response');
   });
   it('serves the packaged spec', async () => {
     const { controller, specService } = setup();

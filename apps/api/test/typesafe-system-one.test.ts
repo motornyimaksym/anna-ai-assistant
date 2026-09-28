@@ -85,14 +85,14 @@ describe('TypeSafe System One', () => {
   });
 });
 
-it('uses the same merged Handoff policy and returns explicit 100%', async () => {
+it('uses the same merged Handoff policy and returns a valid 100% score', async () => {
   repository.getPromptOverride.mockResolvedValueOnce({ prompt: 'Custom handoff guidance', updatedAt: new Date().toISOString() });
   const fetcher = setup({ type: 'noul', noul: 1 });
   expect(await call()).toBe(1);
   expect(repository.getPromptOverride).toHaveBeenCalledWith('handoff');
   const body = JSON.parse(fetcher.mock.calls[0]![1].body);
   expect(body.questions.decision.instructions).toContain('Custom handoff guidance');
-  expect(body.questions.decision.instructions).toContain('exactly 1 (100%)');
+  expect(body.questions.decision.instructions).toContain('look like a bot response');
   expect(body.state).toBe(decision.context);
   expect(body.questions.decision.type).toBe('noul');
 });

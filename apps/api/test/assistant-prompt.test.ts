@@ -1,3 +1,4 @@
+import { HANDOFF_PROMPT } from '../src/handoff-prompt.js';
 import { describe, expect, it } from 'vitest';
 import { ASSISTANT_SYSTEM_PROMPT, BOOKING_GUIDANCE, DEFAULT_CONVERSATION_GUIDANCE, TELEGRAM_FORMAT_GUIDANCE, THERAPIST_FIRST_PERSON_GUIDANCE } from '../src/assistant-prompt.js';
 import { CONTEXT_SECURITY_GUIDANCE, MEDIA_TOOL_GUIDANCE, boundedConversationHistory, systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from '../src/system-two-instructions.js';
@@ -42,4 +43,13 @@ describe('System Two prompts', () => {
     expect(rag).toContain('лише клієнтам, які вже були');
     expect(rag).toContain('Майбутній або скасований запис');
   });
+});
+
+it('checks one bot-like condition and permits copied text', () => {
+  expect(HANDOFF_PROMPT).toContain('one probability');
+  expect(HANDOFF_PROMPT).toContain('copy-paste');
+  expect(HANDOFF_PROMPT).toContain('Do not assess');
+  expect(ASSISTANT_SYSTEM_PROMPT).toContain('neither confirm nor deny');
+  expect(ASSISTANT_SYSTEM_PROMPT).toContain('outside the knowledge base');
+  expect(BOOKING_GUIDANCE).toContain('create_booking');
 });

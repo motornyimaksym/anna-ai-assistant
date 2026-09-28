@@ -1,7 +1,6 @@
 import { BadRequestException, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { promptTestRequestSchema, promptTestResponseSchema, type PromptTestRequest, type PromptTestResponse } from '@booking/contracts';
 import { z } from 'zod';
-import { DEFAULT_KNOWLEDGE_BASE } from './default-knowledge-base.js';
 import { safeErrorCategory } from './debug-log.service.js';
 import { assistantToolDefinitions } from './openai.service.js';
 import { requestOpenAiResponse } from './openai-transport.js';
@@ -17,7 +16,7 @@ const responseSchema = z.object({
     content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()).optional(),
   }).passthrough()),
 });
-const sampleProposal = 'Sample proposal: 60-minute massage tomorrow at 10:00. Reply to approve or reject this proposal.';
+const sampleReply = 'Дякую! Можу допомогти з масажем.';
 const outputText = (response: z.infer<typeof responseSchema>): string => response.output
   .filter((item) => item.type === 'message')
   .flatMap((item) => item.content ?? [])
@@ -42,10 +41,9 @@ export class PromptTestService {
 
   private async systemOne(request: Extract<PromptTestRequest, { system: 'one' }>): Promise<PromptTestResponse> {
     const signal = AbortSignal.timeout(45_000);
-    const [knowledge, services] = await Promise.all([this.repository.getKnowledgeBaseOverride(), this.repository.listServices()]);
     const input = {
-      question: 'Estimate human handoff probability for knowledge gaps, bot-like wording or explicit booking confirmation. Confirmation MUST return exactly 1 (100%).',
-      context: JSON.stringify({ current_message: request.text, recent_messages: [{ role: 'assistant', content: sampleProposal }, { role: 'user', content: request.text }], proposed_reply: 'Дякую, уточню деталі.', knowledge: knowledge?.content ?? DEFAULT_KNOWLEDGE_BASE, services: services.filter((service) => service.enabled) }),
+      question: 'How likely is the proposed reply to sound like a bot response in conversation? Copied text alone is not proof.',
+      context: JSON.stringify({ recent_messages: [{ role: 'assistant', content: sampleReply }, { role: 'user', content: request.text }], proposed_reply: 'Дякую, уточню деталі.' }),
     };
     const result = systemOneProbabilitySchema.parse(await this.selector.estimateProbability(input, signal));
     return { kind: 'decision', output: String(result), sampleContext: true };

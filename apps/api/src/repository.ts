@@ -4,7 +4,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { FieldValue, getFirestore, type DocumentData, type Firestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import {
-  debugEventsSchema, debugEventSchema, debugPayloadSchema, type DebugEvent, type DebugPayload, type AssistantPromptId, availabilityRuleSchema, bookingSchema, botSettingsSchema, conversationSchema, scheduleExceptionSchema, serviceSchema, updateAdminAccessSchema,
+  debugEventsSchema, debugEventSchema, debugPayloadSchema, type DebugEvent, type DebugPayload, type AssistantPromptId, availabilityRuleSchema, bookingSchema, botSettingsSchema, conversationSchema, pendingActionSchema, scheduleExceptionSchema, serviceSchema, updateAdminAccessSchema,
   type AvailabilityRuleDto, type BookingDto, type BotSettings, type ConversationDto, type ScheduleExceptionDto, type ServiceDto,
 } from '@booking/contracts';
 import { BookingConflictError, BookingNotFoundError, lockedSlotKeys, serviceEndAt } from '@booking/domain';
@@ -260,6 +260,26 @@ export class BookingRepository {
       const doc = await tx.get(ref);
       if (doc.exists) tx.update(ref, { updatedAt: conversation.updatedAt });
       else tx.set(ref, withoutUndefined(conversation));
+    });
+  }
+  async stageAssistantBooking(chatId: string, clientId: string, input: { serviceId: string; durationMinutes: number; startAt: string; confirmationText: string }) {
+    const proposal = pendingActionSchema.parse({ id: randomUUID(), name: 'create_booking', arguments: { serviceId: input.serviceId, durationMinutes: input.durationMinutes, startAt: input.startAt }, confirmationText: input.confirmationText, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() });
+    const ref = this.db.collection('conversations').doc(chatId);
+    await this.db.runTransaction(async (tx) => {
+      const data = (await tx.get(ref)).data();
+      if (!data || data.clientId !== clientId || !data.assistantEnabled || data.activeHumanRequestId || (data.humanTakeoverUntil && data.humanTakeoverUntil > new Date().toISOString())) throw new Error('Conversation is unavailable for booking');
+      tx.update(ref, { pendingAction: proposal, updatedAt: new Date().toISOString() });
+    });
+    return proposal;
+  }
+  async consumeAssistantBooking(chatId: string, clientId: string, proposalId: string) {
+    const ref = this.db.collection('conversations').doc(chatId);
+    return this.db.runTransaction(async (tx) => {
+      const data = (await tx.get(ref)).data();
+      const proposal = pendingActionSchema.safeParse(data?.pendingAction);
+      if (!data || data.clientId !== clientId || !data.assistantEnabled || data.activeHumanRequestId || (data.humanTakeoverUntil && data.humanTakeoverUntil > new Date().toISOString()) || !proposal.success || proposal.data.id !== proposalId || proposal.data.name !== 'create_booking' || !proposal.data.confirmationText || proposal.data.expiresAt <= new Date().toISOString()) throw new Error('Booking proposal is no longer valid');
+      tx.update(ref, { pendingAction: FieldValue.delete(), updatedAt: new Date().toISOString() });
+      return proposal.data;
     });
   }
   async listConversations(): Promise<ConversationDto[]> {
