@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AdminController } from '../src/controllers.js';
 import { ASSISTANT_SYSTEM_PROMPT } from '../src/assistant-prompt.js';
+import { BOOKING_CONVERSATION_PROMPT } from '../src/booking-conversation-prompt.js';
 import { DEFAULT_KNOWLEDGE_BASE } from '../src/default-knowledge-base.js';
 import type { AvailabilityService } from '../src/availability.service.js';
 import type { BookingService } from '../src/booking.service.js';
@@ -50,7 +51,7 @@ describe('admin content endpoints', () => {
     expect(catalog.systemOne.map(({ id }) => id)).toEqual(['routing', 'approval', 'probability']);
     expect(catalog.systemTwo.map(({ id }) => id)).toEqual(['general', 'booking-conversation', 'booking-planner']);
     expect(catalog.systemOne[0]?.content).toContain('Select the System Two workflow');
-    expect(catalog.systemTwo[1]?.content).toContain('For availability, booking, or rescheduling, always call plan_booking.');
+    expect(catalog.systemTwo[1]?.content).toBe(BOOKING_CONVERSATION_PROMPT);
   });
   it('serves the packaged spec', async () => {
     const { controller, specService } = setup();

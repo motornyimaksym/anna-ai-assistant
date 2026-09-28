@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SystemOneInput } from '../src/system-one.js';
-import type { SystemTwoPromptId } from '../src/system-two.js';
+import { SYSTEM_TWO_PROMPTS, type SystemTwoPromptId } from '../src/system-two.js';
 import { OpenAiService } from '../src/openai.service.js';
-import { THERAPIST_FIRST_PERSON_GUIDANCE } from '../src/assistant-prompt.js';
+import { TELEGRAM_FORMAT_GUIDANCE, THERAPIST_FIRST_PERSON_GUIDANCE } from '../src/assistant-prompt.js';
 import type { AssistantToolsService } from '../src/assistant-tools.service.js';
 import type { BookingRepository } from '../src/repository.js';
 import type { BookingPlannerService } from '../src/booking-planner.service.js';
@@ -159,7 +159,7 @@ describe('OpenAI conversation', () => {
     expect(instructions).toContain('Speak only in short sentences.');
     expect(instructions).toContain(THERAPIST_FIRST_PERSON_GUIDANCE);
     expect(instructions).toContain('TELEGRAM FORMATTING');
-    expect(instructions).toContain('Never use Markdown markers');
+    expect(instructions).toContain(TELEGRAM_FORMAT_GUIDANCE);
   });
   it('uses the Booking conversation override with mandatory guidance', async () => {
     const { service, repository } = setup('booking');
@@ -182,9 +182,7 @@ describe('OpenAI conversation', () => {
     const instructions = JSON.parse(fetch.mock.calls[0]![1]!.body as string).input[0].content as string;
     expect(instructions).toContain('TELEGRAM FORMATTING');
     expect(instructions).toContain(THERAPIST_FIRST_PERSON_GUIDANCE);
-    expect(instructions).toContain('<b>');
-    expect(instructions).toContain('&amp;, &lt;, and &gt;');
-    expect(instructions).toContain('Never use Markdown markers');
+    expect(instructions).toContain(TELEGRAM_FORMAT_GUIDANCE);
   });
   it('retrieves relevant editable knowledge without unrelated service records', async () => {
     const { service, repository } = setup();
@@ -230,6 +228,41 @@ describe('OpenAI conversation', () => {
     expect(JSON.parse(closeout.input[0].output)).toMatchObject({ status: 'ready', candidateStarts: ['2099-01-01T10:00:00.000Z'], availability: { calendar: { status: 'ready', busy: [] } } });
     expect(closeout.tool_choice).toBe('none');
   });
+  it.each(['availability', 'create', 'reschedule'] as const)('formats %s replies with Ukrainian dates and no timezone labels', async (intent) => {
+    vi.stubEnv('DEFAULT_TIMEZONE', 'Europe/Kyiv');
+    const { service, planner, repository } = setup('booking');
+    const start = '2026-09-29T16:00:00.000Z';
+    planner.plan.mockResolvedValueOnce({ status: 'ready', serviceId: 'massage', startAt: intent === 'availability' ? null : start, durationMinutes: 90, candidateStarts: intent === 'availability' ? [start] : [], question: null } as never);
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'date-plan', name: 'plan_booking', arguments: JSON.stringify({ intent, bookingId: intent === 'reschedule' ? 'owned-booking' : null }) }] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Unused closeout.' }] }] }) }));
+    const result = await service.respond(conversation, context, '29 вересня на 19:00');
+    expect(result.text).toContain('29 вересня, вівторок, 19:00');
+    expect(result.text).not.toContain('Europe/Kyiv');
+    expect(result.text).not.toContain('15 хвилин');
+    if (intent === 'availability') {
+      expect(result.text).toBe('Можливі початки сеансу:\n- 29 вересня, вівторок, 19:00\nЯкий час вам підходить?');
+      expect(repository.replacePendingAction).not.toHaveBeenCalled();
+    } else {
+      expect(result.text.endsWith('Підтвердьте, будь ласка, якщо вам все підходить.')).toBe(true);
+      const pending = repository.replacePendingAction.mock.calls[0]![3];
+      expect(pending.confirmationText).toBe(result.text);
+      expect(Date.parse(pending.expiresAt) - Date.now()).toBeGreaterThan(14 * 60_000);
+      expect(Date.parse(pending.expiresAt) - Date.now()).toBeLessThanOrEqual(15 * 60_000);
+    }
+  });
+  it('formats cancellation proposals with the same date and short invitation', async () => {
+    vi.stubEnv('DEFAULT_TIMEZONE', 'Europe/Kyiv');
+    const { service, tools } = setup('booking');
+    tools.execute.mockResolvedValueOnce([{ id: 'owned-booking', clientId: 'alice', telegramChatId: 'chat', serviceId: 'massage', status: 'confirmed', startAt: '2026-09-29T16:00:00.000Z' }]);
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'cancel', name: 'cancel_booking', arguments: '{"bookingId":"owned-booking"}' }] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Unused closeout.' }] }] }) }));
+    const result = await service.respond(conversation, context, 'Скасувати запис');
+    expect(result.text).toBe('Скасувати запис: Massage\nЧас: 29 вересня, вівторок, 19:00.\nПідтвердьте, будь ласка, якщо вам все підходить.');
+    expect(tools.execute).toHaveBeenCalledOnce();
+    expect(tools.execute).toHaveBeenCalledWith({ name: 'get_bookings', arguments: {} }, context);
+  });
   it('retrieves relevant default policy without sending the whole knowledge base', async () => {
     const { service } = setup();
     const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello.' }] }] }) }));
@@ -248,7 +281,7 @@ describe('OpenAI conversation', () => {
     const { service, tools, repository, selector } = setup('booking');
     selector.answerBoolean.mockResolvedValueOnce(true);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'plan_booking', arguments: JSON.stringify({ intent: 'create', bookingId: null }) }] }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Proposal ready.' }] }] }) }));
-    expect((await service.respond(conversation, context, 'Запиши мене')).text).toContain('так, підтверджую');
+    expect((await service.respond(conversation, context, 'Запиши мене')).text).toContain('Підтвердьте, будь ласка, якщо вам все підходить.');
     expect(tools.execute).not.toHaveBeenCalled();
     const saved = { ...conversation, pendingAction: repository.replacePendingAction.mock.calls[0]![3] };
     expect(saved.pendingAction).toMatchObject({ arguments: { durationMinutes: 90 } });
@@ -259,6 +292,7 @@ describe('OpenAI conversation', () => {
   });
   it('does not execute expired pending actions', async () => {
     const { service, tools } = setup();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Which appointment?' }] }] }) }));
     await service.respond({ ...conversation, pendingAction: { name: 'cancel_booking', arguments: { bookingId: 'b' }, expiresAt: '2020-01-01T00:00:00.000Z' } }, context, '/confirm');
     expect(tools.execute).not.toHaveBeenCalled();
   });
@@ -310,7 +344,7 @@ describe('System One dispatch', () => {
     expect(selector.select).toHaveBeenCalledOnce();
     expect(repository.getAssistantPromptOverride).not.toHaveBeenCalled();
     const body = JSON.parse(fetch.mock.calls[0]![1].body);
-    expect(body.input[0].content).toContain('For availability, booking, or rescheduling, always call plan_booking.');
+    expect(body.input[0].content).toContain(SYSTEM_TWO_PROMPTS.booking.guidance);
     expect(body.input[0].content).not.toContain('GENERAL CUSTOM SECRET');
     expect(body.tools.map((tool: { name: string }) => tool.name)).toContain('plan_booking');
     expect(body.tools.map((tool: { name: string }) => tool.name)).toContain('send_media');
@@ -332,6 +366,7 @@ describe('System One dispatch', () => {
   });
   it('checks every eligible message, and rejects oversized text before selection', async () => {
     const { service, selector } = setup();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'How can I help?' }] }] }) }));
     await service.respond(conversation, context, '/confirm');
     await service.respond(conversation, context, '/cancel');
     expect(selector.select).toHaveBeenCalledTimes(2);
@@ -354,7 +389,7 @@ it('selects anew on each turn and exposes active proposal presence without its a
   await service.respond({ ...conversation, pendingAction: { ...pendingAction, expiresAt: '2000-01-01T00:00:00.000Z' } }, context, 'Where are you located?');
   expect(selector.select).toHaveBeenCalledTimes(2);
   expect(selector.select.mock.calls[1]![0].hasPendingProposal).toBe(false);
-  expect(JSON.parse(fetch.mock.calls[0]![1].body).input[0].content).toContain('For availability, booking, or rescheduling, always call plan_booking.');
+  expect(JSON.parse(fetch.mock.calls[0]![1].body).input[0].content).toContain(SYSTEM_TWO_PROMPTS.booking.guidance);
   expect(JSON.parse(fetch.mock.calls[1]![1].body).input[0].content).toContain('SYSTEM TWO: GENERAL');
 });
 
@@ -362,36 +397,66 @@ it('selects anew on each turn and exposes active proposal presence without its a
 const naturalProposal = { id: '2a1c75d0-d891-4e04-8b54-341cba762ae6', name: 'cancel_booking' as const, arguments: { bookingId: 'booking-1' }, expiresAt: '2099-01-01T00:00:00.000Z', confirmationText: 'Cancel appointment tomorrow at 10:00?' };
 describe('natural confirmation', () => {
   it('executes only after true approval and atomic consumption, without routing or probability', async () => {
+    vi.stubEnv('DEFAULT_TIMEZONE', 'Europe/Kyiv');
     const { service, selector, tools, repository } = setup();
     repository.listMessages.mockResolvedValue([{ role: 'assistant', content: naturalProposal.confirmationText }]);
     selector.answerBoolean.mockResolvedValueOnce(true);
+    tools.execute.mockResolvedValueOnce({ id: 'booking-1', status: 'cancelled', startAt: '2026-09-29T16:00:00.000Z', calendarSyncStatus: 'synced' });
     const reply = await service.respond({ ...conversation, pendingAction: naturalProposal }, context, 'Так, підтверджую');
-    expect(reply.text).toContain('Готово');
+    expect(reply.text).toBe('Готово. Запис booking-1: cancelled. Час: 29 вересня, вівторок, 19:00.');
     expect(repository.replacePendingAction).toHaveBeenCalledWith('chat', 'alice', naturalProposal, undefined, { requireUnexpired: true });
     expect(repository.replacePendingAction.mock.invocationCallOrder[0]).toBeLessThan(tools.execute.mock.invocationCallOrder[0]!);
     expect(tools.execute).toHaveBeenCalledWith(naturalProposal, context);
     expect(selector.select).not.toHaveBeenCalled();
     expect(selector.estimateProbability).not.toHaveBeenCalled();
   });
-  it('discards after one false approval decision without executing', async () => {
+  it.each(['Ні, дякую', 'А скільки це коштує?', 'Так, але можна пізніше?'])('discards then handles the client message normally: %s', async (message) => {
     const { service, selector, tools, repository } = setup();
-    repository.listMessages.mockResolvedValue([{ role: 'assistant', content: naturalProposal.confirmationText }]);
+    repository.listMessages.mockResolvedValue([{ role: 'assistant', content: naturalProposal.confirmationText }, { role: 'user', content: message }]);
     selector.answerBoolean.mockResolvedValueOnce(false);
-    expect((await service.respond({ ...conversation, pendingAction: naturalProposal }, context, 'Ні, дякую')).text).toContain('Існуючі записи не змінено');
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'A reply to the current question.' }] }] }) });
+    vi.stubGlobal('fetch', fetch);
+    expect((await service.respond({ ...conversation, pendingAction: naturalProposal }, context, message)).text).toBe('A reply to the current question.');
     expect(selector.answerBoolean).toHaveBeenCalledOnce();
     expect(repository.replacePendingAction).toHaveBeenCalledWith('chat', 'alice', naturalProposal, undefined);
     expect(tools.execute).not.toHaveBeenCalled();
-    expect(selector.select).not.toHaveBeenCalled();
+    expect(selector.select).toHaveBeenCalledOnce();
+    expect(selector.select.mock.calls[0]![0]).toMatchObject({ message, hasPendingProposal: false });
+    expect(repository.replacePendingAction.mock.invocationCallOrder[0]).toBeLessThan(selector.select.mock.invocationCallOrder[0]!);
+    const input = JSON.parse(fetch.mock.calls[0]![1].body).input;
+    expect(input[0].content).not.toContain('Previous proposal was discarded');
+    expect(input[1].content).toContain('Previous proposal was discarded without execution');
+    expect(input.filter((item: { role: string; content: string }) => item.role === 'user' && item.content === message)).toHaveLength(1);
+    expect(input.at(-1)).toEqual({ role: 'user', content: message });
   });
-  it('discards ambiguous or changed-details replies after one decision', async () => {
+  it('can stage a replacement after changed details without approving it in the same turn', async () => {
+    const { service, selector, tools, repository, planner } = setup('booking');
+    repository.listMessages.mockResolvedValue([{ role: 'assistant', content: naturalProposal.confirmationText }]);
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'new-plan', name: 'plan_booking', arguments: '{"intent":"create","bookingId":null}' }] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Proposal prepared.' }] }] }) }));
+    const result = await service.respond({ ...conversation, pendingAction: naturalProposal }, context, 'Краще зробимо новий запис на інший час');
+    expect(result.text).toContain('Підтвердьте, будь ласка, якщо вам все підходить.');
+    expect(selector.answerBoolean).toHaveBeenCalledOnce();
+    expect(selector.select).toHaveBeenCalledOnce();
+    expect(planner.plan.mock.calls[0]![0]).toMatchObject({ pendingAction: undefined });
+    expect(repository.replacePendingAction).toHaveBeenCalledTimes(2);
+    expect(repository.replacePendingAction.mock.calls[1]![2]).toBeUndefined();
+    expect(repository.replacePendingAction.mock.calls[1]![3]).toMatchObject({ name: 'create_booking', confirmationText: result.text });
+    expect(repository.replacePendingAction.mock.calls[1]![3].id).not.toBe(naturalProposal.id);
+    expect(tools.execute).not.toHaveBeenCalled();
+  });
+  it.each(['stale', 'failed'] as const)('does not route or execute after a %s discard', async (kind) => {
     const { service, selector, tools, repository } = setup();
     repository.listMessages.mockResolvedValue([{ role: 'assistant', content: naturalProposal.confirmationText }]);
-    const result = await service.respond({ ...conversation, pendingAction: naturalProposal }, context, 'Maybe, can we change the time?');
-    expect(result.text).toContain('Існуючі записи не змінено');
-    expect(selector.answerBoolean).toHaveBeenCalledOnce();
+    if (kind === 'stale') repository.replacePendingAction.mockResolvedValueOnce(false);
+    else repository.replacePendingAction.mockRejectedValueOnce(new Error('Discard failed'));
+    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+    const result = await service.respond({ ...conversation, pendingAction: naturalProposal }, context, 'Можна інший час?');
     expect(selector.select).not.toHaveBeenCalled();
-    expect(repository.replacePendingAction).toHaveBeenCalledWith('chat', 'alice', naturalProposal, undefined);
     expect(tools.execute).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(result.needsHuman === true).toBe(kind === 'failed');
   });
   it.each(['error', 'invalid', 'stale'] as const)('never executes on %s confirmation', async (kind) => {
     const { service, selector, tools, repository } = setup();

@@ -14,6 +14,7 @@ import { BookingRepository } from './repository.js';
 import { BookingPlannerService, type BookingPlanningEvidence } from './booking-planner.service.js';
 import { collectSensitiveStrings, DebugLogService, safeErrorCategory, safeErrorDiagnostic } from './debug-log.service.js';
 import { TextUtils } from './text-utils.js';
+import { formatBookingDate } from './booking-date-format.js';
 
 const string = { type: 'string' };
 const tool = (name: string, description: string, properties: Record<string, unknown>) => ({ type: 'function', name, description, strict: true, parameters: { type: 'object', properties, required: Object.keys(properties), additionalProperties: false } });
@@ -31,7 +32,6 @@ const fallback = 'Потрібна допомога відповідальної
 export type AssistantReply = { text: string; fromOpenAI: boolean; needsHuman?: boolean; humanContext?: string };
 type PlannedReply = { reply: AssistantReply; status: 'ready' | 'needs_clarification' | 'unavailable'; candidateStarts: string[]; evidence?: BookingPlanningEvidence };
 const staleProposal = 'Немає актуальної дії для підтвердження. Уточніть бажаний запис.';
-const discardedProposal = 'Запропоновану дію скасовано. Існуючі записи не змінено.';
 const localReply = (text: string): AssistantReply => ({ text: TextUtils.replaceLongDashes(text), fromOpenAI: false });
 @Injectable()
 export class OpenAiService {
@@ -53,12 +53,16 @@ export class OpenAiService {
     const history = (await this.repository.listMessages(context.telegramChatId)).slice(-20).map(({ role, content }) => ({ role, content: content.slice(0, 4000) }));
     sensitiveValues.push(...history.map(({ content }) => content), conversation.summary);
     const pending = conversation.pendingAction;
+    let proposalDiscarded = false;
     if (pending?.confirmationText) sensitiveValues.push(pending.confirmationText);
     if (pending?.id && pending.confirmationText && pending.expiresAt > new Date().toISOString() && history.some((item) => item.role === 'assistant' && item.content === pending.confirmationText)) {
       const evidence = JSON.stringify({ message: text, history, proposal: { action: pending.name, confirmationText: pending.confirmationText } });
       const decide = async (question: string) => systemOneBooleanSchema.parse(await this.selector.answerBoolean({ question, context: evidence }, deadline));
       if (await decide(APPROVAL_QUESTION)) return this.confirmProposal(conversation, context);
-      return this.discardProposal(conversation, context);
+      if (!await this.repository.replacePendingAction(context.telegramChatId, context.clientId, pending, undefined)) return localReply(staleProposal);
+      await this.debug.record(context, 'confirmation_result', { status: 'discarded' });
+      conversation = { ...conversation, pendingAction: undefined };
+      proposalDiscarded = true;
     }
     const promptId = systemTwoPromptIdSchema.parse(await this.selector.select({
       message: text, summary: conversation.summary.slice(0, 4000), history,
@@ -75,7 +79,10 @@ export class OpenAiService {
       this.repository.listServices(),
     ]);
     const instructions = systemTwoInstructions({ promptId, promptOverride: promptOverride?.prompt });
-    const rag = systemTwoRag({ message: text, recentMessages: history.map(({ content }) => content), knowledgeBaseOverride: knowledgeBaseOverride?.content, configuredServices });
+    const rag = [
+      systemTwoRag({ message: text, recentMessages: history.map(({ content }) => content), knowledgeBaseOverride: knowledgeBaseOverride?.content, configuredServices }),
+      ...(proposalDiscarded ? ['Current booking state: Previous proposal was discarded without execution. Address the current message normally; do not send a discard acknowledgment or recreate the old proposal unless requested. Any new proposal requires later approval.'] : []),
+    ].join('\n');
     sensitiveValues.push(...collectSensitiveStrings({ instructions, rag, promptOverride, knowledgeBaseOverride, configuredServices }));
     let openaiConversationId = conversation.openaiConversationId ?? await this.repository.ensureOpenAiConversation(context.telegramChatId, context.clientId, await createOpenAiConversation(deadline));
     const bookingHistory = history.at(-1)?.role === 'user' && history.at(-1)?.content === text ? history.slice(0, -1) : history;
@@ -130,8 +137,7 @@ export class OpenAiService {
               const booking = await this.assistantTools.execute({ name: 'get_bookings', arguments: {} }, context).then((all) => (all as BookingDto[]).find((item) => item.id === parsed.arguments.bookingId));
               if (!booking || booking.clientId !== context.clientId || booking.telegramChatId !== context.telegramChatId || booking.status !== 'confirmed' || booking.calendarOperation) throw new Error('Booking unavailable');
               const service = await this.repository.getService(booking.serviceId);
-              const time = new Date(booking.startAt).toLocaleString('uk-UA', { timeZone: process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv' });
-              const confirmationText = `Скасувати запис: ${service?.name ?? booking.serviceId}\nЧас: ${time} (${process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv'}).\n${CONFIRMATION_INVITATION}`;
+              const confirmationText = `Скасувати запис: ${service?.name ?? booking.serviceId}\nЧас: ${formatBookingDate(booking.startAt)}.\n${CONFIRMATION_INVITATION}`;
               terminalReply = await this.stageProposal(conversation, context, parsed, confirmationText);
               result = { status: 'proposal_staged', confirmation: terminalReply.text };
             } else if (parsed.name === 'send_media') {
@@ -152,12 +158,6 @@ export class OpenAiService {
     }
     return { ...localReply(fallback), needsHuman: true };
   }
-  private async discardProposal(conversation: ConversationDto, context: AssistantContext): Promise<AssistantReply> {
-    if (!conversation.pendingAction) return localReply('Немає активної пропозиції для скасування.');
-    if (!await this.repository.replacePendingAction(context.telegramChatId, context.clientId, conversation.pendingAction, undefined)) return localReply(staleProposal);
-    await this.debug.record(context, 'confirmation_result', { status: 'discarded' });
-    return localReply(discardedProposal);
-  }
   private async confirmProposal(conversation: ConversationDto, context: AssistantContext): Promise<AssistantReply> {
     const pending = conversation.pendingAction;
     if (!pending?.id || !pending.confirmationText || pending.expiresAt <= new Date().toISOString()) return localReply(staleProposal);
@@ -166,7 +166,7 @@ export class OpenAiService {
       const result = await this.assistantTools.execute(pending, context);
       const booking = z.object({ id: z.string(), status: z.enum(['confirmed', 'cancelled']), startAt: z.string(), calendarSyncStatus: z.literal('synced') }).parse(result);
       await this.debug.record(context, 'confirmation_result', { status: 'completed', tool: pending.name });
-      return localReply(`Готово. Запис ${booking.id}: ${booking.status}. Час: ${new Date(booking.startAt).toLocaleString('uk-UA', { timeZone: process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv' })} (${process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv'}).`);
+      return localReply(`Готово. Запис ${booking.id}: ${booking.status}. Час: ${formatBookingDate(booking.startAt)}.`);
     } catch (error) {
       await this.debug.record(context, 'confirmation_result', { status: 'failed_or_uncertain', errorCategory: safeErrorCategory(error) }, 'error');
       throw error;
@@ -188,9 +188,8 @@ export class OpenAiService {
     const { plan, evidence } = await this.planner.planWithContext(conversation, context, text, request, signal);
     const finish = (reply: AssistantReply): PlannedReply => ({ reply, status: plan.status, candidateStarts: plan.status === 'ready' ? plan.candidateStarts : [], ...(evidence ? { evidence } : {}) });
     if (plan.status !== 'ready') return finish(localReply(plan.question ?? 'Уточніть, будь ласка, бажану послугу та час.'));
-    const format = (value: string) => new Date(value).toLocaleString('uk-UA', { timeZone: process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv', dateStyle: 'short', timeStyle: 'short' });
-    if (request.intent === 'availability') return finish(localReply(`Можливі початки сеансу (${process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv'}):
-${plan.candidateStarts.map((start) => `- ${format(start)}`).join('\n')}
+    if (request.intent === 'availability') return finish(localReply(`Можливі початки сеансу:
+${plan.candidateStarts.map((start) => `- ${formatBookingDate(start)}`).join('\n')}
 Який час вам підходить?`));
     const service = await this.repository.getService(plan.serviceId!);
     if (!service?.enabled) return finish(localReply('Ця послуга зараз недоступна. Який інший масаж вас цікавить?'));
@@ -198,7 +197,7 @@ ${plan.candidateStarts.map((start) => `- ${format(start)}`).join('\n')}
       ? { name: 'reschedule_booking' as const, arguments: { bookingId: request.bookingId!, startAt: plan.startAt! } }
       : { name: 'create_booking' as const, arguments: { serviceId: service.id, startAt: plan.startAt!, durationMinutes: plan.durationMinutes! } };
     const quote = request.intent === 'create' ? `\nЦіна: ${selectServiceOption(service, plan.durationMinutes!).price} ${service.currency}` : '';
-    const confirmationText = `${request.intent === 'create' ? 'Новий запис' : 'Перенесення запису'}: ${service.name}\nЧас: ${format(plan.startAt!)} (${process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv'})\nТривалість: ${plan.durationMinutes} хв${quote}\n${CONFIRMATION_INVITATION}`;
+    const confirmationText = `${request.intent === 'create' ? 'Новий запис' : 'Перенесення запису'}: ${service.name}\nЧас: ${formatBookingDate(plan.startAt!)}\nТривалість: ${plan.durationMinutes} хв${quote}\n${CONFIRMATION_INVITATION}`;
     return finish(await this.stageProposal(conversation, context, action, confirmationText));
   }
 
