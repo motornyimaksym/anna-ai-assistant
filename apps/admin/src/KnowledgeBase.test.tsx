@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { KnowledgeBase } from './KnowledgeBase.js';
 import { adminApi } from './api.js';
 
-vi.mock('./api.js', () => ({ adminApi: { knowledgeBase: vi.fn(), saveKnowledgeBase: vi.fn(), resetKnowledgeBase: vi.fn() } }));
+vi.mock('./api.js', () => ({ adminApi: { knowledgeBase: vi.fn(), saveKnowledgeBase: vi.fn(), resetKnowledgeBase: vi.fn(), services: vi.fn(), saveService: vi.fn() } }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 const show = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } })}><KnowledgeBase /></QueryClientProvider>);
 
@@ -35,5 +35,22 @@ describe('admin knowledge base page', () => {
     await waitFor(() => expect(adminApi.resetKnowledgeBase).toHaveBeenCalledOnce());
     expect(await screen.findByText('Reset to the default knowledge base.')).toBeTruthy();
     expect((editor as HTMLTextAreaElement).value).toBe('Default facts.');
+  });
+
+  it('edits an automatically included service without changing the knowledge text or other service fields', async () => {
+    const service = { id: 'relax', name: 'Relax massage', description: 'Gentle massage', durationMinutes: 60, durationOptions: [{ durationMinutes: 90, price: 2000 }], price: 1500, currency: 'UAH', bufferMinutes: 30, enabled: true, photoUrl: 'https://firebasestorage.googleapis.com/v0/b/demo/o/photo' };
+    vi.mocked(adminApi.knowledgeBase).mockResolvedValue({ content: 'Studio is upstairs.', isCustom: true, services: [{ id: service.id, name: service.name, description: service.description, durationMinutes: service.durationMinutes, durationOptions: service.durationOptions, price: service.price, currency: service.currency }] });
+    vi.mocked(adminApi.services).mockResolvedValue([service]);
+    vi.mocked(adminApi.saveService).mockImplementation(async (value) => value);
+    show();
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Additional business knowledge' }), { target: { value: 'Unsaved knowledge draft.' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit Relax massage' }));
+    const description = await screen.findByRole('textbox', { name: 'Description for assistant' });
+    fireEvent.change(description, { target: { value: 'Updated massage' } });
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Option 2 price' }), { target: { value: '2200' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save service' }));
+    await waitFor(() => expect(adminApi.saveService).toHaveBeenCalledWith({ ...service, description: 'Updated massage', durationOptions: [{ durationMinutes: 90, price: 2200 }] }, false));
+    await waitFor(() => expect((screen.getByRole('textbox', { name: 'Additional business knowledge' }) as HTMLTextAreaElement).value).toBe('Unsaved knowledge draft.'));
+    expect(await screen.findByText(/90 min - 2200 UAH/)).toBeTruthy();
   });
 });

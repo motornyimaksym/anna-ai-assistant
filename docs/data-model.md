@@ -108,6 +108,8 @@ Compare-and-consume transactions verify the complete expected action and current
 
 `assistantSettings/systemOneApprovalPrompt`, `assistantSettings/systemOneProbabilityPrompt`, and `assistantSettings/bookingConversationPrompt` store optional `{ prompt, updatedAt }` overrides for their respective `/prompt` tabs. `assistantSettings/prompt` and `assistantSettings/bookingPrompt` remain the General and Booking planner overrides. Missing documents select code defaults. Only backend Admin SDK accesses these documents; saving one prompt never changes another.
 
+The code defaults for General, Booking conversation, and Probability mirror their production overrides as of 2026-09-28. Existing override documents stay intact and still take precedence; Reset deletes an override and reveals the corresponding synchronized code default. Routing, Approval, and Booking planner had no production override and retain their existing code defaults. No migration or Firestore write is required.
+
 Routing overrides now store `{ instructions, general, booking, updatedAt }` in `assistantSettings/systemOneRoutingPrompt`. Legacy `{ prompt, updatedAt }` documents remain readable: `prompt` becomes instructions, while `general` and `booking` use defaults. Reset deletes the routing document. Other prompt override documents retain `{ prompt, updatedAt }`.
 
 All editable prompt fields allow 1–20,000 nonblank characters, covering the shipped General default. Knowledge-base limits remain separate.

@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import { ASSISTANT_SYSTEM_PROMPT, TELEGRAM_FORMAT_GUIDANCE, THERAPIST_FIRST_PERSON_GUIDANCE } from '../src/assistant-prompt.js';
+import { SYSTEM_TWO_PROMPTS } from '../src/system-two.js';
+import { probabilityGuidance } from '../src/typesafe-system-one.js';
 import { boundedConversationHistory, systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from '../src/system-two-instructions.js';
 
 describe('default General prompt', () => {
+  it('matches the saved production prompt defaults exactly', () => {
+    const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
+    expect(sha256(ASSISTANT_SYSTEM_PROMPT)).toBe('4044b564e2e7ee3a73a35fd99c1abb9f38a94d416f99de42610e2e8aa113690e');
+    expect(sha256(SYSTEM_TWO_PROMPTS.booking.defaultPrompt)).toBe('495d432d4767ac7aef26c05011ca01a37aa3b73beb33b7f99f7bb34fa7d197fd');
+    expect(sha256(probabilityGuidance)).toBe('7b0acebec8f1a46f3bb021669f79e1153662cee2bd5e5691241ce9aa5ca45bce');
+  });
   it('keeps concise shared guidance without business facts or repeated server guidance', () => {
     expect(ASSISTANT_SYSTEM_PROMPT.length).toBeLessThan(12_000);
     expect(ASSISTANT_SYSTEM_PROMPT).toContain('Ukrainian');

@@ -310,7 +310,7 @@ describe('System One dispatch', () => {
     expect(selector.select).toHaveBeenCalledOnce();
     expect(repository.getAssistantPromptOverride).not.toHaveBeenCalled();
     const body = JSON.parse(fetch.mock.calls[0]![1].body);
-    expect(body.input[0].content).toContain('SYSTEM TWO: BOOKING');
+    expect(body.input[0].content).toContain('For availability, booking, or rescheduling, always call plan_booking.');
     expect(body.input[0].content).not.toContain('GENERAL CUSTOM SECRET');
     expect(body.tools.map((tool: { name: string }) => tool.name)).toContain('plan_booking');
     expect(body.tools.map((tool: { name: string }) => tool.name)).toContain('send_media');
@@ -354,7 +354,7 @@ it('selects anew on each turn and exposes active proposal presence without its a
   await service.respond({ ...conversation, pendingAction: { ...pendingAction, expiresAt: '2000-01-01T00:00:00.000Z' } }, context, 'Where are you located?');
   expect(selector.select).toHaveBeenCalledTimes(2);
   expect(selector.select.mock.calls[1]![0].hasPendingProposal).toBe(false);
-  expect(JSON.parse(fetch.mock.calls[0]![1].body).input[0].content).toContain('SYSTEM TWO: BOOKING');
+  expect(JSON.parse(fetch.mock.calls[0]![1].body).input[0].content).toContain('For availability, booking, or rescheduling, always call plan_booking.');
   expect(JSON.parse(fetch.mock.calls[1]![1].body).input[0].content).toContain('SYSTEM TWO: GENERAL');
 });
 

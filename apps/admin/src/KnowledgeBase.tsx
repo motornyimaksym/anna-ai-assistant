@@ -1,7 +1,9 @@
 import { Alert, Box, Button, Chip, Divider, Stack, TextField, Typography } from '@mui/material';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
+import type { KnowledgeBaseResponse, ServiceDto } from '@booking/contracts';
 import { adminApi } from './api.js';
+import { KnowledgeBaseServiceEditor } from './KnowledgeBaseServiceEditor.js';
 
 const queryKey = ['knowledge-base'];
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'Request failed.';
@@ -15,7 +17,15 @@ export const KnowledgeBase = () => {
   const query = useQuery({ queryKey, queryFn: adminApi.knowledgeBase });
   const [content, setContent] = useState('');
   const [message, setMessage] = useState('');
-  useEffect(() => { if (query.data) setContent(query.data.content); }, [query.data]);
+  useEffect(() => { if (query.data) setContent(query.data.content); }, [query.data?.content]);
+  const serviceSaved = (saved: ServiceDto) => {
+    queryClient.setQueryData<KnowledgeBaseResponse>(queryKey, (current) => current ? { ...current, services: current.services.map((item) => item.id === saved.id ? {
+      id: saved.id, name: saved.name, description: saved.description, durationMinutes: saved.durationMinutes,
+      ...(saved.durationOptions ? { durationOptions: saved.durationOptions } : {}), price: saved.price, currency: saved.currency,
+    } : item) } : current);
+    queryClient.setQueryData<ServiceDto[]>(['services'], (current) => current?.map((item) => item.id === saved.id ? saved : item));
+    setMessage('Service saved. Changes apply to the next assistant request.');
+  };
 
   const save = useMutation({
     mutationFn: () => adminApi.saveKnowledgeBase(content),
@@ -45,7 +55,7 @@ export const KnowledgeBase = () => {
       <Chip size="small" color={query.data.isCustom ? 'primary' : 'default'} label={query.data.isCustom ? 'Custom knowledge base' : 'Default knowledge base'} />
       <Typography variant="body2" color="text.secondary">Changes apply to the next assistant request.</Typography>
     </Stack>
-    <Typography color="text.secondary">Add business facts and guidance here. Keep response rules in Assistant prompt. Current enabled services, descriptions, durations, and prices are appended automatically from the booking catalog.</Typography>
+    <Typography color="text.secondary">Add business facts and guidance here. Keep response rules in Assistant prompt. Current enabled services, descriptions, durations, and prices are appended automatically from the booking catalog; edit them below.</Typography>
     <TextField
       label="Additional business knowledge"
       value={content}
@@ -63,7 +73,10 @@ export const KnowledgeBase = () => {
         <Typography variant="h6" gutterBottom>Services automatically included</Typography>
         <Stack spacing={1.5}>
           {query.data.services.map((service) => <Box key={service.id}>
-            <Typography fontWeight={600}>{service.name}</Typography>
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <Typography fontWeight={600}>{service.name}</Typography>
+              <KnowledgeBaseServiceEditor serviceId={service.id} serviceName={service.name} onSaved={serviceSaved} />
+            </Stack>
             {service.description && <Typography variant="body2" color="text.secondary">{service.description}</Typography>}
             <Typography variant="body2">{priceOptions(service).map((option) => `${option.durationMinutes} min - ${option.price} ${service.currency}`).join(' · ')}</Typography>
           </Box>)}

@@ -50,7 +50,7 @@ describe('admin content endpoints', () => {
     expect(catalog.systemOne.map(({ id }) => id)).toEqual(['routing', 'approval', 'probability']);
     expect(catalog.systemTwo.map(({ id }) => id)).toEqual(['general', 'booking-conversation', 'booking-planner']);
     expect(catalog.systemOne[0]?.content).toContain('Select the System Two workflow');
-    expect(catalog.systemTwo[1]?.content).toContain('SYSTEM TWO: BOOKING');
+    expect(catalog.systemTwo[1]?.content).toContain('For availability, booking, or rescheduling, always call plan_booking.');
   });
   it('serves the packaged spec', async () => {
     const { controller, specService } = setup();

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ASSISTANT_SYSTEM_PROMPT } from './assistant-prompt.js';
+import { BOOKING_CONVERSATION_PROMPT } from './booking-conversation-prompt.js';
 
 export const systemTwoPromptIdSchema = z.enum(['general', 'booking']);
 export type SystemTwoPromptId = z.infer<typeof systemTwoPromptIdSchema>;
@@ -21,7 +22,7 @@ export const SYSTEM_TWO_PROMPTS: Record<SystemTwoPromptId, PromptDefinition> = {
   },
   booking: {
     description: 'Availability, appointment creation, rescheduling, cancellation, existing bookings, confirmation questions, or a contextual follow-up in a booking flow. Mixed scheduling and informational requests belong here.',
-    defaultPrompt: `SYSTEM TWO: BOOKING\nYou handle the client's appointment workflow. Resolve booking intent and use owned booking IDs from get_bookings. For availability, creation or rescheduling, call plan_booking and return its validated clarification or proposal. For cancellation, first identify the owned booking and call cancel_booking. A proposal requires a clear affirmative reply; all client actions use natural language, never commands. Answer accompanying factual questions from configured facts.\n\n${ASSISTANT_SYSTEM_PROMPT}`,
+    defaultPrompt: BOOKING_CONVERSATION_PROMPT,
     guidance: 'For every availability, booking creation, or rescheduling question, call plan_booking. It receives the independently editable Booking prompt, schedule and Calendar context separately. Never invent times or bypass the planner. Planning clarification/unavailability is a normal client response, not grounds for human handoff. For other essential unknown facts or uncertain mutation outcomes, call request_human_assistance.',
     tools: ['request_human_assistance', 'get_media', 'send_media', 'get_services', 'get_bookings', 'plan_booking', 'cancel_booking'],
   },
