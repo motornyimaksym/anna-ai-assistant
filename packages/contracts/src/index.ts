@@ -60,12 +60,7 @@ export const conversationSchema = z.object({ telegramChatId: z.string().min(1), 
 export const clearConversationContextResponseSchema = z.object({ clearedMessages: z.number().int().min(0) }).strict();
 export const patchConversationSchema = z.object({ assistantEnabled: z.boolean().optional(), humanTakeoverUntil: z.string().datetime().nullable().optional() }).refine((value) => Object.keys(value).length > 0, 'At least one field is required');
 export const assistantPromptResponseSchema = z.object({ prompt: z.string(), isCustom: z.boolean(), updatedAt: z.string().datetime().optional() });
-const routingFieldSchema = z.string().min(1).max(20_000).refine((value) => value.trim().length > 0, 'Field must not be blank');
-export const updateRoutingPromptSchema = z.object({ instructions: routingFieldSchema, general: routingFieldSchema, booking: routingFieldSchema }).strict();
-export const routingPromptResponseSchema = updateRoutingPromptSchema.extend({ isCustom: z.boolean(), updatedAt: z.string().datetime().optional() });
-export type RoutingPromptResponse = z.infer<typeof routingPromptResponseSchema>;
-export type UpdateRoutingPromptRequest = z.infer<typeof updateRoutingPromptSchema>;
-export const assistantPromptIdSchema = z.enum(['routing', 'approval', 'probability', 'general', 'booking-conversation', 'booking-planner']);
+export const assistantPromptIdSchema = z.enum(['handoff', 'assistant']);
 export type AssistantPromptId = z.infer<typeof assistantPromptIdSchema>;
 export const promptCatalogEntrySchema = z.object({ id: z.string(), label: z.string(), description: z.string(), content: z.string() });
 export const promptCatalogResponseSchema = z.object({ systemOne: z.array(promptCatalogEntrySchema), systemTwo: z.array(promptCatalogEntrySchema) });
@@ -104,7 +99,6 @@ export * from './telegram-schedule-import.js';
 export * from './ai-chat.js';
 
 export * from './google-calendar.js';
-export * from './booking-plan.js';
 export * from './debug.js';
 export * from './prompt-test.js';
 

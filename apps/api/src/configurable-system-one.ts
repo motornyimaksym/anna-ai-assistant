@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { BookingRepository } from './repository.js';
 import { OpenAiSystemOneSelector } from './openai-system-one.js';
 import { FallbackSystemOneSelector } from './fallback-system-one.js';
-import { SystemOneSelector, type SystemOneInput, type SystemOneDecisionInput } from './system-one.js';
+import { SystemOneSelector, type SystemOneDecisionInput } from './system-one.js';
 
 @Injectable()
 export class ConfigurableSystemOneSelector extends SystemOneSelector {
@@ -13,7 +13,5 @@ export class ConfigurableSystemOneSelector extends SystemOneSelector {
     signal.throwIfAborted();
     return settings.provider === 'typesafe' ? this.typesafe : this.openai;
   }
-  async select(input: SystemOneInput, signal: AbortSignal) { return (await this.provider(signal)).select(input, signal); }
-  async answerBoolean(input: SystemOneDecisionInput, signal: AbortSignal) { return (await this.provider(signal)).answerBoolean(input, signal); }
   async estimateProbability(input: SystemOneDecisionInput, signal: AbortSignal) { return (await this.provider(signal)).estimateProbability(input, signal); }
 }

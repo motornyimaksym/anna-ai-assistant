@@ -90,13 +90,13 @@ it('keeps an open case without sending a client message when no responder is con
 
 
 describe('outgoing Probability gate', () => {
-  it.each([[0.5, 60, true], [0.6, 60, true], [0.61, 60, false], [0, 0, true], [0.01, 0, false], [1, 100, true]] as const)('checks %s against %s with strict boundary', async (probability, threshold, allowed) => {
+  it.each([[0.5, 60, true], [0.6, 60, true], [0.61, 60, false], [0, 0, true], [0.01, 0, false], [1, 100, false], [0.99, 100, true]] as const)('checks %s against %s with strict boundary', async (probability, threshold, allowed) => {
     const { service, selector, store } = setup(threshold);
     selector.estimateProbability.mockResolvedValue(probability);
     store.open.mockResolvedValue({ request, created: true });
     expect(await service.approveOutgoing('123', 'business-1', 1, 'Question', 'Draft')).toBe(allowed);
     if (allowed) expect(store.open).not.toHaveBeenCalled();
-    else expect(store.open).toHaveBeenCalledWith('123', 'business-1', 1, expect.stringContaining('Unsent draft: Draft'), 'bot_detectability', probability, threshold);
+    else expect(store.open).toHaveBeenCalledWith('123', 'business-1', 1, expect.stringContaining('Unsent draft: Draft'), 'handoff_probability', probability, threshold);
   });
 
   it('uses the latest 20 messages and exact formatted draft separately', async () => {
@@ -109,7 +109,10 @@ describe('outgoing Probability gate', () => {
     expect(context.recent_messages[0].content).toBe('message 5');
     expect(context.recent_messages.at(-1).content).toBe('message 24');
     expect(context.proposed_reply).toBe('<b>Exact draft</b>');
-    expect(input.question).toContain('automated');
+    expect(context.current_message).toBe('message 24');
+    expect(context.knowledge).toBe('Open 10:00–20:00');
+    expect(context.services[0].id).toBe('massage-60');
+    expect(input.question).toContain('exactly 1');
   });
 
   it.each([NaN, -0.1, 1.1, '0.5', null])('withholds invalid score %s', async (value) => {
@@ -142,7 +145,7 @@ it.each([true, false])('includes a client link when available: %s', async (avail
     return { ok: true, json: async () => url.endsWith('/getChat') ? { ok: true, result: { id: body.chat_id, type: 'private', username: body.chat_id === '42' ? 'responsible' : available ? 'client123' : undefined } } : { ok: true } };
   });
   vi.stubGlobal('fetch', fetcher);
-  await service.escalate('123', 'business-1', 1, 'Question', { reason: 'bot_detectability', probability: 0.9, thresholdPercent: 60 });
+  await service.escalate('123', 'business-1', 1, 'Question', { reason: 'handoff_probability', probability: 0.9, thresholdPercent: 60 });
   const delivery = fetcher.mock.calls.find(([url]) => url.endsWith('/sendMessage'))!;
   const text = JSON.parse(delivery[1]!.body as string).text;
   expect(text).toContain('123');

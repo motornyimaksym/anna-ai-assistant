@@ -43,29 +43,29 @@ describe('debug page access', () => {
   it('runs selected prompt with example text and shows its output', async () => {
     vi.mocked(adminApi.debugAccess).mockResolvedValue({ canView: true });
     vi.mocked(adminApi.debugLogs).mockResolvedValue([]);
-    vi.mocked(adminApi.promptTest).mockResolvedValue({ kind: 'decision', output: 'booking', sampleContext: false });
+    vi.mocked(adminApi.promptTest).mockResolvedValue({ kind: 'decision', output: '1', sampleContext: true });
     show();
     fireEvent.click(await screen.findByRole('tab', { name: 'Prompt test' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Example text' }), { target: { value: 'Can I book tomorrow?' } });
     fireEvent.click(screen.getByRole('button', { name: 'Run test' }));
-    await waitFor(() => expect(vi.mocked(adminApi.promptTest).mock.calls[0]?.[0]).toEqual({ system: 'one', promptId: 'routing', text: 'Can I book tomorrow?' }));
-    expect(await screen.findByText('booking')).toBeTruthy();
+    await waitFor(() => expect(vi.mocked(adminApi.promptTest).mock.calls[0]?.[0]).toEqual({ system: 'one', promptId: 'handoff', text: 'Can I book tomorrow?' }));
+    expect(await screen.findByText('1')).toBeTruthy();
   });
-  it('lets owner choose System Two planner and shows sample-context result', async () => {
+  it('lets owner choose unified Assistant and shows requested tools', async () => {
     vi.mocked(adminApi.debugAccess).mockResolvedValue({ canView: true });
     vi.mocked(adminApi.debugLogs).mockResolvedValue([]);
-    vi.mocked(adminApi.promptTest).mockResolvedValue({ kind: 'plan', output: '{"status":"needs_clarification"}', sampleContext: true });
+    vi.mocked(adminApi.promptTest).mockResolvedValue({ kind: 'tool_calls', output: 'get_booking_context', sampleContext: false });
     show();
     fireEvent.click(await screen.findByRole('tab', { name: 'Prompt test' }));
     fireEvent.mouseDown(screen.getByRole('combobox', { name: 'System' }));
     fireEvent.click(await screen.findByRole('option', { name: 'System Two' }));
     fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Prompt' }));
-    fireEvent.click(await screen.findByRole('option', { name: 'Booking planner' }));
-    expect(screen.getByText(/sample schedule tomorrow/i)).toBeTruthy();
+    fireEvent.click(await screen.findByRole('option', { name: 'Assistant' }));
+    expect(screen.queryByRole('combobox', { name: 'Planner intent' })).toBeNull();
     fireEvent.change(screen.getByRole('textbox', { name: 'Example text' }), { target: { value: 'Any time tomorrow?' } });
     fireEvent.click(screen.getByRole('button', { name: 'Run test' }));
-    await waitFor(() => expect(vi.mocked(adminApi.promptTest).mock.calls[0]?.[0]).toEqual({ system: 'two', promptId: 'booking-planner', intent: 'availability', text: 'Any time tomorrow?' }));
-    expect(await screen.findByText('Sample context used.')).toBeTruthy();
+    await waitFor(() => expect(vi.mocked(adminApi.promptTest).mock.calls[0]?.[0]).toEqual({ system: 'two', promptId: 'assistant', text: 'Any time tomorrow?' }));
+    expect(await screen.findByText('Requested tools (not executed)')).toBeTruthy();
   });
 });
 

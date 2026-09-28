@@ -42,7 +42,7 @@ export async function requestOpenAiResponse(body: Record<string, unknown>, signa
   if (!key) throw new Error('OpenAI is not configured');
   const payload = { model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini', ...(!body.conversation ? { store: false } : {}), ...body };
   const format = (body.text as { format?: { name?: string } } | undefined)?.format?.name;
-  const operation = operationOverride ?? (format === 'system_two_selection' ? 's1_routing' : format === 'boolean_answer' ? 's1_approval' : format === 'probability_estimate' ? 's1_probability' : body.conversation ? 's2_conversation' : 'booking_planner');
+  const operation = operationOverride ?? (format === 'probability_estimate' ? 's1_handoff' : 's2_assistant');
   return traceProviderRequest({ provider: 'openai', operation, endpoint: 'https://api.openai.com/v1/responses' }, payload, async (observer) => {
     const response = await fetchWithLinearBackoff('https://api.openai.com/v1/responses', {
       method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Idempotency-Key': randomUUID() }, signal,

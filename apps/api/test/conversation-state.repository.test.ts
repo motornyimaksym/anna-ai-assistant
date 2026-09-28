@@ -25,39 +25,11 @@ const setup = (start = initial) => {
   getFirestore.mockReturnValue(db);
   return { repository: new BookingRepository({} as FirebaseAdminService), read: () => value };
 };
-describe('pending proposal compare and consume', () => {
-  it('allows only one consumption and preserves unrelated fields', async () => {
-    const { repository, read } = setup();
-    const results = await Promise.all([1, 2].map(() => repository.replacePendingAction('chat', 'client', pending, undefined, { requireUnexpired: true })));
-    expect(results.sort()).toEqual([false, true]);
-    expect(read().pendingAction).toBeUndefined();
-    expect(read().assistantEnabled).toBe(true);
-  });
-  it('rejects a replaced proposal and does not discard it', async () => {
-    const { repository, read } = setup({ ...initial, pendingAction: { ...pending, id: 'bea51662-f7c6-4836-a2a3-0e3ec22341d1' } });
-    expect(await repository.replacePendingAction('chat', 'client', pending, undefined)).toBe(false);
-    expect(read().pendingAction).toBeDefined();
-  });
-  it.each([
-    { clientId: 'other' }, { assistantEnabled: false }, { activeHumanRequestId: 'human' },
-    { humanTakeoverUntil: '2099-01-01T00:00:00.000Z' },
-  ])('refuses execution after identity/pause change %j', async (patch) => {
-    const { repository, read } = setup({ ...initial, ...patch });
-    expect(await repository.replacePendingAction('chat', 'client', pending, undefined, { requireUnexpired: true })).toBe(false);
-    expect(read().pendingAction).toBeDefined();
-  });
-  it('rechecks expiry inside the transaction, while allowing expired proposal discard', async () => {
-    const expired = { ...pending, expiresAt: '2000-01-01T00:00:00.000Z' };
-    const { repository } = setup({ ...initial, pendingAction: expired });
-    expect(await repository.replacePendingAction('chat', 'client', expired, undefined, { requireUnexpired: true })).toBe(false);
-    expect(await repository.replacePendingAction('chat', 'client', expired, undefined)).toBe(true);
-  });
-  it('does not resurrect consumed proposals through stale Telegram activity', async () => {
-    const { repository, read } = setup();
-    await repository.replacePendingAction('chat', 'client', pending, undefined, { requireUnexpired: true });
-    await repository.touchConversation(initial);
-    expect(read().pendingAction).toBeUndefined();
-  });
+it('updates activity without copying stale workflow or automation state', async () => {
+  const { repository, read } = setup({ ...initial, pendingAction: undefined, assistantEnabled: false });
+  await repository.touchConversation(initial);
+  expect(read().pendingAction).toBeUndefined();
+  expect(read().assistantEnabled).toBe(false);
 });
 
 describe('poisoned provider conversation replacement', () => {

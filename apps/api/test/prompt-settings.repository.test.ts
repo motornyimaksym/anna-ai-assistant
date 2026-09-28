@@ -13,19 +13,20 @@ describe('editable prompt storage', () => {
       delete: async () => { data.delete(`${name}/${id}`); },
     }) }) });
     const repository = new BookingRepository({} as never);
-    const ids = ['routing', 'approval', 'probability', 'general', 'booking-conversation', 'booking-planner'] as const;
+    const ids = ['handoff', 'assistant'] as const;
     for (const id of ids) {
       expect(await repository.getPromptOverride(id)).toBeUndefined();
       await repository.savePromptOverride(id, `Custom ${id}`);
     }
     expect(data.size).toBe(ids.length);
     for (const id of ids) expect(await repository.getPromptOverride(id)).toMatchObject({ prompt: `Custom ${id}` });
-    await repository.deletePromptOverride('approval');
-    expect(await repository.getPromptOverride('approval')).toBeUndefined();
-    expect(await repository.getPromptOverride('routing')).toMatchObject({ prompt: 'Custom routing' });
-    data.set('assistantSettings/systemOneRoutingPrompt', { prompt: 'Legacy instructions', updatedAt: '2026-09-24T10:00:00.000Z' });
-    expect(await repository.getRoutingPromptOverride()).toEqual({ instructions: 'Legacy instructions', updatedAt: '2026-09-24T10:00:00.000Z' });
-    await repository.saveRoutingPromptOverride({ instructions: 'Route request', general: 'Facts', booking: 'Appointments' });
-    expect(await repository.getRoutingPromptOverride()).toMatchObject({ instructions: 'Route request', general: 'Facts', booking: 'Appointments' });
+    await repository.deletePromptOverride('handoff');
+    expect(await repository.getPromptOverride('handoff')).toBeUndefined();
+    expect(await repository.getPromptOverride('assistant')).toMatchObject({ prompt: 'Custom assistant' });
+    data.set('assistantSettings/prompt', { prompt: 'Legacy general', updatedAt: '2026-09-24T10:00:00.000Z' });
+    data.set('assistantSettings/systemOneProbabilityPrompt', { prompt: 'Legacy probability', updatedAt: '2026-09-24T10:00:00.000Z' });
+    expect(await repository.getPromptOverride('handoff')).toBeUndefined();
+    expect(data.get('assistantSettings/prompt')).toHaveProperty('prompt', 'Legacy general');
+    expect(data.has('assistantSettings/unifiedAssistantPrompt')).toBe(true);
   });
 });

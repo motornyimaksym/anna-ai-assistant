@@ -1,20 +1,13 @@
-import { randomUUID } from 'node:crypto';
-import { APPROVAL_QUESTION, CONFIRMATION_INVITATION } from './confirmation-prompt.js';
-import { SystemOneSelector, systemOneBooleanSchema } from './system-one.js';
-import { SYSTEM_TWO_PROMPTS, systemTwoPromptIdSchema } from './system-two.js';
 import { BookingNeedsHumanError } from './booking.service.js';
 import { createOpenAiConversation, requestOpenAiResponse } from './openai-transport.js';
-import { selectServiceOption } from './service-options.js';
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
-import { bookingPlanRequestSchema, type BookingDto, type BookingPlanRequest, type ConversationDto } from '@booking/contracts';
+import { type ConversationDto } from '@booking/contracts';
 import { boundedConversationHistory, systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from './system-two-instructions.js';
 import { AssistantToolsService, assistantToolSchema, type AssistantContext } from './assistant-tools.service.js';
 import { BookingRepository } from './repository.js';
-import { BookingPlannerService, type BookingPlanningEvidence } from './booking-planner.service.js';
 import { collectSensitiveStrings, DebugLogService, safeErrorCategory, safeErrorDiagnostic } from './debug-log.service.js';
 import { TextUtils } from './text-utils.js';
-import { formatBookingDate } from './booking-date-format.js';
 
 const string = { type: 'string' };
 const tool = (name: string, description: string, properties: Record<string, unknown>) => ({ type: 'function', name, description, strict: true, parameters: { type: 'object', properties, required: Object.keys(properties), additionalProperties: false } });
@@ -23,19 +16,14 @@ export const assistantToolDefinitions = [
   tool('send_media', 'Send one relevant media item immediately to this chat. Enforces cooldown. Only status sent confirms delivery.', { mediaId: string }),
   tool('get_services', 'List actual enabled services and prices. Empty means no services configured.', {}),
   tool('get_bookings', 'List this client’s bookings.', {}),
-  tool('plan_booking', 'Required for every availability question, new booking or rescheduling request. A separate planner checks schedule and Calendar. Return its clarification or proposal to the client.', { intent: { type: 'string', enum: ['availability', 'create', 'reschedule'] }, bookingId: { type: ['string', 'null'], description: 'Owned booking ID for reschedule, otherwise null. Use get_bookings if unknown.' } }),
-  tool('cancel_booking', 'Propose cancellation of an existing client booking. Requires subsequent explicit client approval.', { bookingId: string }),
+  tool('get_booking_context', 'Read fresh raw schedule messages and live Calendar busy intervals. Use before offering specific times. Never writes appointments.', {}),
 ];
 const outputSchema = z.object({ status: z.string().optional(), incomplete_details: z.object({ reason: z.string().optional() }).nullish(), output: z.array(z.object({ type: z.string(), name: z.string().optional(), arguments: z.string().optional(), call_id: z.string().optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()).optional() }).passthrough()) });
-const fallback = 'Потрібна допомога відповідальної людини. Будь ласка, зачекайте.';
 export type AssistantReply = { text: string; fromOpenAI: boolean; needsHuman?: boolean; humanContext?: string };
-type PlannedReply = { reply: AssistantReply; status: 'ready' | 'needs_clarification' | 'unavailable'; candidateStarts: string[]; evidence?: BookingPlanningEvidence };
-const staleProposal = 'Немає актуальної дії для підтвердження. Уточніть бажаний запис.';
-const localReply = (text: string): AssistantReply => ({ text: TextUtils.replaceLongDashes(text), fromOpenAI: false });
 @Injectable()
 export class OpenAiService {
   private readonly logger = new Logger(OpenAiService.name);
-  constructor(private readonly repository: BookingRepository, private readonly assistantTools: AssistantToolsService, private readonly planner: BookingPlannerService, private readonly debug: DebugLogService, private readonly selector: SystemOneSelector) {}
+  constructor(private readonly repository: BookingRepository, private readonly assistantTools: AssistantToolsService, private readonly debug: DebugLogService) {}
   async respond(conversation: ConversationDto, context: AssistantContext, text: string): Promise<AssistantReply> {
     const sensitiveValues = [text];
     try {
@@ -43,56 +31,35 @@ export class OpenAiService {
     } catch (error) {
       await this.debug.record(context, 'error', { reason: 'assistant_failed', errorCategory: safeErrorCategory(error) }, 'error');
       this.logger.error(`Assistant request failed trace=${context.traceId ?? 'unknown'} category=${safeErrorCategory(error)}: ${JSON.stringify(safeErrorDiagnostic(error, sensitiveValues))}`);
-      return { ...localReply(fallback), needsHuman: true, ...(error instanceof BookingNeedsHumanError ? { humanContext: error.message } : {}) };
+      return { text: '', fromOpenAI: false, needsHuman: true, ...(error instanceof BookingNeedsHumanError ? { humanContext: error.message } : {}) };
     }
   }
   private async run(conversation: ConversationDto, context: AssistantContext, text: string, sensitiveValues: string[]): Promise<AssistantReply> {
-    if (text.length > 4000) return localReply('Будь ласка, скоротіть повідомлення до 4000 символів.');
+    if (text.length > 4000) throw new Error('Incoming message too long');
     const deadline = AbortSignal.timeout(60_000);
     const history = (await this.repository.listMessages(context.telegramChatId)).slice(-20).map(({ role, content }) => ({ role, content: content.slice(0, 4000) }));
     sensitiveValues.push(...history.map(({ content }) => content), conversation.summary);
-    const pending = conversation.pendingAction;
-    let proposalDiscarded = false;
-    if (pending?.confirmationText) sensitiveValues.push(pending.confirmationText);
-    if (pending?.id && pending.confirmationText && pending.expiresAt > new Date().toISOString() && history.some((item) => item.role === 'assistant' && item.content === pending.confirmationText)) {
-      const evidence = JSON.stringify({ message: text, history, proposal: { action: pending.name, confirmationText: pending.confirmationText } });
-      const decide = async (question: string) => systemOneBooleanSchema.parse(await this.selector.answerBoolean({ question, context: evidence }, deadline));
-      if (await decide(APPROVAL_QUESTION)) return this.confirmProposal(conversation, context);
-      if (!await this.repository.replacePendingAction(context.telegramChatId, context.clientId, pending, undefined)) return localReply(staleProposal);
-      await this.debug.record(context, 'confirmation_result', { status: 'discarded' });
-      conversation = { ...conversation, pendingAction: undefined };
-      proposalDiscarded = true;
-    }
-    const promptId = systemTwoPromptIdSchema.parse(await this.selector.select({
-      message: text, summary: conversation.summary.slice(0, 4000), history,
-      hasPendingProposal: !!conversation.pendingAction && conversation.pendingAction.expiresAt > new Date().toISOString(),
-    }, deadline));
-    await this.debug.record(context, 'assistant_started', { intent: promptId, reason: 'system_one_selected' });
-    const definition = SYSTEM_TWO_PROMPTS[promptId];
-    const selectedTools = assistantToolDefinitions.filter((item) => definition.tools.includes(item.name));
+    const selectedTools = assistantToolDefinitions;
     const key = process.env.OPENAI_API_KEY;
     if (!key) throw new Error('OpenAI is not configured');
     const [promptOverride, knowledgeBaseOverride, configuredServices] = await Promise.all([
-      promptId === 'general' ? this.repository.getAssistantPromptOverride() : this.repository.getPromptOverride('booking-conversation'),
+      this.repository.getPromptOverride('assistant'),
       this.repository.getKnowledgeBaseOverride(),
       this.repository.listServices(),
     ]);
-    const instructions = systemTwoInstructions({ promptId, promptOverride: promptOverride?.prompt });
-    const rag = [
-      systemTwoRag({ message: text, recentMessages: history.map(({ content }) => content), knowledgeBaseOverride: knowledgeBaseOverride?.content, configuredServices }),
-      ...(proposalDiscarded ? ['Current booking state: Previous proposal was discarded without execution. Address the current message normally; do not send a discard acknowledgment or recreate the old proposal unless requested. Any new proposal requires later approval.'] : []),
-    ].join('\n');
+    const instructions = systemTwoInstructions({ promptOverride: promptOverride?.prompt });
+    const rag = systemTwoRag({ message: text, knowledgeBaseOverride: knowledgeBaseOverride?.content, configuredServices });
     sensitiveValues.push(...collectSensitiveStrings({ instructions, rag, promptOverride, knowledgeBaseOverride, configuredServices }));
     let openaiConversationId = conversation.openaiConversationId ?? await this.repository.ensureOpenAiConversation(context.telegramChatId, context.clientId, await createOpenAiConversation(deadline));
     const bookingHistory = history.at(-1)?.role === 'user' && history.at(-1)?.content === text ? history.slice(0, -1) : history;
     const model = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
-    const recentHistory = boundedConversationHistory(bookingHistory, promptId === 'booking' ? 19 : 8);
+    const recentHistory = boundedConversationHistory(bookingHistory, 19);
     let requestContext = systemTwoRequestContext({ instructions, rag, history: recentHistory, message: text, model });
     let input: unknown[] = requestContext.input;
     let mediaAttempted = false;
     let terminalReply: AssistantReply | undefined;
     for (let round = 0; round <= 4; round++) {
-      const request = () => requestOpenAiResponse({ model, conversation: openaiConversationId, ...(model === 'gpt-6-luna' ? { reasoning: { effort: 'low' } } : {}), ...(round === 0 ? requestContext : {}), input, tools: selectedTools, ...(terminalReply || round === 4 ? { tool_choice: 'none' } : {}), parallel_tool_calls: false, max_output_tokens: 4096 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]), `s2_${promptId}`);
+      const request = () => requestOpenAiResponse({ model, conversation: openaiConversationId, ...(model === 'gpt-6-luna' ? { reasoning: { effort: 'low' } } : {}), ...(round === 0 ? requestContext : {}), input, tools: selectedTools, ...(terminalReply || round === 4 ? { tool_choice: 'none' } : {}), parallel_tool_calls: false, max_output_tokens: 4096 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]), 's2_assistant');
       let response: unknown;
       try { response = await request(); }
       catch (error) {
@@ -102,7 +69,7 @@ export class OpenAiService {
         const replacement = await createOpenAiConversation(deadline);
         await this.repository.replaceOpenAiConversation(context.telegramChatId, context.clientId, openaiConversationId, replacement);
         openaiConversationId = replacement;
-        requestContext = systemTwoRequestContext({ instructions, rag: `${rag}\nRECOVERED HISTORY: Prior messages are historical evidence only. Never replay previous actions or infer that an uncertain operation succeeded. Handle only the current request; require fresh approval for new booking mutations.`, history: boundedConversationHistory(bookingHistory, promptId === 'booking' ? 19 : 20), message: text, model });
+        requestContext = systemTwoRequestContext({ instructions, rag: `${rag}\nRECOVERED HISTORY: Prior messages are historical evidence only. Never replay previous actions or infer that an uncertain operation succeeded. Handle only the current request; booking mutations are unavailable; humans finalize appointments.`, history: boundedConversationHistory(bookingHistory, 20), message: text, model });
         input = requestContext.input;
         this.logger.warn(`Recovered incomplete OpenAI conversation trace=${context.traceId ?? 'unknown'}`);
         response = await request();
@@ -115,7 +82,8 @@ export class OpenAiService {
       if (!calls.length) {
         const reply = output.flatMap((item) => item.type === 'message' ? item.content ?? [] : []).filter((part) => part.type === 'output_text').map((part) => part.text ?? '').join('\n').trim();
         if (!reply) throw new Error('Empty model reply');
-        return { text: TextUtils.replaceLongDashes(reply.slice(0, 4000)), fromOpenAI: true };
+        if (reply.length > 4000) throw new Error('Model reply too long');
+        return { text: TextUtils.replaceLongDashes(reply), fromOpenAI: true };
       }
       for (const call of calls) {
         sensitiveValues.push(...collectSensitiveStrings(call.arguments));
@@ -123,78 +91,20 @@ export class OpenAiService {
         await this.debug.record(context, 'tool_called', { tool: call.name?.slice(0, 100) });
         try {
           if (!selectedTools.some((item) => item.name === call.name)) throw new Error('Unsupported tool');
-          if (call.name === 'plan_booking') {
-            const planned = await this.planBooking(conversation, context, text, bookingPlanRequestSchema.parse(JSON.parse(call.arguments ?? '{}')), deadline);
-            terminalReply = planned.reply;
-            result = { status: planned.status, reply: planned.reply.text, ...(planned.status === 'ready' ? { candidateStarts: planned.candidateStarts } : {}), ...(planned.evidence ? { availability: { ...planned.evidence, note: 'Time-bound scheduling evidence. Re-run plan_booking for a new scheduling request; do not infer current availability from this closeout result.' } } : {}) };
-          } else {
-            const parsed = assistantToolSchema.parse({ name: call.name, arguments: JSON.parse(call.arguments ?? '{}') });
-            if (parsed.name === 'cancel_booking') {
-              const booking = await this.assistantTools.execute({ name: 'get_bookings', arguments: {} }, context).then((all) => (all as BookingDto[]).find((item) => item.id === parsed.arguments.bookingId));
-              if (!booking || booking.clientId !== context.clientId || booking.telegramChatId !== context.telegramChatId || booking.status !== 'confirmed' || booking.calendarOperation) throw new Error('Booking unavailable');
-              const service = await this.repository.getService(booking.serviceId);
-              const confirmationText = `Скасувати запис: ${service?.name ?? booking.serviceId}\nЧас: ${formatBookingDate(booking.startAt)}.\n${CONFIRMATION_INVITATION}`;
-              terminalReply = await this.stageProposal(conversation, context, parsed, confirmationText);
-              result = { status: 'proposal_staged', confirmation: terminalReply.text };
-            } else if (parsed.name === 'send_media') {
-              if (mediaAttempted) { result = { status: 'unavailable', reason: 'Only one media attempt per turn' }; }
-              else { mediaAttempted = true; result = await this.assistantTools.execute(parsed, context); }
-            } else {
-              result = await this.assistantTools.execute(parsed, context);
-            }
-          }
+          const parsed = assistantToolSchema.parse({ name: call.name, arguments: JSON.parse(call.arguments ?? '{}') });
+          if (parsed.name === 'send_media') {
+            if (mediaAttempted) result = { status: 'unavailable', reason: 'Only one media attempt per turn' };
+            else { mediaAttempted = true; result = await this.assistantTools.execute(parsed, context); }
+          } else result = await this.assistantTools.execute(parsed, context);
         } catch (error) {
-          terminalReply = { ...localReply(fallback), needsHuman: true };
+          terminalReply = { text: '', fromOpenAI: false, needsHuman: true };
           result = { status: 'failed', category: safeErrorCategory(error) };
         }
-        if (result && typeof result === 'object' && 'status' in result && ['failed', 'uncertain', 'unavailable'].includes(String(result.status)) && call.name !== 'plan_booking') terminalReply = { ...localReply(fallback), needsHuman: true };
+        if (result && typeof result === 'object' && 'status' in result && ['failed', 'uncertain', 'unavailable'].includes(String(result.status))) terminalReply = { text: '', fromOpenAI: false, needsHuman: true };
         sensitiveValues.push(...collectSensitiveStrings(result));
         input.push({ type: 'function_call_output', call_id: call.call_id, output: JSON.stringify(result) });
       }
     }
-    return { ...localReply(fallback), needsHuman: true };
+    return { text: '', fromOpenAI: false, needsHuman: true };
   }
-  private async confirmProposal(conversation: ConversationDto, context: AssistantContext): Promise<AssistantReply> {
-    const pending = conversation.pendingAction;
-    if (!pending?.id || !pending.confirmationText || pending.expiresAt <= new Date().toISOString()) return localReply(staleProposal);
-    if (!await this.repository.replacePendingAction(context.telegramChatId, context.clientId, pending, undefined, { requireUnexpired: true })) return localReply(staleProposal);
-    try {
-      const result = await this.assistantTools.execute(pending, context);
-      const booking = z.object({ id: z.string(), status: z.enum(['confirmed', 'cancelled']), startAt: z.string(), calendarSyncStatus: z.literal('synced') }).parse(result);
-      await this.debug.record(context, 'confirmation_result', { status: 'completed', tool: pending.name });
-      return localReply(`Готово. Запис ${booking.id}: ${booking.status}. Час: ${formatBookingDate(booking.startAt)}.`);
-    } catch (error) {
-      await this.debug.record(context, 'confirmation_result', { status: 'failed_or_uncertain', errorCategory: safeErrorCategory(error) }, 'error');
-      throw error;
-    }
-  }
-  private async stageProposal(conversation: ConversationDto, context: AssistantContext, action: Pick<NonNullable<ConversationDto['pendingAction']>, 'name' | 'arguments'>, confirmationText: string): Promise<AssistantReply> {
-    confirmationText = TextUtils.replaceLongDashes(confirmationText);
-    if (confirmationText.length > 4000) throw new Error('Proposal summary too long');
-    const pendingAction = { ...action, id: randomUUID(), confirmationText, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() };
-    if (!await this.repository.replacePendingAction(context.telegramChatId, context.clientId, conversation.pendingAction, pendingAction)) return localReply(staleProposal);
-    await this.debug.record(context, 'proposal_created', { tool: action.name });
-    return localReply(confirmationText);
-  }
-  private async planBooking(conversation: ConversationDto, context: AssistantContext, text: string, request: BookingPlanRequest, signal: AbortSignal): Promise<PlannedReply> {
-    if (conversation.pendingAction) {
-      if (!await this.repository.replacePendingAction(context.telegramChatId, context.clientId, conversation.pendingAction, undefined)) return { reply: localReply(staleProposal), status: 'unavailable', candidateStarts: [] };
-      conversation = { ...conversation, pendingAction: undefined };
-    }
-    const { plan, evidence } = await this.planner.planWithContext(conversation, context, text, request, signal);
-    const finish = (reply: AssistantReply): PlannedReply => ({ reply, status: plan.status, candidateStarts: plan.status === 'ready' ? plan.candidateStarts : [], ...(evidence ? { evidence } : {}) });
-    if (plan.status !== 'ready') return finish(localReply(plan.question ?? 'Уточніть, будь ласка, бажану послугу та час.'));
-    if (request.intent === 'availability') return finish(localReply(`Можливі початки сеансу:
-${plan.candidateStarts.map((start) => `- ${formatBookingDate(start)}`).join('\n')}
-Який час вам підходить?`));
-    const service = await this.repository.getService(plan.serviceId!);
-    if (!service?.enabled) return finish(localReply('Ця послуга зараз недоступна. Який інший масаж вас цікавить?'));
-    const action: { name: 'reschedule_booking' | 'create_booking'; arguments: Record<string, string | number> } = request.intent === 'reschedule'
-      ? { name: 'reschedule_booking' as const, arguments: { bookingId: request.bookingId!, startAt: plan.startAt! } }
-      : { name: 'create_booking' as const, arguments: { serviceId: service.id, startAt: plan.startAt!, durationMinutes: plan.durationMinutes! } };
-    const quote = request.intent === 'create' ? `\nЦіна: ${selectServiceOption(service, plan.durationMinutes!).price} ${service.currency}` : '';
-    const confirmationText = `${request.intent === 'create' ? 'Новий запис' : 'Перенесення запису'}: ${service.name}\nЧас: ${formatBookingDate(plan.startAt!)}\nТривалість: ${plan.durationMinutes} хв${quote}\n${CONFIRMATION_INVITATION}`;
-    return finish(await this.stageProposal(conversation, context, action, confirmationText));
-  }
-
 }

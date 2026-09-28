@@ -1,5 +1,4 @@
 import { systemOneSettingsSchema, type SystemOneSettings } from '@booking/contracts';
-import { isDeepStrictEqual } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { FieldValue, getFirestore, type DocumentData, type Firestore } from 'firebase-admin/firestore';
@@ -54,25 +53,11 @@ export class BookingRepository {
   constructor(_firebase: FirebaseAdminService) { this.db = getFirestore(); }
 
   private promptDocumentId(id: AssistantPromptId): string {
-    return {
-      routing: 'systemOneRoutingPrompt', approval: 'systemOneApprovalPrompt', probability: 'systemOneProbabilityPrompt',
-      general: 'prompt', 'booking-conversation': 'bookingConversationPrompt', 'booking-planner': 'bookingPrompt',
-    }[id];
+    return { handoff: 'handoffPrompt', assistant: 'unifiedAssistantPrompt' }[id];
   }
   async getPromptOverride(id: AssistantPromptId): Promise<{ prompt: string; updatedAt: string } | undefined> {
     const data = (await this.db.collection('assistantSettings').doc(this.promptDocumentId(id)).get()).data();
     return typeof data?.prompt === 'string' && typeof data.updatedAt === 'string' ? { prompt: data.prompt, updatedAt: data.updatedAt } : undefined;
-  }
-  async getRoutingPromptOverride(): Promise<{ instructions: string; general?: string; booking?: string; updatedAt: string } | undefined> {
-    const data = (await this.db.collection('assistantSettings').doc('systemOneRoutingPrompt').get()).data();
-    const instructions = typeof data?.instructions === 'string' ? data.instructions : data?.prompt;
-    if (typeof instructions !== 'string' || typeof data?.updatedAt !== 'string') return undefined;
-    return { instructions, ...(typeof data.general === 'string' ? { general: data.general } : {}), ...(typeof data.booking === 'string' ? { booking: data.booking } : {}), updatedAt: data.updatedAt };
-  }
-  async saveRoutingPromptOverride(value: { instructions: string; general: string; booking: string }) {
-    const saved = { ...value, updatedAt: new Date().toISOString() };
-    await this.db.collection('assistantSettings').doc('systemOneRoutingPrompt').set(saved);
-    return saved;
   }
   async savePromptOverride(id: AssistantPromptId, prompt: string): Promise<{ prompt: string; updatedAt: string }> {
     const value = { prompt, updatedAt: new Date().toISOString() };
@@ -277,21 +262,6 @@ export class BookingRepository {
       else tx.set(ref, withoutUndefined(conversation));
     });
   }
-  /** Compare-and-set: staging, rejection and consumption all bind to one proposal snapshot. */
-  async replacePendingAction(chatId: string, clientId: string, expected: ConversationDto['pendingAction'], replacement: ConversationDto['pendingAction'], options: { requireUnexpired?: boolean } = {}): Promise<boolean> {
-    const ref = this.db.collection('conversations').doc(chatId);
-    return this.db.runTransaction(async (tx) => {
-      const doc = await tx.get(ref);
-      if (!doc.exists) return false;
-      const current = conversationSchema.parse({ ...doc.data(), telegramChatId: chatId });
-      const now = new Date().toISOString();
-      if (current.clientId !== clientId || !current.assistantEnabled || current.activeHumanRequestId || (current.humanTakeoverUntil && current.humanTakeoverUntil > now)) return false;
-      if (!isDeepStrictEqual(current.pendingAction, expected)) return false;
-      if (options.requireUnexpired && (!current.pendingAction || current.pendingAction.expiresAt <= now)) return false;
-      tx.update(ref, { pendingAction: replacement ? withoutUndefined(replacement) : FieldValue.delete(), updatedAt: now });
-      return true;
-    });
-  }
   async listConversations(): Promise<ConversationDto[]> {
     const snapshot = await this.db.collection('conversations').get();
     return snapshot.docs.map((doc) => conversationSchema.parse({ ...doc.data(), telegramChatId: doc.id })).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -341,17 +311,7 @@ export class BookingRepository {
   async deleteKnowledgeBaseOverride(): Promise<void> {
     await this.db.collection('assistantSettings').doc('knowledgeBase').delete();
   }
-  async getBookingPromptOverride(): Promise<{ prompt: string; updatedAt: string } | undefined> {
-    const doc = await this.db.collection('assistantSettings').doc('bookingPrompt').get();
-    const data = doc.data();
-    return typeof data?.prompt === 'string' && typeof data.updatedAt === 'string' ? { prompt: data.prompt, updatedAt: data.updatedAt } : undefined;
-  }
-  async saveBookingPromptOverride(prompt: string) {
-    const value = { prompt, updatedAt: new Date().toISOString() };
-    await this.db.collection('assistantSettings').doc('bookingPrompt').set(value);
-    return value;
-  }
-  async deleteBookingPromptOverride() { await this.db.collection('assistantSettings').doc('bookingPrompt').delete(); }
+
   private diagnosticBodyFile(id: string, kind: 'request' | 'response') { return getStorage().bucket().file(`assistant-diagnostics/${id}/${kind}.json`); }
   private async deleteDiagnosticBodies(id: string) {
     await Promise.all((['request', 'response'] as const).map(async (kind) => {
@@ -445,20 +405,7 @@ export class BookingRepository {
     }
     return { status: 'unavailable' };
   }
-  async getAssistantPromptOverride(): Promise<{ prompt: string; updatedAt: string } | undefined> {
-    const doc = await this.db.collection('assistantSettings').doc('prompt').get();
-    if (!doc.exists) return undefined;
-    const data = doc.data();
-    return typeof data?.prompt === 'string' && typeof data.updatedAt === 'string' ? { prompt: data.prompt, updatedAt: data.updatedAt } : undefined;
-  }
-  async saveAssistantPromptOverride(prompt: string): Promise<{ prompt: string; updatedAt: string }> {
-    const value = { prompt, updatedAt: new Date().toISOString() };
-    await this.db.collection('assistantSettings').doc('prompt').set(value);
-    return value;
-  }
-  async deleteAssistantPromptOverride(): Promise<void> {
-    await this.db.collection('assistantSettings').doc('prompt').delete();
-  }
+
   async getSystemOneSettings(): Promise<SystemOneSettings> {
     const doc = await this.db.collection('assistantSettings').doc('systemOne').get();
     if (!doc.exists) return { provider: 'openai' };

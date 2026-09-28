@@ -104,3 +104,7 @@ All automatic booking-bot text passes an outgoing S1 Probability check after cur
 OpenAI System One decisions reserve 4,096 output tokens for reasoning and JSON. Explicit incomplete/max_output_tokens responses permit one isolated retry at 8,192 tokens within the same 10-second deadline. No partial decision is accepted; token exhaustion and other incomplete responses have distinct safe diagnostic categories. This recovery never replays booking or Telegram operations.
 
 Telegram turns establish isolated async request-diagnostic scopes. OpenAI and TypeSafe transports record sanitized bounded payloads and technical request/response metadata through the existing debug writer. Prompt tests and unrelated admin requests have no scope and create no records. A transactional 200-event index evicts old document bodies atomically; detailed payloads are never accumulated in one Firestore document.
+
+## Unified assistant flow (SPEC 62)
+
+Telegram guards → one S2 Assistant prompt with read-only business/scheduling tools → one S1 Handoff probability → send or pause for human. The model authors all automatic client text. No routing, separate planner, boolean approval, staged proposal execution or automatic Calendar writes remain in this flow. Human finalizes appointments. Override IDs are `assistant` and `handoff`; old prompt documents are inactive. Probability 1 always pauses regardless of threshold.

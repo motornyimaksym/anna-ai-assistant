@@ -73,11 +73,11 @@ it('records the actual wire payload, HTTP retries, and final response inside a t
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(null, { status: 503 })).mockResolvedValueOnce(new Response(JSON.stringify({ status: 'completed', usage: { input_tokens: 20, output_tokens: 5 }, output: [] }), { status: 200, headers: { 'x-request-id': 'req_final' } }));
   vi.stubGlobal('fetch', fetcher);
   const write = vi.fn(async (_request: DebugRequest, _bodies: { requestBody: string; responseBody?: string }) => {});
-  await withRequestDiagnostics(write, () => requestOpenAiResponse({ model: 'test-model', input: 'Hello', max_output_tokens: 4096, text: { format: { name: 'system_two_selection' } } }, new AbortController().signal));
+  await withRequestDiagnostics(write, () => requestOpenAiResponse({ model: 'test-model', input: 'Hello', max_output_tokens: 4096, text: { format: { name: 'probability_estimate' } } }, new AbortController().signal));
   expect(write).toHaveBeenCalledTimes(1);
   const detail = write.mock.calls[0]![0];
   const bodies = write.mock.calls[0]![1];
-  expect(detail).toMatchObject({ operation: 's1_routing', attempts: 2, store: false, conversationAttached: false, providerRequestId: 'req_final', httpStatus: 200 });
+  expect(detail).toMatchObject({ operation: 's1_handoff', attempts: 2, store: false, conversationAttached: false, providerRequestId: 'req_final', httpStatus: 200 });
   expect(JSON.parse(bodies.requestBody)).toEqual(JSON.parse(fetcher.mock.calls[1]![1].body));
   expect(JSON.parse(bodies.responseBody!).status).toBe('completed');
   expect(detail.usage).toContain('output_tokens');

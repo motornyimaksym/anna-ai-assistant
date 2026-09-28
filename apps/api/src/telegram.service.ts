@@ -108,8 +108,7 @@ export class TelegramService {
       if (answer.needsHuman) {
         await this.debug.record(trace, 'handoff', { reason: 'assistant_requested_human' }, 'warn');
         await this.repository.appendMessage(chatId, 'user', message.text.slice(0, 4000));
-        const action = conversation.pendingAction ? `Requested ${conversation.pendingAction.name}: ${JSON.stringify(conversation.pendingAction.arguments)}` : undefined;
-        await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, [answer.humanContext, action].filter(Boolean).join('\n'));
+        await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, answer.humanContext);
         return;
       }
       const outgoingText = TextUtils.replaceLongDashes(answer.text);
