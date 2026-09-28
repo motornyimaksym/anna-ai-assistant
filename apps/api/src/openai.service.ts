@@ -7,7 +7,7 @@ import { createOpenAiConversation, requestOpenAiResponse } from './openai-transp
 import { selectServiceOption } from './service-options.js';
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
-import { bookingPlanRequestSchema, type BookingPlanRequest, type ConversationDto } from '@booking/contracts';
+import { bookingPlanRequestSchema, type BookingDto, type BookingPlanRequest, type ConversationDto } from '@booking/contracts';
 import { systemTwoInstructions } from './system-two-instructions.js';
 import { AssistantToolsService, assistantToolSchema, type AssistantContext } from './assistant-tools.service.js';
 import { BookingRepository } from './repository.js';
@@ -118,7 +118,7 @@ export class OpenAiService {
           } else {
             const parsed = assistantToolSchema.parse({ name: call.name, arguments: JSON.parse(call.arguments ?? '{}') });
             if (parsed.name === 'cancel_booking') {
-              const booking = await this.repository.getBooking(parsed.arguments.bookingId);
+              const booking = await this.assistantTools.execute({ name: 'get_bookings', arguments: {} }, context).then((all) => (all as BookingDto[]).find((item) => item.id === parsed.arguments.bookingId));
               if (!booking || booking.clientId !== context.clientId || booking.telegramChatId !== context.telegramChatId || booking.status !== 'confirmed' || booking.calendarOperation) throw new Error('Booking unavailable');
               const service = await this.repository.getService(booking.serviceId);
               const time = new Date(booking.startAt).toLocaleString('uk-UA', { timeZone: process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv' });

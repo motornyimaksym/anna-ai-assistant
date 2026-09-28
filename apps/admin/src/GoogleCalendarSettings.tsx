@@ -13,7 +13,7 @@ export function GoogleCalendarSettings() {
   const [notice, setNotice] = useState('');
   const update = (value: GoogleCalendarStatus) => { cache.setQueryData(key, value); void cache.invalidateQueries({ queryKey: ['google-calendars'] }); };
   const connect = useMutation({ mutationFn: adminApi.startGoogleCalendar, onSuccess: ({ url }) => { window.location.assign(url); } });
-  const select = useMutation({ mutationFn: adminApi.selectGoogleCalendar, onSuccess: (value) => { update(value); setSelected(''); setNotice('Calendar selected. New bookings will sync here.'); } });
+  const select = useMutation({ mutationFn: adminApi.selectGoogleCalendar, onSuccess: (value) => { update(value); setSelected(''); setNotice('Calendar selected. New appointments will be created here.'); } });
   const saveConflicts = useMutation({ mutationFn: adminApi.selectConflictCalendars, onSuccess: (value) => { update(value); setConflicts(undefined); setNotice('Conflict calendars saved.'); } });
   const check = useMutation({ mutationFn: adminApi.checkGoogleCalendar, onSuccess: (value) => { update(value); setNotice('Google Calendar connection verified.'); } });
   const disconnect = useMutation({ mutationFn: adminApi.disconnectGoogleCalendar, onSuccess: (value) => { update(value); cache.removeQueries({ queryKey: ['google-calendars'] }); setConfirmDisconnect(false); setNotice('Google Calendar disconnected.'); } });
@@ -21,7 +21,7 @@ export function GoogleCalendarSettings() {
   const error = saveConflicts.error ?? connect.error ?? select.error ?? check.error ?? disconnect.error;
   return <Stack spacing={1.5}>
     <Typography variant="h6">Google Calendar</Typography>
-    <Typography variant="body2">Connect a Google account to check busy times and sync massage appointments. Google will ask for permission to view your calendar list and manage events. Existing events remain when disconnected.</Typography>
+    <Typography variant="body2">Connect Google Calendar to manage appointments and check busy times. Google will ask for permission to view your calendar list and manage events. Existing events remain when disconnected.</Typography>
     {status.isPending && <Typography>Loading Calendar connection…</Typography>}
     {status.isError && <Alert severity="error">Could not load Calendar connection. <Button onClick={() => void status.refetch()}>Retry</Button></Alert>}
     {status.data && <>
@@ -53,7 +53,7 @@ export function GoogleCalendarSettings() {
       </>}
       {status.data.phase === 'connected' && <Button disabled={busy || !status.data.calendarId} onClick={() => check.mutate()}>Check Calendar connection</Button>}
       {status.data.phase !== 'disconnected' && <Button color="warning" disabled={busy} onClick={() => setConfirmDisconnect(true)}>{status.data.phase === 'pending' ? 'Cancel Calendar authorization' : 'Disconnect Google Calendar'}</Button>}
-      {confirmDisconnect && <Alert severity="warning">Disconnect Google Calendar? Future calendar sync will stop; existing events will remain.<Stack direction="row"><Button disabled={busy} onClick={() => disconnect.mutate()}>Confirm disconnect</Button><Button onClick={() => setConfirmDisconnect(false)}>Keep connection</Button></Stack></Alert>}
+      {confirmDisconnect && <Alert severity="warning">Disconnect Google Calendar? New appointments and changes to existing appointments will stop; existing events will remain.<Stack direction="row"><Button disabled={busy} onClick={() => disconnect.mutate()}>Confirm disconnect</Button><Button onClick={() => setConfirmDisconnect(false)}>Keep connection</Button></Stack></Alert>}
     </>}
     {busy && <Typography role="status">Contacting Google…</Typography>}
     {error && <Alert severity="error">{error.message}</Alert>}

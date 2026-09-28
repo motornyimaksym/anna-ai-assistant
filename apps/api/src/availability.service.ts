@@ -15,12 +15,13 @@ export class AvailabilityService {
     return this.findWithTiming(input, { durationMinutes: option.durationMinutes, bufferMinutes: service.bufferMinutes });
   }
   async findForBooking(bookingId: string, date: string) {
-    return this.findWithTiming({ date }, await this.repository.getBookingTiming(bookingId), bookingId);
+    return this.findWithTiming({ date }, await this.calendar.getBookingTiming(bookingId), bookingId);
   }
   private async findWithTiming(input: { date: string; after?: string; before?: string }, service: { durationMinutes: number; bufferMinutes: number }, excludeBookingId?: string) {
     const start = `${input.date}T00:00:00.000Z`;
     const end = `${input.date}T23:59:59.999Z`;
-    const [busy, rules, exceptions, occupied] = await Promise.all([this.calendar.getBusyIntervals(start, end), this.repository.getRules(), this.repository.getExceptions(), this.repository.listLockedIntervals(excludeBookingId)]);
-    return { slots: generateAvailableSlots({ ...input, timezone: process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv', service, rules, exceptions, occupied, busy }) };
+    const exclude = excludeBookingId ? await this.calendar.getBooking(excludeBookingId) : undefined;
+    const [busy, rules, exceptions] = await Promise.all([this.calendar.getBusyIntervals(start, end, exclude), this.repository.getRules(), this.repository.getExceptions()]);
+    return { slots: generateAvailableSlots({ ...input, timezone: process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv', service, rules, exceptions, occupied: [], busy }) };
   }
 }

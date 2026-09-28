@@ -24,7 +24,7 @@ export class AssistantToolsService {
       case 'get_media': return this.media.available(context.telegramChatId);
       case 'send_media': return this.media.send(tool.arguments.mediaId, context.telegramChatId, context.businessConnectionId);
       case 'get_services': return (await this.repository.listServices()).filter((service) => service.enabled);
-      case 'get_bookings': return (await this.repository.listBookings()).filter((booking) => booking.clientId === context.clientId && booking.telegramChatId === context.telegramChatId);
+      case 'get_bookings': return (await this.bookings.list()).filter((booking) => booking.clientId === context.clientId && booking.telegramChatId === context.telegramChatId);
       case 'create_booking': return this.bookings.create({ ...tool.arguments, clientId: context.clientId, telegramChatId: context.telegramChatId, businessConnectionId: context.businessConnectionId });
       case 'cancel_booking':
         await this.ownedBooking(tool.arguments.bookingId, context);
@@ -37,7 +37,7 @@ export class AssistantToolsService {
     }
   }
   private async ownedBooking(id: string, context: AssistantContext) {
-    const booking = await this.repository.getBooking(id);
+    const booking = await this.bookings.get(id);
     if (!booking || booking.clientId !== context.clientId || booking.telegramChatId !== context.telegramChatId) throw new Error('Booking not found');
     return booking;
   }

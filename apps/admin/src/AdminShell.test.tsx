@@ -21,7 +21,7 @@ afterEach(() => {
 describe("admin experience", () => {
   it("groups navigation, marks the current page and exposes a skip link", () => {
     render(
-      <MemoryRouter initialEntries={["/bookings"]}>
+      <MemoryRouter initialEntries={["/bot-settings"]}>
         <AdminShell uid="admin">
           <p>Page content</p>
         </AdminShell>
@@ -29,9 +29,10 @@ describe("admin experience", () => {
     );
     expect(
       screen
-        .getByRole("link", { name: "Bookings" })
+        .getByRole("link", { name: "Bot settings" })
         .getAttribute("aria-current"),
     ).toBe("page");
+    expect(screen.queryByRole("link", { name: "Bookings" })).toBeNull();
     expect(
       screen
         .getByRole("link", { name: "Skip to content" })
@@ -64,8 +65,8 @@ describe("admin experience", () => {
       </MemoryRouter>,
     );
     expect(
-      screen.getByRole("link", { name: /View bookings/ }).getAttribute("href"),
-    ).toBe("/bookings");
+      screen.getByRole("link", { name: /Calendar settings/ }).getAttribute("href"),
+    ).toBe("/bot-settings");
     expect(
       screen.getByRole("link", { name: /Knowledge Base/ }).getAttribute("href"),
     ).toBe("/knowledge-base");

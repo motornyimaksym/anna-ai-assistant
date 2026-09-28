@@ -295,24 +295,29 @@ export class BookingRepository {
   async appendMessage(chatId: string, role: 'user' | 'assistant' | 'human', text: string): Promise<void> {
     await this.db.collection('conversations').doc(chatId).collection('messages').add({ role, text, createdAt: new Date().toISOString() });
   }
-  async resetDeletedBusinessChat(chatId: string, businessConnectionId: string): Promise<boolean> {
+  async clearConversationContext(chatId: string, expectedBusinessConnectionId?: string): Promise<{ clearedMessages: number } | undefined> {
     const conversationRef = this.db.collection('conversations').doc(chatId);
     const matches = await this.db.runTransaction(async (tx) => {
       const conversation = await tx.get(conversationRef);
-      if (!conversation.exists || conversation.data()?.businessConnectionId !== businessConnectionId) return false;
-      tx.update(conversationRef, { openaiConversationId: FieldValue.delete(), pendingAction: FieldValue.delete() });
+      if (!conversation.exists || (expectedBusinessConnectionId !== undefined && conversation.data()?.businessConnectionId !== expectedBusinessConnectionId)) return false;
+      tx.update(conversationRef, { summary: '', openaiConversationId: FieldValue.delete(), pendingAction: FieldValue.delete() });
       return true;
     });
-    if (!matches) return false;
+    if (!matches) return undefined;
     const messages = conversationRef.collection('messages');
+    let clearedMessages = 0;
     while (true) {
       const page = await messages.limit(400).get();
       if (page.empty) break;
       const batch = this.db.batch();
       for (const message of page.docs) batch.delete(message.ref);
       await batch.commit();
+      clearedMessages += page.size;
     }
-    return true;
+    return { clearedMessages };
+  }
+  async resetDeletedBusinessChat(chatId: string, businessConnectionId: string): Promise<boolean> {
+    return (await this.clearConversationContext(chatId, businessConnectionId)) !== undefined;
   }
   async getKnowledgeBaseOverride(): Promise<{ content: string; updatedAt: string } | undefined> {
     const doc = await this.db.collection('assistantSettings').doc('knowledgeBase').get();

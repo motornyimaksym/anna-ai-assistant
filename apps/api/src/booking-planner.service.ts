@@ -24,15 +24,14 @@ export class BookingPlannerService {
       const request = bookingPlanRequestSchema.parse(input);
       const now = Date.now();
       const horizon = now + 30 * 24 * 60 * 60_000;
-      const booking = request.intent === 'reschedule' && request.bookingId ? await this.repository.getBooking(request.bookingId) : undefined;
+      const booking = request.intent === 'reschedule' && request.bookingId ? await this.calendar.getBooking(request.bookingId) : undefined;
       if (request.intent === 'reschedule' && (!booking || booking.clientId !== context.clientId || booking.telegramChatId !== context.telegramChatId || booking.status !== 'confirmed' || booking.calendarOperation)) {
         await this.debug.record(context, 'booking_result', { status: 'needs_clarification', reason: 'owned_booking_required' });
         return { ...unavailable('Який саме запис бажаєте перенести?'), status: 'needs_clarification' };
       }
-      const [override, knowledge, services, history, timing, locked] = await Promise.all([
+      const [override, knowledge, services, history, timing] = await Promise.all([
         this.repository.getBookingPromptOverride(), this.repository.getKnowledgeBaseOverride(), this.repository.listServices(),
-        this.repository.listMessages(context.telegramChatId), booking ? this.repository.getBookingTiming(booking.id) : undefined,
-        this.repository.listLockedIntervals(booking?.id),
+        this.repository.listMessages(context.telegramChatId), booking ? this.calendar.getBookingTiming(booking.id) : undefined,
       ]);
       sensitiveValues.push(...history.map(({ content }) => content));
       const [scheduleResult, calendarResult] = await Promise.allSettled([
@@ -41,7 +40,7 @@ export class BookingPlannerService {
       const snapshot = scheduleResult.status === 'fulfilled' ? scheduleResult.value : undefined;
       const age = snapshot?.syncedAt ? (Date.now() - Date.parse(snapshot.syncedAt)) / 1000 : undefined;
       const scheduleReady = snapshot?.status === 'success' && age !== undefined && Number.isFinite(age) && age >= 0 && age <= 300 && snapshot.slots.length > 0;
-      const busy = calendarResult.status === 'fulfilled' ? [...calendarResult.value, ...locked] : undefined;
+      const busy = calendarResult.status === 'fulfilled' ? calendarResult.value : undefined;
       const calendarReady = !!busy && busy.length <= 500;
       await this.debug.record(context, 'booking_context', { intent: request.intent, sourceStatus: scheduleReady ? 'ready' : 'unavailable', calendarStatus: calendarReady ? 'ready' : 'unavailable', messageCount: snapshot?.slots.length ?? 0, busyCount: busy?.length ?? 0, ...(age !== undefined && Number.isFinite(age) ? { scheduleAgeSeconds: Math.round(age) } : {}) });
       if (!scheduleReady || !calendarReady) {

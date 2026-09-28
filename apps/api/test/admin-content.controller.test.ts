@@ -28,6 +28,7 @@ const setup = () => {
     saveKnowledgeBaseOverride: vi.fn(async (content: string) => ({ content, updatedAt: '2026-09-24T10:00:00.000Z' })),
     deleteKnowledgeBaseOverride: vi.fn(async () => undefined),
     listServices: vi.fn(async () => [{ id: 'massage-60', name: 'Relax', description: 'Relaxing massage', durationMinutes: 60, price: 1500, currency: 'UAH', enabled: true }]),
+    clearConversationContext: vi.fn(async (_chatId: string) => ({ clearedMessages: 3 } as { clearedMessages: number } | undefined)),
   };
   const specService = { getSpec: vi.fn(async () => ({ content: '# Test spec' })) };
   const servicePhotos = { upload: vi.fn(), delete: vi.fn() };
@@ -36,6 +37,13 @@ const setup = () => {
 };
 
 describe('admin content endpoints', () => {
+  it('clears only the requested existing conversation context', async () => {
+    const { controller, repository } = setup();
+    await expect(controller.clearConversationContext('chat-1')).resolves.toEqual({ clearedMessages: 3 });
+    expect(repository.clearConversationContext).toHaveBeenCalledWith('chat-1');
+    repository.clearConversationContext.mockResolvedValueOnce(undefined);
+    await expect(controller.clearConversationContext('missing')).rejects.toThrow('Conversation not found');
+  });
   it('serves code-owned instructions grouped by system', () => {
     const { controller } = setup();
     const catalog = controller.promptCatalog();

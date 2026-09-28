@@ -15,7 +15,7 @@ const setup = () => {
     getBooking: vi.fn(), getBookingTiming: vi.fn(async () => ({ durationMinutes: 60, bufferMinutes: 15 })),
   };
   const schedule = { readSnapshot: vi.fn(async () => ({ status: 'success', syncedAt: new Date().toISOString(), slots: [{ text: 'Пн: 13:00', createdAt: new Date().toISOString() }] })) };
-  const calendar = { getBusyIntervals: vi.fn(async () => [] as { start: string; end: string }[]) };
+  const calendar = { getBusyIntervals: vi.fn(async () => [] as { start: string; end: string }[]), getBooking: vi.fn(), getBookingTiming: vi.fn(async () => ({ durationMinutes: 60, bufferMinutes: 15 })) };
   const debug = { record: vi.fn(async () => {}) };
   const fetcher = vi.fn(async () => ({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(ready()) }] }] }) }));
   vi.stubGlobal('fetch', fetcher);
@@ -69,10 +69,10 @@ describe('structured booking planner', () => {
     output(kind === 'past' ? { ...value, startAt: '2020-01-01T00:00:00Z' } : kind === 'horizon' ? { ...value, startAt: new Date(Date.now() + 40 * 86400000).toISOString() } : kind === 'service' ? { ...value, serviceId: 'made-up' } : kind === 'duration' ? { ...value, durationMinutes: 90 } : { ...value, invented: true });
     expect((await plan()).status).toBe('unavailable');
   });
-  it('rejects an overlap with the session buffer and application holds', async () => {
-    const { plan, output, repository } = setup();
+  it('rejects an overlap with the session buffer and Calendar bookings', async () => {
+    const { plan, output, calendar } = setup();
     const value = ready(); output(value);
-    repository.listLockedIntervals.mockResolvedValue([{ start: new Date(Date.parse(value.startAt) + 65 * 60000).toISOString(), end: new Date(Date.parse(value.startAt) + 90 * 60000).toISOString() }]);
+    calendar.getBusyIntervals.mockResolvedValue([{ start: new Date(Date.parse(value.startAt) + 65 * 60000).toISOString(), end: new Date(Date.parse(value.startAt) + 90 * 60000).toISOString() }]);
     expect((await plan()).status).toBe('unavailable');
   });
   it('normalizes offset-aware starts to UTC and returns availability candidates only', async () => {
@@ -81,18 +81,18 @@ describe('structured booking planner', () => {
     expect(await plan('availability')).toMatchObject({ status: 'ready', startAt: null, candidateStarts: [value.startAt] });
   });
   it('rejects another client booking before Calendar or OpenAI access', async () => {
-    const { plan, repository, fetcher, calendar } = setup();
-    repository.getBooking.mockResolvedValue({ id: 'b', clientId: 'other', telegramChatId: 'chat', status: 'confirmed' });
+    const { plan, fetcher, calendar } = setup();
+    calendar.getBooking.mockResolvedValue({ id: 'b', clientId: 'other', telegramChatId: 'chat', status: 'confirmed' });
     expect((await plan('reschedule', 'b')).status).toBe('needs_clarification');
     expect(fetcher).not.toHaveBeenCalled(); expect(calendar.getBusyIntervals).not.toHaveBeenCalled();
   });
   it('preserves rescheduled duration and excludes only the owned booking from conflict checks', async () => {
-    const { plan, repository, calendar } = setup();
+    const { plan, calendar } = setup();
     const booking = { id: 'b', clientId: 'client', telegramChatId: 'chat', status: 'confirmed', serviceId: 'massage', startAt: start() };
-    repository.getBooking.mockResolvedValue(booking);
+    calendar.getBooking.mockResolvedValue(booking);
     expect((await plan('reschedule', 'b')).status).toBe('ready');
     expect(calendar.getBusyIntervals).toHaveBeenCalledWith(expect.any(String), expect.any(String), booking);
-    expect(repository.listLockedIntervals).toHaveBeenCalledWith('b');
+    expect(calendar.getBookingTiming).toHaveBeenCalledWith('b');
   });
   it('handles provider failure as unavailable without logging client content', async () => {
     const { plan, fetcher, debug, service } = setup();

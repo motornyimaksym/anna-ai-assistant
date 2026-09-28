@@ -5,7 +5,7 @@ import type { BookingService } from '../src/booking.service.js';
 const context = { clientId: 'alice', telegramChatId: 'chat' };
 const setup = () => {
   const repository = { listBookings: vi.fn(async () => [{ id: 'foreign', clientId: 'bob', telegramChatId: 'other' }, { id: 'own', ...context }]), getBooking: vi.fn(async () => ({ id: 'foreign', clientId: 'bob', telegramChatId: 'other' })) };
-  const bookings = { create: vi.fn(async (input: unknown) => input), cancel: vi.fn(), reschedule: vi.fn() };
+  const bookings = { list: vi.fn(async () => [{ id: 'foreign', clientId: 'bob', telegramChatId: 'other' }, { id: 'own', ...context }]), get: vi.fn(async () => ({ id: 'foreign', clientId: 'bob', telegramChatId: 'other' })), create: vi.fn(async (input: unknown) => input), cancel: vi.fn(), reschedule: vi.fn() };
   return { repository, bookings, tools: new AssistantToolsService(repository as unknown as BookingRepository, bookings as unknown as BookingService) };
 };
 describe('assistant tool authorization', () => {

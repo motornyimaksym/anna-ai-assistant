@@ -17,7 +17,6 @@ import {
 import {
   ArrowForwardRounded,
   AutoAwesomeRounded,
-  CalendarMonthRounded,
   ChatBubbleOutlineRounded,
   CloseRounded,
   DashboardRounded,
@@ -41,13 +40,6 @@ const destinations = [
     group: "Workspace",
     icon: DashboardRounded,
     description: "Your assistant workspace, at a glance.",
-  },
-  {
-    path: "bookings",
-    label: "Bookings",
-    group: "Workspace",
-    icon: CalendarMonthRounded,
-    description: "Review appointments, client details and Calendar sync.",
   },
   {
     path: "schedule",
@@ -529,16 +521,16 @@ export function Dashboard() {
               </Box>
             </Typography>
             <Typography color="text.secondary" sx={{ maxWidth: 460, mb: 3 }}>
-              Your bookings, conversations and assistant — brought together in
+              Your calendar, conversations and assistant — brought together in
               one thoughtful workspace.
             </Typography>
             <Button
               component={Link}
-              to="/bookings"
+              to="/bot-settings"
               variant="contained"
               endIcon={<ArrowForwardRounded />}
             >
-              View bookings
+              Calendar settings
             </Button>
           </Box>
         </Paper>

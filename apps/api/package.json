@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run",
-    "seed": "tsx src/seed.ts"
+    "seed": "tsx src/seed.ts",
+    "backfill:calendar": "tsx src/backfill-calendar-bookings.ts"
   },
   "dependencies": {
     "@booking/config": "workspace:*",

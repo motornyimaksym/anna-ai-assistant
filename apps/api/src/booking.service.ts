@@ -1,73 +1,65 @@
-import { selectServiceOption } from './service-options.js';
+import { randomUUID } from 'node:crypto';
 import { ConflictException, Injectable } from '@nestjs/common';
-import type { CreateBookingRequest, RescheduleBookingRequest } from '@booking/contracts';
-import { ServiceNotFoundError, lockedSlotKeys, serviceEndAt } from '@booking/domain';
+import type { BookingDto, CreateBookingRequest, RescheduleBookingRequest } from '@booking/contracts';
+import { ServiceNotFoundError, serviceEndAt } from '@booking/domain';
+import { selectServiceOption } from './service-options.js';
 import { CalendarService } from './calendar.js';
 import { BookingRepository } from './repository.js';
+
 export class BookingNeedsHumanError extends ConflictException {
-  constructor(readonly bookingId: string) { super(`Booking ${bookingId} requires human review. Slots remain reserved.`); }
+  constructor(readonly bookingId: string) { super(`Booking ${bookingId} requires human review in Google Calendar.`); }
 }
+
 @Injectable()
 export class BookingService {
   constructor(private readonly repository: BookingRepository, private readonly calendar: CalendarService) {}
-  private async assertNoConflict(startAt: string, durationMinutes: number, bufferMinutes: number, exclude?: Awaited<ReturnType<BookingRepository['getBooking']>>) {
+  private async assertNoConflict(startAt: string, durationMinutes: number, bufferMinutes: number, exclude?: BookingDto) {
     const from = Date.parse(startAt);
     if (!Number.isFinite(from) || from <= Date.now()) throw new Error('Time is in the past or invalid');
     const through = new Date(from + (durationMinutes + bufferMinutes) * 60_000).toISOString();
-    const [calendarBusy, booked] = await Promise.all([
-      this.calendar.getBusyIntervals(startAt, through, exclude ?? undefined),
-      this.repository.listLockedIntervals(exclude?.id),
-    ]);
-    if ([...calendarBusy, ...booked].some(({ start, end }) => Date.parse(start) < Date.parse(through) && Date.parse(end) > from)) throw new Error('Time is unavailable');
+    const busy = await this.calendar.getBusyIntervals(startAt, through, exclude);
+    if (busy.some(({ start, end }) => Date.parse(start) < Date.parse(through) && Date.parse(end) > from)) throw new Error('Time is unavailable');
   }
-  async create(input: CreateBookingRequest) {
+  async list() { return this.calendar.listBookings(); }
+  async get(id: string) { return this.calendar.getBooking(id); }
+  async timing(id: string) { return this.calendar.getBookingTiming(id); }
+  async create(input: CreateBookingRequest): Promise<BookingDto> {
     const service = await this.repository.getService(input.serviceId);
     if (!service?.enabled) throw new ServiceNotFoundError();
     const option = selectServiceOption(service, input.durationMinutes);
     await this.assertNoConflict(input.startAt, option.durationMinutes, service.bufferMinutes);
-    const calendarId = await this.calendar.destination();
-    const endAt = serviceEndAt(input.startAt, option);
-    const booking = await this.repository.createBooking({ ...input, ...option, currency: service.currency, endAt, status: 'pending', calendarOperation: 'create', googleCalendarId: calendarId, calendarSyncStatus: 'pending', lockedSlots: lockedSlotKeys('default', input.startAt, endAt, service.bufferMinutes), bufferMinutes: service.bufferMinutes });
-    return this.retry(booking.id);
-  }
-  async cancel(id: string) {
-    const booking = await this.repository.getBooking(id);
-    if (booking?.status === 'cancelled') return booking;
-    await this.repository.beginOperation(id, 'cancel', undefined, await this.calendar.destination());
-    return this.retry(id);
-  }
-  async reschedule(id: string, input: RescheduleBookingRequest) {
-    const booking = await this.repository.getBooking(id);
-    if (!booking || booking.status !== 'confirmed' || booking.calendarOperation) throw new Error('Booking unavailable');
-    if (Date.parse(booking.startAt) === Date.parse(input.startAt)) return booking;
-    const timing = await this.repository.getBookingTiming(id);
-    await this.assertNoConflict(input.startAt, timing.durationMinutes, timing.bufferMinutes, booking);
-    await this.repository.beginOperation(id, 'reschedule', input.startAt, await this.calendar.destination());
-    return this.retry(id);
-  }
-  async retry(id: string) {
-    const { booking, operation } = await this.repository.claimOperation(id).catch(() => { throw new BookingNeedsHumanError(id); });
+    const id = randomUUID(); const now = new Date().toISOString();
+    const booking: BookingDto = { ...input, id, durationMinutes: option.durationMinutes, price: option.price, currency: service.currency, endAt: serviceEndAt(input.startAt, option), status: 'confirmed', googleCalendarId: await this.calendar.destination(), calendarSyncStatus: 'synced', createdAt: now, updatedAt: now };
     try {
-      if (operation.kind === 'create') {
-        if (!await this.calendar.verifyBookingEvent(booking)) {
-          const timing = await this.repository.getBookingTiming(id);
-          await this.assertNoConflict(booking.startAt, timing.durationMinutes, timing.bufferMinutes, booking);
-          const service = await this.repository.getService(booking.serviceId);
-          await this.calendar.createBookingEvent(booking, service?.name);
-        }
-      } else if (operation.kind === 'reschedule') {
-        const target = { ...booking, startAt: operation.targetStartAt!, endAt: operation.targetEndAt! };
-        const timing = await this.repository.getBookingTiming(id);
-        await this.assertNoConflict(target.startAt, timing.durationMinutes, timing.bufferMinutes, booking);
-        await this.calendar.updateBookingEvent(target, booking);
-      } else {
-        if (!booking.googleCalendarEventId) throw new Error('Calendar event reference missing');
-        await this.calendar.deleteBookingEvent(booking.googleCalendarEventId, booking.googleCalendarId, booking);
-      }
-      return await this.repository.finishOperation(id, operation.leaseId);
-    } catch {
-      await this.repository.failOperation(id, operation.leaseId).catch(() => undefined);
-      throw new BookingNeedsHumanError(id);
-    }
+      const { eventId, calendarId } = await this.calendar.createBookingEvent(booking, service.name, service.bufferMinutes);
+      const created = { ...booking, googleCalendarEventId: eventId, googleCalendarId: calendarId };
+      if (!await this.calendar.verifyBookingEvent(created)) throw new Error('Calendar event could not be verified');
+      await this.assertNoConflict(created.startAt, option.durationMinutes, service.bufferMinutes, created);
+      return created;
+    } catch { throw new BookingNeedsHumanError(id); }
+  }
+  async cancel(id: string): Promise<BookingDto> {
+    const booking = await this.calendar.getBooking(id);
+    if (!booking) throw new Error('Booking unavailable');
+    try {
+      await this.calendar.deleteBookingEvent(booking.googleCalendarEventId!, booking.googleCalendarId, booking);
+      if (await this.calendar.getBooking(id)) throw new Error('Calendar deletion could not be verified');
+      return { ...booking, status: 'cancelled', updatedAt: new Date().toISOString() };
+    } catch { throw new BookingNeedsHumanError(id); }
+  }
+  async reschedule(id: string, input: RescheduleBookingRequest): Promise<BookingDto> {
+    const booking = await this.calendar.getBooking(id);
+    if (!booking) throw new Error('Booking unavailable');
+    if (Date.parse(booking.startAt) === Date.parse(input.startAt)) return booking;
+    const timing = await this.calendar.getBookingTiming(id);
+    await this.assertNoConflict(input.startAt, timing.durationMinutes, timing.bufferMinutes, booking);
+    const target = { ...booking, startAt: input.startAt, endAt: serviceEndAt(input.startAt, timing), updatedAt: new Date().toISOString() };
+    try {
+      await this.calendar.updateBookingEvent(target, booking);
+      const changed = await this.calendar.getBooking(id);
+      if (!changed || Date.parse(changed.startAt) !== Date.parse(target.startAt)) throw new Error('Calendar update could not be verified');
+      await this.assertNoConflict(changed.startAt, timing.durationMinutes, timing.bufferMinutes, changed);
+      return changed;
+    } catch { throw new BookingNeedsHumanError(id); }
   }
 }

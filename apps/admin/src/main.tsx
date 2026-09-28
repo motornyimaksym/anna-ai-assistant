@@ -1,6 +1,5 @@
 import { AdminShell, Dashboard, Login, Page } from "./AdminShell.js";
 import { DebugLogs } from "./DebugLogs.js";
-import { Bookings } from "./Bookings.js";
 import { MediaStore } from "./MediaStore.js";
 import { AssistantPrompt } from "./AssistantPrompt.js";
 import { KnowledgeBase } from "./KnowledgeBase.js";
@@ -40,14 +39,7 @@ const Protected = ({ user }: { user: User | null }) =>
           }
         />
         <Route path="/dashboard" element={<Dashboard />} />
-        <Route
-          path="/bookings"
-          element={
-            <Page title="Bookings">
-              <Bookings />
-            </Page>
-          }
-        />
+        <Route path="/bookings" element={<Navigate to="/bot-settings" replace />} />
         <Route
           path="/media"
           element={

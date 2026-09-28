@@ -8,7 +8,7 @@ import { mediaSchema, mediaDeleteResponseSchema, createMediaSchema, updateMediaS
 import { telegramAccountStatusSchema } from '@booking/contracts';
 import { telegramScheduleSlotsResponseSchema, telegramScheduleChatsSchema, telegramScheduleTopicsSchema } from '@booking/contracts';
 import { humanAssistanceSettingsResponseSchema, humanReleaseResponseSchema, humanRequestSchema, updateHumanAssistanceSettingsSchema, type HumanAssistanceSettings } from '@booking/contracts';
-import { adminAccessResponseSchema, assistantPromptResponseSchema, promptCatalogResponseSchema, availableSlotsResponseSchema, bookingSchema, botSettingsResponseSchema, conversationSchema, servicePhotoUploadResponseSchema, servicePhotoUploadSchema, serviceSchema, specResponseSchema, updateAdminAccessSchema, type AssistantPromptId, type BotSettings, type ServiceDto } from '@booking/contracts';
+import { adminAccessResponseSchema, assistantPromptResponseSchema, clearConversationContextResponseSchema, promptCatalogResponseSchema, availableSlotsResponseSchema, botSettingsResponseSchema, conversationSchema, servicePhotoUploadResponseSchema, servicePhotoUploadSchema, serviceSchema, specResponseSchema, updateAdminAccessSchema, type AssistantPromptId, type BotSettings, type ServiceDto } from '@booking/contracts';
 import { routingPromptResponseSchema, type UpdateRoutingPromptRequest } from '@booking/contracts';
 import { getAuth } from 'firebase/auth';
 const request = async <T>(path: string, schema: { parse(value: unknown): T }, init?: RequestInit): Promise<T> => { const user = getAuth().currentUser; const token = user ? await user.getIdToken() : undefined; const response = await fetchWithLinearBackoff(`/api${path}`, { ...init, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...init?.headers } }); if (!response.ok) { const body = (path.startsWith('/admin/telegram-account') || path.startsWith('/admin/media') || path.startsWith('/admin/ai-chat') || path.startsWith('/admin/schedule') || path.startsWith('/admin/google-calendar') || path.startsWith('/admin/debug')) ? await response.json().catch(() => ({})) as { message?: unknown } : {}; throw new Error(typeof body.message === 'string' ? body.message : `API request failed (${response.status})`); } return schema.parse(await response.json()); };
@@ -28,7 +28,6 @@ export const adminApi = {
   googleCalendars: () => request('/admin/google-calendar/calendars', googleCalendarListSchema, { cache: 'no-store' }),
   selectGoogleCalendar: (calendarId: string) => request('/admin/google-calendar/selection', googleCalendarStatusSchema, { method: 'PUT', body: JSON.stringify({ calendarId }) }),
   selectConflictCalendars: (calendarIds: string[]) => request('/admin/google-calendar/conflicts', googleCalendarStatusSchema, { method: 'PUT', body: JSON.stringify({ calendarIds }) }),
-  retryBooking: (id: string) => request(`/admin/bookings/${encodeURIComponent(id)}/retry`, bookingSchema, { method: 'POST', body: '{}' }),
   checkGoogleCalendar: () => request('/admin/google-calendar/check', googleCalendarStatusSchema, { method: 'POST', body: '{}' }),
   disconnectGoogleCalendar: () => request('/admin/google-calendar', googleCalendarStatusSchema, { method: 'DELETE' }),
 
@@ -46,7 +45,6 @@ export const adminApi = {
   selectScheduleSource: (chatId: string, topicId?: number) => request('/admin/schedule/source', telegramScheduleSlotsResponseSchema, { method: 'PUT', body: JSON.stringify({ chatId, topicId }) }),
   refreshSchedule: (retryTransient = false) => request('/admin/schedule/refresh', telegramScheduleSlotsResponseSchema, { method: 'POST', body: JSON.stringify(retryTransient ? { retryTransient: true } : {}) }),
   telegramScheduleSlots: () => request('/admin/schedule/imported-slots', telegramScheduleSlotsResponseSchema, { cache: 'no-store' }),
-  bookings: () => request('/admin/bookings', bookingSchema.array()),
   services: () => request('/admin/services', serviceSchema.array()),
   saveService: (service: ServiceDto, isNew: boolean) => request(isNew ? '/admin/services' : `/admin/services/${encodeURIComponent(service.id)}`, serviceSchema, { method: isNew ? 'POST' : 'PATCH', body: JSON.stringify(service) }),
   uploadServicePhoto: async (serviceId: string, file: File) => {
@@ -61,6 +59,7 @@ export const adminApi = {
     return request(`/admin/services/${encodeURIComponent(serviceId)}/photo`, servicePhotoUploadResponseSchema, { method: 'POST', body: JSON.stringify(input) });
   },
   conversations: () => request('/admin/conversations', conversationSchema.array()),
+  clearConversationContext: (id: string) => request(`/admin/conversations/${encodeURIComponent(id)}/clear-context`, clearConversationContextResponseSchema, { method: 'POST', cache: 'no-store' }),
   updateConversation: (id: string, data: { assistantEnabled?: boolean }) => request(`/admin/conversations/${id}`, conversationSchema, { method: 'PATCH', body: JSON.stringify(data) }),
   slots: (data: { serviceId: string; date: string; durationMinutes?: number }) => request('/admin/available-slots', availableSlotsResponseSchema, { method: 'POST', body: JSON.stringify(data) }),
   spec: () => request('/admin/spec', specResponseSchema),

@@ -1,8 +1,10 @@
 # Architecture
 
-The NestJS API owns all business operations and is exposed locally and through the Firebase Functions/Hosting boundary. The React administration client only accesses the API using shared Zod transport contracts. The framework-independent domain package owns time calculations, slot locks, and domain errors.
+Calendar-only appointment target: Google Calendar events hold appointment and service snapshots in private extended properties. Firestore keeps chat, catalog, settings and diagnostics, but no live booking or slot state. Managed Calendar events drive assistant booking tools, availability and dashboard. Existing Firestore booking documents remain migration archive. Calendar preflight cannot make independent inserts atomic; simultaneous overlaps remain possible.
 
-Firestore is the production persistence boundary: booking creation and rescheduling must use a transaction over 15-minute lock documents. The local implementation is deliberately an in-memory repository so core logic can be tested without cloud credentials; its public repository interface is the seam for the Firestore adapter. Google Calendar and Telegram are integration adapters and never replace Firestore as the booking authority.
+The NestJS API owns all business operations and is exposed locally and through the Firebase Functions/Hosting boundary. The React administration client only accesses the API using shared Zod transport contracts. The framework-independent domain package owns time calculations and domain errors. Its legacy slot helpers are unused by live booking flows.
+
+Firestore persists non-appointment state. CalendarService owns appointment reads, conflict checks and conditional event mutations. BookingService snapshots catalog choices into private Calendar event properties and verifies external write results. No live booking flow uses Firestore booking documents or slot locks.
 
 
 ## Contextual media
@@ -11,7 +13,7 @@ Media Store replaces the Services admin page, while the backend service catalog 
 
 A Firestore lease serializes sends for the same chat/media ID; successful and uncertain delivery establish a cooldown, explicit rejection does not. Network uncertainty and process crashes prevent a strict exactly-once guarantee across Telegram and Firestore. No background retry sends client messages.
 
-Application-owned HTTP `fetch` calls use `@booking/http` with three linear retries (250/500/750 ms) for transient failures. Reads and explicitly idempotent operations can replay after transient status or network failure. OpenAI conversation/response requests carry a per-call idempotency key reused across attempts. Other writes retry only explicit HTTP 425/429 rejection or connection failure known to precede transmission; timeouts, resets and ambiguous 5xx results are not replayed. This preserves Telegram delivery uncertainty and durable booking recovery. Google auth library transports use the same linear delays for replay-safe methods only.
+Application-owned HTTP `fetch` calls use `@booking/http` with three linear retries (250/500/750 ms) for transient failures. Reads and explicitly idempotent operations can replay after transient status or network failure. OpenAI conversation/response requests carry a per-call idempotency key reused across attempts. Other writes retry only explicit HTTP 425/429 rejection or connection failure known to precede transmission; timeouts, resets and ambiguous 5xx results are not replayed. This preserves Telegram delivery uncertainty and prevents blind replay of ambiguous Calendar writes. Google auth library transports use the same linear delays for replay-safe methods only.
 
 Telegram methods and URL transport constraints: https://core.telegram.org/bots/api#sending-files and https://core.telegram.org/bots/api#sendvideo. App uploads support JPEG/PNG (5 MB) and MP4 (20 MB); local JSON parser accepts 28 MiB for base64 transport. Uploaded URLs are intentionally shareable with clients.
 
@@ -21,7 +23,7 @@ The Assistant prompt and editable Knowledge Base are separate admin settings and
 
 OpenAI-generated client replies use Telegram HTML parse mode. The default prompt and a separately appended formatting instruction require supported `<b>`, `<i>`, and `<code>` tags only, escaped literal HTML characters, and no Markdown formatting markers. Deterministic local responses remain plain text.
 
-The connected Telegram user account also supplies a read-only schedule snapshot. Incoming message updates trigger a refresh attempt; a Firestore transaction caps reads at one every five minutes across API instances. The first lookup uses tolerant title keywords, then stores the Telegram peer ID so later reads survive title changes. The latest five non-empty text messages appear verbatim on `/schedule` and enter the assistant prompt with timestamps. Calendar busy intervals from selected calendars enter the same prompt. The assistant interprets this context without a separate parser; Calendar and booking holds are checked again on confirmation. Admin weekly availability remains separate.
+The connected Telegram user account also supplies a read-only schedule snapshot. Incoming message updates trigger a refresh attempt; a Firestore transaction caps reads at one every five minutes across API instances. The first lookup uses tolerant title keywords, then stores the Telegram peer ID so later reads survive title changes. The latest five non-empty text messages appear verbatim on `/schedule` and enter the assistant prompt with timestamps. Calendar busy intervals from selected calendars enter the same prompt. The assistant interprets this context without a separate parser; Calendar conflicts are checked again on confirmation. Admin weekly availability remains separate.
 
 ## Human-assistance routing
 
@@ -35,12 +37,12 @@ Responder usernames are configured in Bot Settings. A responder must first enrol
 
 Schedule source configuration uses owner-only dialog discovery and verified ID selection through the existing Telegram account lease. Incoming webhooks and `/schedule` refresh use the persisted five-minute claim. The Settings refresh obeys that cooldown after success; after failure, it may retry immediately in a leased batch of up to five attempts with 10/20/30/40-second linear backoff for transient errors. Safe failure categories and attempt/success timestamps are returned with the read-only snapshot; attempt IDs reject stale completions after source changes.
 
-Google Calendar authorization uses an owner-authenticated SPA callback, backend code exchange, single-use Firestore state bound to the initiating UID, PKCE and verified ID-token nonce. A dedicated connection store holds encrypted tokens and revision-guarded lifecycle state. CalendarService reads managed configuration dynamically with legacy fallback only before a managed record exists. Event calendar IDs are persisted per booking to retain correct routing after selection changes.
+Google Calendar authorization uses an owner-authenticated SPA callback, backend code exchange, single-use Firestore state bound to the initiating UID, PKCE and verified ID-token nonce. A dedicated connection store holds encrypted tokens and revision-guarded lifecycle state. CalendarService reads managed configuration dynamically with legacy fallback only before a managed record exists. Each event has a Calendar ID in API projections; the selected destination and conflict calendar set locate managed events after selection changes.
 
 
 ## Booking from chat context
 
-Raw Telegram schedule messages and selected Google Calendar busy intervals enter the assistant prompt. The model uses chat text to suggest times; BookingService checks Calendar conflicts and booking holds for all entry points. Firestore operation/slot transactions precede Calendar writes; verified success finalizes booking. Errors retain holds and route the Telegram conversation to configured human responders. Recovery is an explicit admin action, with deterministic event IDs and operation leases preventing duplicate writes. External Calendar edits cannot participate in Firestore transactions.
+Raw Telegram schedule messages and selected Google Calendar busy intervals enter the assistant prompt. The model uses chat text to suggest times; BookingService checks Calendar conflicts for all entry points. A verified event write finalizes a booking. Unknown outcomes route the Telegram conversation to configured human responders for Calendar inspection. Stable event IDs and ETag checks protect exact-event mutations; simultaneous independent inserts can still overlap because Calendar has no atomic range reservation.
 
 No separate schedule extraction request, derived windows, or schedule revision is stored.
 
@@ -89,7 +91,7 @@ OpenAI transport failures include a sanitized `providerError` object (`code`, `p
 
 ### Admin presentation
 
-The booking admin shell owns a scoped MUI cyberpunk theme, grouped responsive navigation, page headings and a dashboard launchpad. Shared component overrides keep existing editors, tables and dialogs visually consistent. Mobile navigation uses a modal drawer; desktop navigation remains visible. The standalone AI workspace shares the visual theme while retaining its own chat layout and navigation. Dashboard shortcuts do not imply live integration health or fabricate operational metrics.
+The booking admin shell owns a scoped MUI cyberpunk theme, grouped responsive navigation, page headings and a dashboard launchpad. Shared component overrides keep existing editors, tables and dialogs visually consistent. Mobile navigation uses a modal drawer; desktop navigation remains visible. The standalone AI workspace shares the visual theme while retaining its own chat layout and navigation. Dashboard shortcuts do not imply live integration health or fabricate operational metrics. The Bookings page and navigation entry are removed; Calendar connection settings replace the in-app booking table, and old `/bookings` links redirect there.
 
 Admin appearance supports day/night palettes through a scoped theme provider. Header and login controls update the same provider without remounting editors. A browser-local preference restores the selection; inaccessible storage degrades to an in-memory choice. The AI workspace uses the same appearance provider and preference, with its own responsive thread drawer, conversation view and composer.
 
