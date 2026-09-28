@@ -3,6 +3,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { randomUUID } from 'node:crypto';
 import { aiChatThreadSchema, aiChatSummarySchema, type AiChatAction, type AiChatThread } from '@booking/contracts';
 import { FirebaseAdminService } from './firebase-admin.js';
+import { TextUtils } from './text-utils.js';
 export type StoredThread = Omit<AiChatThread, 'action'> & { action?: AiChatAction & { sessionFingerprint: string }; openaiConversationId?: string; leaseId?: string; leaseUntil?: number };
 @Injectable()
 export class AiChatStore {
@@ -20,6 +21,8 @@ export class AiChatStore {
   }
   view(thread: StoredThread): AiChatThread {
     const result = aiChatThreadSchema.parse(thread);
+    result.messages = result.messages.map((message) => message.role === 'assistant' ? { ...message, text: TextUtils.replaceLongDashes(message.text) } : message);
+    if (result.action) result.action.text = TextUtils.replaceLongDashes(result.action.text);
     if (result.action?.status === 'sending' && (thread.leaseUntil ?? 0) <= Date.now()) result.action.status = 'uncertain';
     return result;
   }

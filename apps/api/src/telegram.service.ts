@@ -12,11 +12,12 @@ import { DEFAULT_BOT_SETTINGS } from './bot-settings.js';
 import { HumanAssistanceService } from './human-assistance.service.js';
 import { TelegramScheduleImportService } from './telegram-schedule-import.service.js';
 import { fetchWithLinearBackoff } from '@booking/http';
+import { TextUtils } from './text-utils.js';
 const messageSchema = z.object({ message_id: z.number().int(), chat: z.object({ id: z.union([z.string(), z.number()]), type: z.string().optional() }), from: z.object({ id: z.union([z.string(), z.number()]), username: z.string().optional(), is_bot: z.boolean().optional() }).optional(), text: z.string().optional(), business_connection_id: z.string().optional() });
 const updateSchema = z.object({ update_id: z.number().int(), business_message: messageSchema.optional(), message: messageSchema.optional(), deleted_business_messages: z.object({ business_connection_id: z.string().min(1), chat: z.object({ id: z.union([z.string(), z.number()]) }), message_ids: z.array(z.number().int()).min(1) }).optional() });
 const escapeHtml = (value: string) => value.replace(/&(?!(?:amp|lt|gt|quot|#39|#\d+|#x[\da-f]+);)/gi, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 export const formatTelegramHtml = (value: string): string => {
-  const markdown = value.replace(/\*\*([^*\n]+)\*\*|__([^_\n]+)__/g, (_match, a: string | undefined, b: string | undefined) => `<b>${a ?? b}</b>`).replace(/\*\*|__/g, '').replace(/[—–]/g, '-');
+  const markdown = TextUtils.replaceLongDashes(value).replace(/\*\*([^*\n]+)\*\*|__([^_\n]+)__/g, (_match, a: string | undefined, b: string | undefined) => `<b>${a ?? b}</b>`).replace(/\*\*|__/g, '');
   let result = ''; let openTag: 'b' | 'i' | 'code' | undefined; let cursor = 0;
   const token = /<\/?(?:b|i|code)>/gi;
   for (const match of markdown.matchAll(token)) {
@@ -111,8 +112,9 @@ export class TelegramService {
         await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, [answer.humanContext, action].filter(Boolean).join('\n'));
         return;
       }
-      if (answer.fromOpenAI) await waitForResponsePacing(answer.text, settings.typingDelayPerSymbolMs);
-      reply = answer.fromOpenAI ? formatTelegramHtml(answer.text) : answer.text;
+      const outgoingText = TextUtils.replaceLongDashes(answer.text);
+      if (answer.fromOpenAI) await waitForResponsePacing(outgoingText, settings.typingDelayPerSymbolMs);
+      reply = answer.fromOpenAI ? formatTelegramHtml(outgoingText) : outgoingText;
       if (answer.fromOpenAI) parseMode = 'HTML';
     } catch (error) {
       await this.debug.record(trace, 'error', { reason: 'assistant_operation_failed', errorCategory: safeErrorCategory(error) }, 'error');

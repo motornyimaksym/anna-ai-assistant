@@ -2,14 +2,23 @@ import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { getFirestore } from 'firebase-admin/firestore';
 import { telegramScheduleSlotsResponseSchema, type TelegramScheduleSlot, type TelegramScheduleSlotsResponse } from '@booking/contracts';
+import { z } from 'zod';
 import { FirebaseAdminService } from './firebase-admin.js';
+import type { BusyInterval } from './calendar.js';
 
-export type TelegramScheduleSnapshot = { sourcePeerId: string; sourceChatTitle: string; sourceTopicId?: number; sourceTopicTitle?: string; slots: TelegramScheduleSlot[]; syncedAt: string };
+export type CalendarAvailabilitySnapshot = { status: 'ready'; checkedAt: string; rangeStart: string; rangeEnd: string; busy: BusyInterval[] }
+  | { status: 'unavailable'; checkedAt: string };
+export type TelegramScheduleSnapshot = { sourcePeerId: string; sourceChatTitle: string; sourceTopicId?: number; sourceTopicTitle?: string; slots: TelegramScheduleSlot[]; syncedAt: string; calendarAvailability?: CalendarAvailabilitySnapshot };
 export type ScheduleSyncStatus = NonNullable<TelegramScheduleSlotsResponse['status']>;
 export type ScheduleSyncClaim = { allowed: boolean; sourcePeerId?: string; sourceTopicId?: number; attemptId?: string };
 export type ManualScheduleSyncClaim = ScheduleSyncClaim & { runId?: string };
 const manualRetryable = new Set<ScheduleSyncStatus>(['account_busy', 'connection_failed', 'timeout']);
 const failureStatuses = new Set<ScheduleSyncStatus>(['source_not_found', 'disconnected', 'account_busy', 'connection_failed', 'timeout']);
+const timestamp = z.string().datetime({ offset: true });
+const calendarAvailabilitySchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('ready'), checkedAt: timestamp, rangeStart: timestamp, rangeEnd: timestamp, busy: z.array(z.object({ start: timestamp, end: timestamp })).max(500) }),
+  z.object({ status: z.literal('unavailable'), checkedAt: timestamp }),
+]);
 const syncClaim = (attemptId: string, now: number) => ({
   nextAttemptAt: now + 5 * 60_000,
   lastAttemptAt: new Date(now).toISOString(),
@@ -76,7 +85,7 @@ export class TelegramScheduleImportStore {
     await getFirestore().runTransaction(async (transaction) => {
       const data = (await transaction.get(this.ref)).data() ?? {};
       if (data.attemptId !== attemptId) return;
-      const derived = snapshot ? { ...snapshot, slots: snapshot.slots.slice(-5) } : {};
+      const derived = snapshot ? { ...snapshot, slots: snapshot.slots.slice(-5), calendarAvailability: snapshot.calendarAvailability ?? null } : { calendarAvailability: null };
       transaction.set(this.ref, { ...derived, status }, { merge: true });
     });
   }
@@ -104,5 +113,10 @@ export class TelegramScheduleImportStore {
       ...(typeof data.nextAttemptAt === 'number' ? { nextAttemptAt: new Date(data.nextAttemptAt).toISOString() } : {}),
       slots: Array.isArray(data.slots) ? data.slots : [],
     });
+  }
+
+  async readCalendarAvailability(): Promise<CalendarAvailabilitySnapshot | undefined> {
+    const data = (await this.ref.get()).data();
+    return calendarAvailabilitySchema.safeParse(data?.calendarAvailability).data;
   }
 }

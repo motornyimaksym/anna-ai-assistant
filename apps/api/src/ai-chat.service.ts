@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { AiChatStore, type StoredThread } from './ai-chat.store.js';
 import { TelegramMcpService, mcpArguments, readTools, type McpTool } from './telegram-mcp.service.js';
 import { createOpenAiConversation, requestOpenAiResponse } from './openai-transport.js';
+import { TextUtils } from './text-utils.js';
 const str = { type: 'string' };
 const integer = { type: 'integer', minimum: 1, maximum: 50 };
 const definitions: [McpTool, string, Record<string, unknown>, string[]][] = [
@@ -30,7 +31,7 @@ function toolFailure(error: unknown): string {
   return 'Telegram request failed before a result was verified. No success is established. Check Telegram connection in Bot Settings; do not retry a send automatically.';
 }
 const add = (thread: StoredThread, role: 'user' | 'assistant', text: string) => {
-  thread.messages.push({ role, text: text.slice(0, 6000), createdAt: new Date().toISOString() });
+  thread.messages.push({ role, text: (role === 'assistant' ? TextUtils.replaceLongDashes(text) : text).slice(0, 6000), createdAt: new Date().toISOString() });
   thread.messages = thread.messages.slice(-40);
 };
 @Injectable()
@@ -81,7 +82,7 @@ export class AiChatService {
             if (String(peer.id) !== args.chat_id) throw new Error('Recipient mismatch');
             thread.action = {
               id: randomUUID(), tool: name as 'send_message' | 'reply_to_message', chatId: String(peer.id),
-              chatTitle: (peer.title ?? peer.name ?? String(peer.id)).slice(0, 255), text: args.message ?? args.text!,
+              chatTitle: (peer.title ?? peer.name ?? String(peer.id)).slice(0, 255), text: TextUtils.replaceLongDashes(args.message ?? args.text!),
               ...(args.message_id ? { messageId: args.message_id } : {}),
               expiresAt: new Date(Date.now() + 600_000).toISOString(), status: 'pending', sessionFingerprint: target.sessionFingerprint,
             };
@@ -107,6 +108,7 @@ export class AiChatService {
     if (!confirm) {
       action.status = 'cancelled'; add(thread, 'assistant', 'Message cancelled. Nothing was sent.');
     } else {
+      action.text = TextUtils.replaceLongDashes(action.text);
       action.status = 'sending';
       // Consume before the external effect. A crash or ambiguous response must never replay this send.
       await this.store.save(uid, thread, false);

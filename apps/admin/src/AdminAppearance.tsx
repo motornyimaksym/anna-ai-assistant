@@ -29,6 +29,7 @@ export function AdminAppearance({ children }: { children: ReactNode }) {
   const toggle = () => {
     const next = mode === "dark" ? "light" : "dark";
     setMode(next);
+    document.documentElement.dataset.theme = next;
     try {
       localStorage.setItem(storageKey, next);
     } catch {

@@ -11,6 +11,7 @@ import { BookingRepository } from './repository.js';
 import { SystemOneSelector, systemOneBooleanSchema, systemOneProbabilitySchema } from './system-one.js';
 import { SYSTEM_TWO_PROMPTS, systemTwoPromptIdSchema } from './system-two.js';
 import { systemTwoInstructions } from './system-two-instructions.js';
+import { TextUtils } from './text-utils.js';
 
 const responseSchema = z.object({
   status: z.literal('completed'),
@@ -69,10 +70,10 @@ export class PromptTestService {
     const response = responseSchema.parse(await requestOpenAiResponse({ store: false, instructions, input: [{ role: 'user', content: request.text }], tools: selectedTools, parallel_tool_calls: false, max_output_tokens: 800 }, AbortSignal.timeout(30_000)));
     const calls = response.output.filter((item) => item.type === 'function_call');
     if (calls.some(({ name }) => !selectedTools.some((tool) => tool.name === name))) throw new Error('Unsupported tool');
-    if (calls.length) return { kind: 'tool_calls', output: JSON.stringify(calls.map(({ name, arguments: args }) => ({ name, arguments: args ? JSON.parse(args) : {} })), null, 2), sampleContext: false };
+    if (calls.length) return { kind: 'tool_calls', output: TextUtils.replaceLongDashes(JSON.stringify(calls.map(({ name, arguments: args }) => ({ name, arguments: args ? JSON.parse(args) : {} })), null, 2)), sampleContext: false };
     const text = outputText(response);
     if (!text) throw new Error('Empty model reply');
-    return { kind: 'text', output: text.slice(0, 12_000), sampleContext: false };
+    return { kind: 'text', output: TextUtils.replaceLongDashes(text.slice(0, 12_000)), sampleContext: false };
   }
 
   private async bookingPlanner(request: Extract<PromptTestRequest, { system: 'two' }> & { promptId: 'booking-planner' }): Promise<PromptTestResponse> {
@@ -89,6 +90,6 @@ export class PromptTestService {
     };
     const response = responseSchema.parse(await requestOpenAiResponse({ store: false, instructions: `${override?.prompt ?? BOOKING_SYSTEM_PROMPT}\n${BOOKING_MANDATORY_GUIDANCE}`, input: [{ role: 'user', content: JSON.stringify(payload) }], text: { format: BOOKING_OUTPUT_FORMAT }, max_output_tokens: 3000 }, AbortSignal.timeout(30_000)));
     const plan = bookingPlanSchema.parse(JSON.parse(outputText(response)));
-    return { kind: 'plan', output: JSON.stringify(plan, null, 2), sampleContext: true };
+    return { kind: 'plan', output: TextUtils.replaceLongDashes(JSON.stringify(plan, null, 2)), sampleContext: true };
   }
 }

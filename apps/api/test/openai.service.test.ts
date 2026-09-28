@@ -15,7 +15,9 @@ const setup = (promptId: SystemTwoPromptId = 'general') => {
   vi.stubEnv('OPENAI_API_KEY', 'test-key');
   const repository = { getService: vi.fn(async () => ({ id: 'massage', name: 'Massage', durationMinutes: 60, price: 1500, durationOptions: [{ durationMinutes: 90, price: 2000 }], currency: 'UAH', enabled: true })), listMessages: vi.fn(async () => []), getAssistantPromptOverride: vi.fn(async () => undefined), getPromptOverride: vi.fn(async () => undefined as { prompt: string; updatedAt: string } | undefined), getKnowledgeBaseOverride: vi.fn(async () => undefined), listServices: vi.fn(async () => [] as ServiceDto[]), replacePendingAction: vi.fn(async () => true), replaceOpenAiConversation: vi.fn(async () => {}), ensureOpenAiConversation: vi.fn(async () => 'conv-created'), saveConversation: vi.fn(async (value: typeof conversation & { pendingAction?: unknown }) => value), appendMessage: vi.fn() };
   const tools = { execute: vi.fn(async (): Promise<unknown> => ({ id: 'booking-1', startAt: '2099-01-01T10:00:00.000Z', status: 'confirmed', calendarSyncStatus: 'synced' })) };
-  const planner = { plan: vi.fn(async () => ({ status: 'ready', serviceId: 'massage', startAt: '2099-01-01T10:00:00.000Z', durationMinutes: 90, candidateStarts: [], question: null })) };
+  const plan = vi.fn(async (..._args: unknown[]) => ({ status: 'ready', serviceId: 'massage', startAt: '2099-01-01T10:00:00.000Z', durationMinutes: 90, candidateStarts: [], question: null }));
+  const evidence = { timezone: 'Europe/Kyiv', sourceSyncedAt: '2098-12-31T12:00:00.000Z', scheduleMessages: [{ text: 'Вт: 16:00', createdAt: '2098-12-31T12:00:00.000Z' }], calendar: { status: 'ready', checkedAt: '2098-12-31T12:00:00.000Z', rangeStart: '2098-12-31T12:00:00.000Z', rangeEnd: '2099-01-30T12:00:00.000Z', busy: [] } };
+  const planner = { plan, planWithContext: vi.fn(async (...args: unknown[]) => ({ plan: await plan(...args), evidence })) };
   const debug = { record: vi.fn(async () => {}) };
   const selector = { answerBoolean: vi.fn(async () => false), estimateProbability: vi.fn(async () => 0.5), select: vi.fn(async (_input: SystemOneInput, _signal: AbortSignal) => promptId) };
   const service = new OpenAiService(repository as unknown as BookingRepository, tools as unknown as AssistantToolsService, planner as unknown as BookingPlannerService, debug as unknown as DebugLogService, selector);
@@ -78,6 +80,20 @@ describe('OpenAI conversation', () => {
     const body = JSON.parse(fetch.mock.calls[1]![1].body);
     expect(body.conversation).toBe('conv-created');
     expect(body.input).toEqual([{ role: 'user', content: 'Hi' }]);
+  });
+  it('sends bounded recent messages with booking request, current message once', async () => {
+    const { service, repository } = setup('booking');
+    repository.listMessages.mockResolvedValue([
+      ...Array.from({ length: 24 }, (_, index) => ({ role: index % 2 ? 'assistant' : 'user', content: `old-${index}` })),
+      { role: 'user', content: 'Move my booking' },
+    ] as never);
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Which booking?' }] }] }) });
+    vi.stubGlobal('fetch', fetch);
+    await service.respond(conversation, context, 'Move my booking');
+    const body = JSON.parse(fetch.mock.calls[0]![1].body);
+    expect(body.input).toHaveLength(20);
+    expect(body.input[0]).toEqual({ role: 'assistant', content: 'old-5' });
+    expect(body.input.at(-1)).toEqual({ role: 'user', content: 'Move my booking' });
   });
   it('allows a longer provider call and records a safe timeout category', async () => {
     const { service } = setup();
@@ -180,7 +196,19 @@ describe('OpenAI conversation', () => {
     const request = JSON.parse(fetch.mock.calls[0]![1]!.body as string);
     expect(request.tools.some((tool: { name: string }) => ['create_booking', 'reschedule_booking'].includes(tool.name))).toBe(false);
     const closeout = JSON.parse(fetch.mock.calls[1]![1]!.body as string);
-    expect(closeout.input).toEqual([{ type: 'function_call_output', call_id: 'c1', output: JSON.stringify({ status: 'completed', reply: 'Яка тривалість?' }) }]);
+    expect(closeout.input[0]).toMatchObject({ type: 'function_call_output', call_id: 'c1' });
+    expect(JSON.parse(closeout.input[0].output)).toMatchObject({ status: 'needs_clarification', reply: 'Яка тривалість?', availability: { scheduleMessages: [{ text: 'Вт: 16:00' }], calendar: { status: 'ready', busy: [] } } });
+    expect(closeout.tools).toEqual([]);
+  });
+  it('includes validated candidate starts and live planning context in closeout', async () => {
+    const { service, planner } = setup('booking');
+    planner.plan.mockResolvedValueOnce({ status: 'ready', serviceId: 'massage', startAt: null, durationMinutes: 90, candidateStarts: ['2099-01-01T10:00:00.000Z'], question: null } as never);
+    const fetch = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'plan_booking', arguments: JSON.stringify({ intent: 'availability', bookingId: null }) }] }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Ignore this closeout prose' }] }] }) });
+    vi.stubGlobal('fetch', fetch);
+    const reply = await service.respond(conversation, context, 'Завтра коли?');
+    expect(reply.text).toContain('Можливі початки');
+    const closeout = JSON.parse(fetch.mock.calls[1]![1].body);
+    expect(JSON.parse(closeout.input[0].output)).toMatchObject({ status: 'ready', candidateStarts: ['2099-01-01T10:00:00.000Z'], availability: { calendar: { status: 'ready', busy: [] } } });
     expect(closeout.tools).toEqual([]);
   });
   it('uses the repo knowledge base when no override exists', async () => {

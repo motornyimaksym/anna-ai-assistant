@@ -80,6 +80,23 @@ describe('structured booking planner', () => {
     const value = ready(); const offsetStart = new Date(Date.parse(value.startAt) + 3 * 3600000).toISOString().replace('Z', '+03:00'); output({ ...value, startAt: null, candidateStarts: [offsetStart] });
     expect(await plan('availability')).toMatchObject({ status: 'ready', startAt: null, candidateStarts: [value.startAt] });
   });
+  it('accepts a redundant choice question only after validating ready availability', async () => {
+    const { plan, output, debug } = setup();
+    const value = ready();
+    output({ ...value, startAt: null, candidateStarts: [value.startAt], question: 'Який час підходить?' });
+    expect(await plan('availability')).toMatchObject({ status: 'ready', question: null, candidateStarts: [value.startAt] });
+    expect(debug.record).toHaveBeenCalledWith(context, 'booking_result', expect.objectContaining({ status: 'ready' }));
+  });
+  it('returns the raw messages and live Calendar intervals used for planning', async () => {
+    const { service, output, calendar } = setup();
+    const value = ready();
+    const busy = [{ start: new Date(Date.now() + 2 * 86400000).toISOString(), end: new Date(Date.now() + 2 * 86400000 + 3600000).toISOString() }];
+    calendar.getBusyIntervals.mockResolvedValue(busy);
+    output({ ...value, startAt: null, candidateStarts: [value.startAt] });
+    const result = await service.planWithContext(conversation, context, 'Завтра коли?', { intent: 'availability', bookingId: null });
+    expect(result.plan.status).toBe('ready');
+    expect(result.evidence).toMatchObject({ scheduleMessages: [{ text: 'Пн: 13:00' }], calendar: { status: 'ready', busy }, timezone: expect.any(String) });
+  });
   it('rejects another client booking before Calendar or OpenAI access', async () => {
     const { plan, fetcher, calendar } = setup();
     calendar.getBooking.mockResolvedValue({ id: 'b', clientId: 'other', telegramChatId: 'chat', status: 'confirmed' });

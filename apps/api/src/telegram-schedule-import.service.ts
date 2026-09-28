@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import { TelegramAccountService } from './telegram-account.service.js';
-import { TelegramScheduleImportStore, type ScheduleSyncStatus, type ScheduleSyncClaim } from './telegram-schedule-import.store.js';
+import { TelegramScheduleImportStore, type CalendarAvailabilitySnapshot, type ScheduleSyncStatus, type ScheduleSyncClaim } from './telegram-schedule-import.store.js';
+import { CalendarService } from './calendar.js';
 
 const manualRetryable = new Set<ScheduleSyncStatus>(['account_busy', 'connection_failed', 'timeout']);
 const wait = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
@@ -8,7 +9,7 @@ const wait = (milliseconds: number) => new Promise<void>((resolve) => setTimeout
 @Injectable()
 export class TelegramScheduleImportService {
   private readonly logger = new Logger(TelegramScheduleImportService.name);
-  constructor(private readonly store: TelegramScheduleImportStore, private readonly account: TelegramAccountService) {}
+  constructor(private readonly store: TelegramScheduleImportStore, private readonly account: TelegramAccountService, private readonly calendar: CalendarService) {}
   private pause(milliseconds: number) { return wait(milliseconds); }
 
   async syncIfDue(): Promise<void> {
@@ -52,7 +53,19 @@ export class TelegramScheduleImportService {
         await this.store.complete(claim.attemptId, 'source_not_found');
         return 'source_not_found';
       }
-      await this.store.complete(claim.attemptId, 'success', { ...result, syncedAt: new Date().toISOString() });
+      const checkedAt = new Date().toISOString();
+      const rangeStart = checkedAt;
+      const rangeEnd = new Date(Date.parse(checkedAt) + 30 * 24 * 60 * 60_000).toISOString();
+      let calendarAvailability: CalendarAvailabilitySnapshot;
+      try {
+        const busy = await this.calendar.getBusyIntervals(rangeStart, rangeEnd);
+        if (busy.length > 500) throw new Error('Calendar busy interval limit exceeded');
+        calendarAvailability = { status: 'ready', checkedAt: new Date().toISOString(), rangeStart, rangeEnd, busy };
+      } catch {
+        calendarAvailability = { status: 'unavailable', checkedAt: new Date().toISOString() };
+        this.logger.warn('Calendar availability refresh failed; busy details omitted');
+      }
+      await this.store.complete(claim.attemptId, 'success', { ...result, syncedAt: new Date().toISOString(), calendarAvailability });
       return 'success';
     } catch (error) {
       const code = (error as { errorMessage?: string })?.errorMessage ?? (error instanceof Error ? error.message : '');
@@ -80,4 +93,5 @@ export class TelegramScheduleImportService {
     return this.readSnapshot();
   }
   readSnapshot() { return this.store.readSnapshot(); }
+  readCalendarAvailability() { return this.store.readCalendarAvailability(); }
 }

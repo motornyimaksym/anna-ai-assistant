@@ -10,8 +10,9 @@ const fixture = () => {
       slots: [{ messageId: '17', text: 'Сьогодні 15:00', createdAt: '2026-09-25T09:30:00.000Z' }],
     })),
   };
-  const service = new TelegramScheduleImportService(store as never, account as never);
-  return { service, store, account };
+  const calendar = { getBusyIntervals: vi.fn(async () => [{ start: '2026-09-29T10:00:00.000Z', end: '2026-09-29T11:00:00.000Z' }]) };
+  const service = new TelegramScheduleImportService(store as never, account as never, calendar as never);
+  return { service, store, account, calendar };
 };
 
 describe('Telegram schedule import', () => {
@@ -25,7 +26,14 @@ describe('Telegram schedule import', () => {
       sourcePeerId: '42', sourceChatTitle: 'Календар та планування часу',
       slots: [{ messageId: '17', text: 'Сьогодні 15:00', createdAt: '2026-09-25T09:30:00.000Z' }],
       syncedAt: expect.any(String),
+      calendarAvailability: { status: 'ready', checkedAt: expect.any(String), rangeStart: expect.any(String), rangeEnd: expect.any(String), busy: [{ start: '2026-09-29T10:00:00.000Z', end: '2026-09-29T11:00:00.000Z' }] },
     });
+  });
+  it('keeps the Telegram import and marks Calendar unavailable when the Calendar read fails', async () => {
+    const { service, store, calendar } = fixture();
+    calendar.getBusyIntervals.mockRejectedValueOnce(new Error('private Calendar details'));
+    await service.syncIfDue();
+    expect(store.complete).toHaveBeenCalledWith('claim', 'success', expect.objectContaining({ calendarAvailability: { status: 'unavailable', checkedAt: expect.any(String) } }));
   });
 
   it('skips disconnected accounts and throttled attempts', async () => {
@@ -73,7 +81,7 @@ it('records safe busy/timeout failures', async () => {
 it('verifies source ID against Telegram and saves only the server-provided title', async () => {
   const store = { selectSource: vi.fn(), readSnapshot: vi.fn() };
   const account = { listScheduleChats: vi.fn(async () => ({ chats: [{ id: '99', title: 'Private schedule', kind: 'private' }], truncated: false })) };
-  const service = new TelegramScheduleImportService(store as never, account as never);
+  const service = new TelegramScheduleImportService(store as never, account as never, {} as never);
   await expect(service.selectSource('42')).rejects.toThrow('Chat not found');
   expect(store.selectSource).not.toHaveBeenCalled();
   await service.selectSource('99');
@@ -83,7 +91,7 @@ it('verifies source ID against Telegram and saves only the server-provided title
 it('validates topic against its parent and persists the verified title', async () => {
   const store = { selectSource: vi.fn(), readSnapshot: vi.fn() };
   const account = { listScheduleChats: vi.fn(async () => ({ chats: [{ id: '-10042', title: 'Forum', isForum: true }] })), listScheduleTopics: vi.fn(async () => ({ topics: [{ id: 42, title: 'Verified' }] })) };
-  const service = new TelegramScheduleImportService(store as never, account as never);
+  const service = new TelegramScheduleImportService(store as never, account as never, {} as never);
   await service.selectSource('-10042', 42);
   expect(account.listScheduleTopics).toHaveBeenCalledWith('-10042', undefined, 42);
   expect(store.selectSource).toHaveBeenCalledWith('-10042', 'Forum', { id: 42, title: 'Verified' });
