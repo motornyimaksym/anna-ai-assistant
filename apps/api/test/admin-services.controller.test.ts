@@ -12,6 +12,7 @@ const setup = () => {
   const repository = {
     getService: vi.fn(async () => ({ ...sample, photoUrl: oldPhoto })),
     saveService: vi.fn(async (service: typeof sample & { photoUrl?: string }) => service),
+    deleteService: vi.fn(async () => ({ ...sample, photoUrl: oldPhoto })),
   };
   const photos = {
     upload: vi.fn(async () => 'https://firebasestorage.googleapis.com/v0/b/demo/o/service-photos%2Fnew.jpg?alt=media&token=new'),
@@ -22,6 +23,19 @@ const setup = () => {
 };
 
 describe('admin service endpoints', () => {
+  it('creates a service through the catalog schema', async () => {
+    const { controller, repository } = setup();
+    await expect(controller.createService(sample)).resolves.toEqual(sample);
+    expect(repository.saveService).toHaveBeenCalledWith(sample);
+  });
+
+  it('deletes only the catalog service and its attached photo', async () => {
+    const { controller, repository, photos, oldPhoto } = setup();
+    await expect(controller.deleteService('massage')).resolves.toEqual({ ok: true });
+    expect(repository.deleteService).toHaveBeenCalledWith('massage');
+    expect(photos.delete).toHaveBeenCalledWith(oldPhoto);
+  });
+
   it('uploads a protected service photo and replaces the previous photo', async () => {
     const { controller, repository, photos, oldPhoto } = setup();
     const result = await controller.uploadServicePhoto('massage', { contentType: 'image/png', base64: 'iVBORw0KGgo=' });

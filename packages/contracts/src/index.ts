@@ -40,6 +40,7 @@ export const serviceSchema = z.object({
 });
 export const servicePhotoUploadSchema = z.object({ contentType: z.enum(['image/jpeg', 'image/png', 'image/webp']), base64: z.string().min(1).max(7_000_000) });
 export const servicePhotoUploadResponseSchema = z.object({ photoUrl: z.string().url() });
+export const serviceDeleteResponseSchema = z.object({ ok: z.literal(true) }).strict();
 export const availabilityRuleSchema = z.object({ id: z.string().min(1), dayOfWeek: z.number().int().min(0).max(6), start: timeSchema, end: timeSchema, enabled: z.boolean().default(true) }).refine((rule) => rule.start < rule.end, 'End must be after start');
 export const scheduleExceptionSchema = z.object({ id: z.string().min(1), date: z.string().date(), type: z.enum(['day_off', 'working_interval', 'blocked_interval']), start: timeSchema.optional(), end: timeSchema.optional(), note: z.string().max(500).optional() }).superRefine((value, ctx) => { if (value.type !== 'day_off' && (!value.start || !value.end || value.start >= value.end)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Intervals require a valid start and end' }); });
 export const bookingSchema = z.object({

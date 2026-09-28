@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { KnowledgeBase } from './KnowledgeBase.js';
 import { adminApi } from './api.js';
 
-vi.mock('./api.js', () => ({ adminApi: { knowledgeBase: vi.fn(), saveKnowledgeBase: vi.fn(), resetKnowledgeBase: vi.fn(), services: vi.fn(), saveService: vi.fn() } }));
+vi.mock('./api.js', () => ({ adminApi: { knowledgeBase: vi.fn(), saveKnowledgeBase: vi.fn(), resetKnowledgeBase: vi.fn(), services: vi.fn(), saveService: vi.fn(), deleteService: vi.fn() } }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 const show = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } })}><KnowledgeBase /></QueryClientProvider>);
 
@@ -52,5 +52,38 @@ describe('admin knowledge base page', () => {
     await waitFor(() => expect(adminApi.saveService).toHaveBeenCalledWith({ ...service, description: 'Updated massage', durationOptions: [{ durationMinutes: 90, price: 2200 }] }, false));
     await waitFor(() => expect((screen.getByRole('textbox', { name: 'Additional business knowledge' }) as HTMLTextAreaElement).value).toBe('Unsaved knowledge draft.'));
     expect(await screen.findByText(/90 min - 2200 UAH/)).toBeTruthy();
+  });
+
+  it('adds a new service to the catalog and automatically included list', async () => {
+    vi.mocked(adminApi.knowledgeBase).mockResolvedValue({ content: 'Studio facts.', isCustom: true, services: [] });
+    vi.mocked(adminApi.saveService).mockImplementation(async (value) => value);
+    show();
+    expect(await screen.findByText(/No enabled services/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Add service' }));
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Service name' }), { target: { value: 'Relax massage' } });
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Price' }), { target: { value: '1500' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save service' }));
+    await waitFor(() => expect(adminApi.saveService).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'Relax massage', description: '', durationMinutes: 60, bufferMinutes: 30, price: 1500, currency: 'UAH', enabled: true,
+    }), true));
+    expect(await screen.findByText('Relax massage')).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Additional business knowledge' })).toBeTruthy());
+    expect((screen.getByRole('textbox', { name: 'Additional business knowledge' }) as HTMLTextAreaElement).value).toBe('Studio facts.');
+  });
+
+  it('requires delete confirmation, deletes the service, and keeps knowledge text intact', async () => {
+    const service = { id: 'relax', name: 'Relax massage', description: 'Gentle massage', durationMinutes: 60, price: 1500, currency: 'UAH' };
+    vi.mocked(adminApi.knowledgeBase).mockResolvedValue({ content: 'Studio facts.', isCustom: true, services: [service] });
+    vi.mocked(adminApi.deleteService).mockResolvedValue({ ok: true });
+    show();
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete Relax massage' }));
+    expect(await screen.findByRole('heading', { name: 'Delete Relax massage?' })).toBeTruthy();
+    expect(screen.getByText(/Existing appointments remain unchanged/)).toBeTruthy();
+    expect(adminApi.deleteService).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete service' }));
+    await waitFor(() => expect(adminApi.deleteService).toHaveBeenCalledWith('relax'));
+    expect(await screen.findByText(/No enabled services/)).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Additional business knowledge' })).toBeTruthy());
+    expect((screen.getByRole('textbox', { name: 'Additional business knowledge' }) as HTMLTextAreaElement).value).toBe('Studio facts.');
   });
 });

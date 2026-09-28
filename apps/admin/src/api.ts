@@ -8,7 +8,7 @@ import { mediaSchema, mediaDeleteResponseSchema, createMediaSchema, updateMediaS
 import { telegramAccountStatusSchema } from '@booking/contracts';
 import { telegramScheduleSlotsResponseSchema, telegramScheduleChatsSchema, telegramScheduleTopicsSchema } from '@booking/contracts';
 import { humanAssistanceSettingsResponseSchema, humanReleaseResponseSchema, humanRequestSchema, updateHumanAssistanceSettingsSchema, type HumanAssistanceSettings } from '@booking/contracts';
-import { adminAccessResponseSchema, assistantPromptResponseSchema, clearConversationContextResponseSchema, promptCatalogResponseSchema, availableSlotsResponseSchema, botSettingsResponseSchema, conversationSchema, servicePhotoUploadResponseSchema, servicePhotoUploadSchema, serviceSchema, specResponseSchema, updateAdminAccessSchema, type AssistantPromptId, type BotSettings, type ServiceDto } from '@booking/contracts';
+import { adminAccessResponseSchema, assistantPromptResponseSchema, clearConversationContextResponseSchema, promptCatalogResponseSchema, availableSlotsResponseSchema, botSettingsResponseSchema, conversationSchema, serviceDeleteResponseSchema, servicePhotoUploadResponseSchema, servicePhotoUploadSchema, serviceSchema, specResponseSchema, updateAdminAccessSchema, type AssistantPromptId, type BotSettings, type ServiceDto } from '@booking/contracts';
 import { routingPromptResponseSchema, type UpdateRoutingPromptRequest } from '@booking/contracts';
 import { getAuth } from 'firebase/auth';
 const request = async <T>(path: string, schema: { parse(value: unknown): T }, init?: RequestInit): Promise<T> => { const user = getAuth().currentUser; const token = user ? await user.getIdToken() : undefined; const response = await fetchWithLinearBackoff(`/api${path}`, { ...init, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...init?.headers } }); if (!response.ok) { const body = (path.startsWith('/admin/telegram-account') || path.startsWith('/admin/media') || path.startsWith('/admin/ai-chat') || path.startsWith('/admin/schedule') || path.startsWith('/admin/google-calendar') || path.startsWith('/admin/debug')) ? await response.json().catch(() => ({})) as { message?: unknown } : {}; throw new Error(typeof body.message === 'string' ? body.message : `API request failed (${response.status})`); } return schema.parse(await response.json()); };
@@ -47,6 +47,7 @@ export const adminApi = {
   telegramScheduleSlots: () => request('/admin/schedule/imported-slots', telegramScheduleSlotsResponseSchema, { cache: 'no-store' }),
   services: () => request('/admin/services', serviceSchema.array()),
   saveService: (service: ServiceDto, isNew: boolean) => request(isNew ? '/admin/services' : `/admin/services/${encodeURIComponent(service.id)}`, serviceSchema, { method: isNew ? 'POST' : 'PATCH', body: JSON.stringify(service) }),
+  deleteService: (id: string) => request(`/admin/services/${encodeURIComponent(id)}`, serviceDeleteResponseSchema, { method: 'DELETE' }),
   uploadServicePhoto: async (serviceId: string, file: File) => {
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();

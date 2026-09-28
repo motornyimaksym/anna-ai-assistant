@@ -405,7 +405,7 @@ Human responder records are defined in section 44 and `docs/data-model.md`. They
 }
 ```
 
-The service catalog remains backend booking configuration for existing availability and bookings. The admin Services editor is replaced by Media Store (section 43); the old /services page redirects to /media. Existing service documents, IDs, prices and legacy admin API remain compatible. No automatic conversion or deletion of service data occurs.
+The service catalog remains backend booking configuration for existing availability and bookings. The admin Services editor is replaced by Media Store (section 43); the old /services page redirects to /media. Existing service documents, IDs, prices and legacy admin API remain compatible. No automatic migration, conversion, or deletion of service data occurs; admins may explicitly add, edit or delete catalog services on the Knowledge Base page (section 25.8).
 
 ### 9.1. Duration and price options
 
@@ -969,7 +969,7 @@ Actions:
 
 Окрема захищена сторінка `/knowledge-base` з таким самим простим editable multiline text field, статусом (default/custom), лімітом 12,000 символів, Save та Reset. Вона редагує тільки `assistantSettings/knowledgeBase.content`; текст застосовується до наступного OpenAI запиту. База знань може містити факти та умови доступу до послуг; асистент має враховувати їх до пропозиції або запису й уточнювати попередній візит, якщо його не підтверджено. UI пояснює, що поточні enabled послуги, описи, тривалості та ціни з booking catalog автоматично додаються до кожного запиту. Порожнє кастомне значення не приймається; Reset видаляє override і повертає repo default knowledge base.
 
-The `Services automatically included` section on `/knowledge-base` lets an admin edit each enabled catalog service's name, description, duration options, and prices in place. Saving uses the existing service update endpoint and validation; it preserves the service ID, buffer, enabled state, media and Telegram presentation fields. The section refreshes after a successful save and shows validation or request errors without silently changing the Knowledge Base text. Service edits take effect in the live catalog and subsequent assistant/booking requests; Knowledge Base Save and Reset continue to affect only its text override.
+The `Services automatically included` section on `/knowledge-base` lists enabled catalog services. Admins can add a service, edit each service's name, description, duration options, and prices, and delete each existing service. Add uses the service creation endpoint/schema, generating a unique ID, default 30-minute buffer, enabled state and UAH currency; require a name, duration and valid price before saving. Edit uses the update endpoint/schema and preserves service ID, buffer, enabled state, media and Telegram presentation fields. Delete requires a confirmation naming the service and explaining that it leaves future assistant/booking options; delete only its catalog document and attached service photo. Existing Calendar appointments and their price/duration snapshots are not deleted or changed. Refresh the service/knowledge-base view after successful creation or deletion; show request errors without silently changing Knowledge Base text. Service changes apply to the live catalog and subsequent assistant/booking requests. Knowledge Base Save and Reset continue to affect only its text override. No other service fields or presentation settings become editable in this section.
 
 ### 25.9. Bot settings
 
@@ -1139,11 +1139,11 @@ Production автоматично не seed-ити.
 - authentication;
 - authorization;
 - critical booking actions;
-- service catalog validation and protected image upload.
+- service catalog validation, create/update/delete, and protected image upload/cleanup.
 
 ### 29.6. Frontend
 
-Key component/page validation includes Media Store creation/editing, file validation, repeat interval conversion, previews, delete confirmation and Services redirect.
+Key component/page validation includes Media Store creation/editing, file validation, repeat interval conversion, previews, delete confirmation, Knowledge Base service creation/deletion and confirmation, and Services redirect.
 
 ---
 

@@ -8,17 +8,31 @@ type Draft = { original: ServiceDto; name: string; description: string; options:
 const asNumber = (value: string) => value.trim() ? Number(value) : Number.NaN;
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'Request failed.';
 
-export function KnowledgeBaseServiceEditor({ serviceId, serviceName, onSaved }: { serviceId: string; serviceName: string; onSaved: (service: ServiceDto) => void }) {
+const newService = (): ServiceDto => ({
+  id: globalThis.crypto?.randomUUID?.() ?? `service-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  name: '', description: '', durationMinutes: 60, bufferMinutes: 30, price: 0, currency: 'UAH', enabled: true,
+});
+
+export function KnowledgeBaseServiceEditor({ service, onSaved }: { service?: Pick<ServiceDto, 'id' | 'name'>; onSaved: (saved: ServiceDto, creating: boolean) => void }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const save = useMutation({ mutationFn: (service: ServiceDto) => adminApi.saveService(service, false), onSuccess: (service) => { onSaved(service); setDraft(null); setError(''); }, onError: (cause) => setError(errorText(cause)) });
+  const [creating, setCreating] = useState(false);
+  const save = useMutation({ mutationFn: (value: ServiceDto) => adminApi.saveService(value, creating), onSuccess: (saved) => { onSaved(saved, creating); setDraft(null); setError(''); }, onError: (cause) => setError(errorText(cause)) });
   const open = async () => {
+    setError('');
+    if (!service) {
+      const original = newService();
+      setCreating(true);
+      setDraft({ original, name: '', description: '', options: [{ durationMinutes: '60', price: '' }] });
+      return;
+    }
     setLoading(true); setError('');
     try {
-      const service = (await adminApi.services()).find((item) => item.id === serviceId && item.enabled);
-      if (!service) throw new Error('Service is no longer available. Reload the page.');
-      setDraft({ original: service, name: service.name, description: service.description, options: serviceDurationOptions(service).map((option) => ({ durationMinutes: String(option.durationMinutes), price: String(option.price) })) });
+      const latest = (await adminApi.services()).find((item) => item.id === service.id && item.enabled);
+      if (!latest) throw new Error('Service is no longer available. Reload the page.');
+      setCreating(false);
+      setDraft({ original: latest, name: latest.name, description: latest.description, options: serviceDurationOptions(latest).map((option) => ({ durationMinutes: String(option.durationMinutes), price: String(option.price) })) });
     } catch (cause) { setError(errorText(cause)); }
     finally { setLoading(false); }
   };
@@ -31,10 +45,10 @@ export function KnowledgeBaseServiceEditor({ serviceId, serviceName, onSaved }: 
   const close = () => { if (!save.isPending) { setDraft(null); setError(''); } };
 
   return <>
-    <Button size="small" aria-label={`Edit ${serviceName}`} disabled={loading || save.isPending} onClick={() => void open()}>{loading ? 'Loading…' : 'Edit'}</Button>
+    <Button size={service ? 'small' : 'medium'} variant={service ? 'text' : 'outlined'} aria-label={service ? `Edit ${service.name}` : 'Add service'} disabled={loading || save.isPending} onClick={() => void open()}>{loading ? 'Loading…' : service ? 'Edit' : 'Add'}</Button>
     {error && !draft && <Alert severity="error">Could not open service. {error}</Alert>}
     <Dialog open={Boolean(draft)} onClose={close} fullWidth maxWidth="sm">
-      <DialogTitle>Edit service</DialogTitle>
+      <DialogTitle>{creating ? 'Add service' : 'Edit service'}</DialogTitle>
       {draft && <>
         <DialogContent><Stack spacing={2} sx={{ mt: 1 }}>
           <TextField label="Service name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} required fullWidth />

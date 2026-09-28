@@ -1,4 +1,4 @@
-import { Alert, Box, Button, Chip, Divider, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Stack, TextField, Typography } from '@mui/material';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import type { KnowledgeBaseResponse, ServiceDto } from '@booking/contracts';
@@ -17,15 +17,26 @@ export const KnowledgeBase = () => {
   const query = useQuery({ queryKey, queryFn: adminApi.knowledgeBase });
   const [content, setContent] = useState('');
   const [message, setMessage] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   useEffect(() => { if (query.data) setContent(query.data.content); }, [query.data?.content]);
-  const serviceSaved = (saved: ServiceDto) => {
-    queryClient.setQueryData<KnowledgeBaseResponse>(queryKey, (current) => current ? { ...current, services: current.services.map((item) => item.id === saved.id ? {
+  const serviceSaved = (saved: ServiceDto, creating: boolean) => {
+    const summary = {
       id: saved.id, name: saved.name, description: saved.description, durationMinutes: saved.durationMinutes,
       ...(saved.durationOptions ? { durationOptions: saved.durationOptions } : {}), price: saved.price, currency: saved.currency,
-    } : item) } : current);
-    queryClient.setQueryData<ServiceDto[]>(['services'], (current) => current?.map((item) => item.id === saved.id ? saved : item));
-    setMessage('Service saved. Changes apply to the next assistant request.');
+    };
+    queryClient.setQueryData<KnowledgeBaseResponse>(queryKey, (current) => current ? { ...current, services: creating ? [...current.services, summary] : current.services.map((item) => item.id === saved.id ? summary : item) } : current);
+    queryClient.setQueryData<ServiceDto[]>(['services'], (current = []) => creating ? [...current, saved] : current.map((item) => item.id === saved.id ? saved : item));
+    setMessage(`${saved.name} saved. Changes apply to the next assistant request.`);
   };
+  const removeService = useMutation({
+    mutationFn: (service: { id: string; name: string }) => adminApi.deleteService(service.id),
+    onSuccess: (_, service) => {
+      queryClient.setQueryData<KnowledgeBaseResponse>(queryKey, (current) => current ? { ...current, services: current.services.filter((item) => item.id !== service.id) } : current);
+      queryClient.setQueryData<ServiceDto[]>(['services'], (current) => current?.filter((item) => item.id !== service.id));
+      setDeleteTarget(null);
+      setMessage(`${service.name} deleted from the service catalog.`);
+    },
+  });
 
   const save = useMutation({
     mutationFn: () => adminApi.saveKnowledgeBase(content),
@@ -67,28 +78,41 @@ export const KnowledgeBase = () => {
       helperText={`${content.length.toLocaleString()} / 12,000 characters`}
       disabled={save.isPending || reset.isPending}
     />
-    {query.data.services.length > 0 && <>
+    <>
       <Divider />
       <Box>
-        <Typography variant="h6" gutterBottom>Services automatically included</Typography>
-        <Stack spacing={1.5}>
+        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+          <Typography variant="h6">Services automatically included</Typography>
+          <KnowledgeBaseServiceEditor onSaved={serviceSaved} />
+        </Stack>
+        {query.data.services.length ? <Stack spacing={1.5}>
           {query.data.services.map((service) => <Box key={service.id}>
             <Stack direction="row" alignItems="center" spacing={1}>
               <Typography fontWeight={600}>{service.name}</Typography>
-              <KnowledgeBaseServiceEditor serviceId={service.id} serviceName={service.name} onSaved={serviceSaved} />
+              <KnowledgeBaseServiceEditor service={service} onSaved={serviceSaved} />
+              <Button size="small" color="error" aria-label={`Delete ${service.name}`} disabled={removeService.isPending} onClick={() => { setMessage(''); setDeleteTarget({ id: service.id, name: service.name }); }}>Delete</Button>
             </Stack>
             {service.description && <Typography variant="body2" color="text.secondary">{service.description}</Typography>}
             <Typography variant="body2">{priceOptions(service).map((option) => `${option.durationMinutes} min - ${option.price} ${service.currency}`).join(' · ')}</Typography>
           </Box>)}
-        </Stack>
+        </Stack> : <Typography variant="body2" color="text.secondary">No enabled services. Add a service to include it in assistant replies and future bookings.</Typography>}
       </Box>
-    </>}
+    </>
     {message && <Alert severity="success">{message}</Alert>}
+    {removeService.isError && <Alert severity="error">Could not delete service. {errorText(removeService.error)}</Alert>}
     {save.isError && <Alert severity="error">Could not save the knowledge base. {errorText(save.error)}</Alert>}
     {reset.isError && <Alert severity="error">Could not reset the knowledge base. {errorText(reset.error)}</Alert>}
     <Box display="flex" gap={1}>
       <Button variant="contained" onClick={() => { setMessage(''); save.mutate(); }} disabled={!canSave}>Save</Button>
       <Button variant="outlined" color="inherit" onClick={() => { setMessage(''); reset.mutate(); }} disabled={!query.data.isCustom || save.isPending || reset.isPending}>RESET</Button>
     </Box>
+    <Dialog open={Boolean(deleteTarget)} onClose={() => { if (!removeService.isPending) setDeleteTarget(null); }}>
+      <DialogTitle>Delete {deleteTarget?.name}?</DialogTitle>
+      <DialogContent>This removes the service from assistant replies and future booking options. Existing appointments remain unchanged.</DialogContent>
+      <DialogActions>
+        <Button onClick={() => setDeleteTarget(null)} disabled={removeService.isPending}>Keep service</Button>
+        <Button color="error" variant="contained" onClick={() => { if (deleteTarget) removeService.mutate(deleteTarget); }} disabled={removeService.isPending}>{removeService.isPending ? 'Deleting…' : 'Delete service'}</Button>
+      </DialogActions>
+    </Dialog>
   </Stack>;
 };

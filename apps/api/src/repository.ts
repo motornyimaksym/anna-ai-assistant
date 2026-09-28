@@ -95,6 +95,14 @@ export class BookingRepository {
     await this.db.collection('services').doc(service.id).set(serviceDocument(service));
     return service;
   }
+  async deleteService(id: string): Promise<ServiceDto> {
+    const ref = this.db.collection('services').doc(id);
+    const snapshot = await ref.get();
+    if (!snapshot.exists) throw new NotFoundException('Service not found');
+    const service = serviceFromDocument(snapshot.id, snapshot.data()!);
+    await ref.delete();
+    return service;
+  }
   async listBookings(): Promise<BookingDto[]> {
     const snapshot = await this.db.collection('bookings').get();
     return snapshot.docs.map((doc) => bookingSchema.parse({ ...doc.data(), id: doc.id })).sort((a, b) => a.startAt.localeCompare(b.startAt));
