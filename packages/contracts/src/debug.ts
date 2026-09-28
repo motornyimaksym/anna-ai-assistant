@@ -31,6 +31,7 @@ export const debugEventSchema = z.object({
   level: z.enum(['info', 'warn', 'error']), details: debugDetailsSchema,
 });
 export const debugAccessSchema = z.object({ canView: z.boolean() });
+export const debugClearResponseSchema = z.object({ ok: z.literal(true) });
 export const debugEventsSchema = z.array(debugEventSchema).max(200);
 export type DebugEvent = z.infer<typeof debugEventSchema>;
 export type DebugDetails = z.infer<typeof debugDetailsSchema>;

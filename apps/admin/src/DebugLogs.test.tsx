@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DebugLogs } from './DebugLogs.js';
 import { adminApi } from './api.js';
-vi.mock('./api.js', () => ({ adminApi: { debugAccess: vi.fn(), debugLogs: vi.fn(), debugLogPayload: vi.fn(), promptTest: vi.fn() } }));
+vi.mock('./api.js', () => ({ adminApi: { debugAccess: vi.fn(), debugLogs: vi.fn(), clearDebugLogs: vi.fn(), debugLogPayload: vi.fn(), promptTest: vi.fn() } }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 const show = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><DebugLogs uid="owner" /></QueryClientProvider>);
 describe('debug page access', () => {
@@ -12,6 +12,7 @@ describe('debug page access', () => {
     vi.mocked(adminApi.debugAccess).mockResolvedValue({ canView: false }); show();
     expect(await screen.findByText('Debug tools are available only to the designated owner account.')).toBeTruthy();
     expect(adminApi.debugLogs).not.toHaveBeenCalled();
+    expect(adminApi.clearDebugLogs).not.toHaveBeenCalled();
     expect(adminApi.promptTest).not.toHaveBeenCalled();
   });
   it('loads authorized diagnostic events and exposes refresh', async () => {
@@ -20,8 +21,24 @@ describe('debug page access', () => {
     show(); expect(await screen.findByText('booking_result')).toBeTruthy();
     expect(screen.getByText(/calendar_unavailable/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Clear' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'System log' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'Prompt test' })).toBeTruthy();
+  });
+  it('confirms before clearing retained logs, then reloads the empty log', async () => {
+    const event = { id: '00000000-0000-4000-8000-000000000000', createdAt: '2026-09-27T00:00:00.000Z', traceId: '00000000-0000-4000-8000-000000000001', chatRef: 'anonymous', stage: 'booking_result' as const, level: 'warn' as const, details: { reason: 'calendar_unavailable' } };
+    vi.mocked(adminApi.debugAccess).mockResolvedValue({ canView: true });
+    vi.mocked(adminApi.debugLogs).mockResolvedValueOnce([event]).mockResolvedValueOnce([]);
+    vi.mocked(adminApi.clearDebugLogs).mockResolvedValue({ ok: true });
+    show();
+    expect(await screen.findByText('booking_result')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(adminApi.clearDebugLogs).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'Clear system log?' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear log' }));
+    await waitFor(() => expect(adminApi.clearDebugLogs).toHaveBeenCalledOnce());
+    expect(await screen.findByText('No diagnostic events yet.')).toBeTruthy();
+    expect(adminApi.debugLogs).toHaveBeenCalledTimes(2);
   });
   it('runs selected prompt with example text and shows its output', async () => {
     vi.mocked(adminApi.debugAccess).mockResolvedValue({ canView: true });

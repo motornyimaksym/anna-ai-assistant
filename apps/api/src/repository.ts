@@ -377,6 +377,20 @@ export class BookingRepository {
       return debugEventsSchema.parse(documents.filter((doc) => doc.exists).map((doc) => doc.data())).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     });
   }
+  async clearDebugEvents(): Promise<void> {
+    const collection = this.db.collection('assistantDiagnostics');
+    const indexRef = collection.doc('recent');
+    let clearedIds: string[] = [];
+    await this.db.runTransaction(async (tx) => {
+      const data = (await tx.get(indexRef)).data();
+      const legacy = debugEventsSchema.parse(data?.events ?? []);
+      const indexed = Array.isArray(data?.ids) ? data.ids.filter((id): id is string => typeof id === 'string') : [];
+      clearedIds = [...new Set([...indexed, ...legacy.map((event) => event.id)])].filter((id) => debugEventSchema.shape.id.safeParse(id).success);
+      for (const id of clearedIds) tx.delete(collection.doc(id));
+      tx.set(indexRef, { ids: [] });
+    });
+    await Promise.all(clearedIds.map((id) => this.deleteDiagnosticBodies(id)));
+  }
   async getDebugPayload(rawId: string): Promise<DebugPayload> {
     const id = debugEventSchema.shape.id.parse(rawId);
     const ref = this.db.collection('assistantDiagnostics').doc(id);

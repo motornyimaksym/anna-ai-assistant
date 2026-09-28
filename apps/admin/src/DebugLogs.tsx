@@ -1,6 +1,6 @@
 import type { DebugRequest } from '@booking/contracts';
-import { Alert, Button, Chip, MenuItem, Paper, Stack, Tab, Tabs, TextField, Typography } from '@mui/material';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { Alert, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, MenuItem, Paper, Stack, Tab, Tabs, TextField, Typography } from '@mui/material';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { adminApi } from './api.js';
@@ -11,10 +11,13 @@ export const DebugLink = ({ uid }: { uid: string }) => {
   return access.data?.canView ? <Button color="inherit" component={NavLink} to="/debug">Debug</Button> : null;
 };
 export const DebugLogs = ({ uid }: { uid: string }) => {
+  const queryClient = useQueryClient();
   const access = useDebugAccess(uid);
   const [tab, setTab] = useState<'log' | 'test'>('log');
   const [filter, setFilter] = useState('');
+  const [confirmClear, setConfirmClear] = useState(false);
   const logs = useQuery({ queryKey: ['debug-logs', uid], queryFn: adminApi.debugLogs, enabled: access.data?.canView === true && tab === 'log', retry: false, gcTime: 0 });
+  const clearLogs = useMutation({ mutationFn: adminApi.clearDebugLogs, onSuccess: async () => { setConfirmClear(false); await queryClient.invalidateQueries({ queryKey: ['debug-logs', uid] }); } });
   if (access.isPending) return <Typography>Checking access…</Typography>;
   if (access.isError || !access.data?.canView) return <Alert severity="warning">Debug tools are available only to the designated owner account.</Alert>;
   return <Stack spacing={2}>
@@ -26,7 +29,8 @@ export const DebugLogs = ({ uid }: { uid: string }) => {
     <Typography variant="body2">Latest 200 records retained globally. Complete sanitized AI request and response bodies load when expanded. Credentials and hidden reasoning are excluded. Older records are deleted automatically.</Typography>
     <Stack direction="row" spacing={2}>
       <TextField label="Filter stage, status or trace" value={filter} onChange={(event) => setFilter(event.target.value)} fullWidth size="small" />
-      <Button onClick={() => void logs.refetch()} disabled={logs.isFetching}>Refresh</Button>
+      <Button onClick={() => void logs.refetch()} disabled={logs.isFetching || clearLogs.isPending}>Refresh</Button>
+      <Button color="error" onClick={() => { clearLogs.reset(); setConfirmClear(true); }} disabled={logs.isFetching || clearLogs.isPending || !logs.data?.length}>Clear</Button>
     </Stack>
     {logs.isPending && <Typography>Loading logs…</Typography>}
     {logs.isError && <Alert severity="error">Could not load debug logs.</Alert>}
@@ -38,6 +42,11 @@ export const DebugLogs = ({ uid }: { uid: string }) => {
       {event.details.request && <RequestDetails eventId={event.id} request={event.details.request} />}
     </Paper>)}
     </>}
+    <Dialog open={confirmClear} onClose={() => { if (!clearLogs.isPending) setConfirmClear(false); }}>
+      <DialogTitle>Clear system log?</DialogTitle>
+      <DialogContent><Typography>Clear all currently retained diagnostic events? Their private request/response payloads will no longer be accessible.</Typography>{clearLogs.isError && <Alert severity="error" sx={{ mt: 2 }}>Could not clear debug logs. Please try again.</Alert>}</DialogContent>
+      <DialogActions><Button disabled={clearLogs.isPending} onClick={() => setConfirmClear(false)}>Cancel</Button><Button color="error" disabled={clearLogs.isPending} onClick={() => clearLogs.mutate()}>{clearLogs.isPending ? 'Clearing…' : 'Clear log'}</Button></DialogActions>
+    </Dialog>
   </Stack>;
 };
 

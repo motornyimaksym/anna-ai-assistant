@@ -1,6 +1,6 @@
 import { systemOneSettingsSchema, type SystemOneSettings } from '@booking/contracts';
 import { fetchWithLinearBackoff } from '@booking/http';
-import { debugAccessSchema, debugEventsSchema, debugPayloadSchema, promptTestRequestSchema, promptTestResponseSchema, type PromptTestRequest } from '@booking/contracts';
+import { debugAccessSchema, debugClearResponseSchema, debugEventsSchema, debugPayloadSchema, promptTestRequestSchema, promptTestResponseSchema, type PromptTestRequest } from '@booking/contracts';
 import { googleCalendarStatusSchema, googleCalendarStartSchema, googleCalendarListSchema } from '@booking/contracts';
 import { aiChatThreadSchema, aiChatSummarySchema } from '@booking/contracts';
 import { knowledgeBaseResponseSchema } from '@booking/contracts';
@@ -79,6 +79,7 @@ export const adminApi = {
   resetBookingPrompt: () => request('/admin/booking-prompt', assistantPromptResponseSchema, { method: 'DELETE' }),
   debugAccess: () => request('/admin/debug/access', debugAccessSchema, { cache: 'no-store' }),
   debugLogs: () => request('/admin/debug/logs', debugEventsSchema, { cache: 'no-store' }),
+  clearDebugLogs: () => request('/admin/debug/logs', debugClearResponseSchema, { method: 'DELETE', cache: 'no-store' }),
   debugLogPayload: (id: string) => request(`/admin/debug/logs/${encodeURIComponent(id)}/payload`, debugPayloadSchema, { cache: 'no-store' }),
   promptTest: (input: PromptTestRequest) => request('/admin/debug/prompt-test', promptTestResponseSchema, { method: 'POST', body: JSON.stringify(promptTestRequestSchema.parse(input)), cache: 'no-store' }),
   assistantPrompt: () => request('/admin/assistant-prompt', assistantPromptResponseSchema),

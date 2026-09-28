@@ -60,3 +60,38 @@ it('stores and returns complete large payloads outside bounded Firestore metadat
   expect(Buffer.byteLength(payload.requestBody!)).toBeGreaterThan(16_384);
   expect(Buffer.byteLength(payload.responseBody!)).toBeGreaterThan(8_192);
 });
+
+it('clears retained event documents, the index and their private body files', async () => {
+  const first = event();
+  const second = event();
+  const records = new Map<string, unknown>([
+    ['recent', { ids: [first.id, second.id] }],
+    [first.id, first],
+    [second.id, second],
+  ]);
+  const repository = setup(records);
+  storage.blobs.set(`assistant-diagnostics/${first.id}/request.json`, Buffer.from('request'));
+  storage.blobs.set(`assistant-diagnostics/${second.id}/response.json`, Buffer.from('response'));
+
+  await repository.clearDebugEvents();
+
+  expect(records.get('recent')).toEqual({ ids: [] });
+  expect(records.has(first.id)).toBe(false);
+  expect(records.has(second.id)).toBe(false);
+  expect(storage.blobs.has(`assistant-diagnostics/${first.id}/request.json`)).toBe(false);
+  expect(storage.blobs.has(`assistant-diagnostics/${second.id}/response.json`)).toBe(false);
+  expect(await repository.listDebugEvents()).toEqual([]);
+});
+
+it('clears unmigrated legacy events too', async () => {
+  const old = event();
+  const records = new Map<string, unknown>([['recent', { events: [old] }]]);
+  const repository = setup(records);
+  storage.blobs.set(`assistant-diagnostics/${old.id}/request.json`, Buffer.from('legacy request'));
+
+  await repository.clearDebugEvents();
+
+  expect(records.get('recent')).toEqual({ ids: [] });
+  expect(storage.blobs.has(`assistant-diagnostics/${old.id}/request.json`)).toBe(false);
+  expect(await repository.listDebugEvents()).toEqual([]);
+});

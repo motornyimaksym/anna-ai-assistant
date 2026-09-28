@@ -48,7 +48,7 @@ No separate schedule extraction request, derived windows, or schedule revision i
 
 System One selects the Booking workflow, whose conversation model delegates scheduling to `plan_booking`. `BookingPlannerService` makes a separate schema-constrained OpenAI request using the editable booking prompt, raw Telegram schedule messages and live Calendar intervals. It validates the result against catalog, ownership and timing, returns clarification/unavailable without pausing the conversation, or stages the existing pending action. Confirmed proposals execute through the natural-confirmation flow below and repeat Calendar conflict checks. Every function call in a persistent OpenAI Conversation is closed with a matching `function_call_output`, including when the application prepares a local reply; local-reply paths make a final tool-free Responses call before returning.
 
-Private debug events trace routing, planning and reply delivery without recording raw conversations or secrets. A bounded backend event buffer is visible at `/debug` only to the exact configured debug owner; the default is the sole existing owner UID. API authorization is independent of navigation visibility.
+Private debug events trace routing, planning and reply delivery without recording raw conversations or secrets. A bounded backend event buffer is visible at `/debug` only to the exact configured debug owner; the default is the sole existing owner UID. The owner can refresh or clear retained events from the System log; clearing transactionally removes event metadata and then best-effort deletes private payload files. API authorization is independent of navigation visibility.
 
 ## System One / System Two
 
