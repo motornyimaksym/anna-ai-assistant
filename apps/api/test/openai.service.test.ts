@@ -213,7 +213,7 @@ it('hands an unlisted custom-service request to a person without an automatic re
     .mockResolvedValueOnce(answer('This draft must not be delivered'));
   vi.stubGlobal('fetch', fetcher);
   const reply = await service.respond(conversation, context, 'Do you offer custom hot stone massage?');
-  expect(reply).toMatchObject({ text: '', needsHuman: true, humanContext: expect.stringContaining('custom service') });
+  expect(reply).toMatchObject({ text: '', needsHuman: true, humanContext: expect.stringContaining('requires human assistance') });
   expect(tools.execute).toHaveBeenCalledWith({ name: 'request_human_assistance', arguments: {} }, { ...context, currentMessage: 'Do you offer custom hot stone massage?' });
   expect(JSON.parse(fetcher.mock.calls[1]![1].body).input).toContainEqual({ type: 'function_call_output', call_id: 'human-1', output: JSON.stringify({ status: 'human_requested' }) });
 });

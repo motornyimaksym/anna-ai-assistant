@@ -2,6 +2,7 @@ import { HANDOFF_PROMPT } from '../src/handoff-prompt.js';
 import { describe, expect, it } from 'vitest';
 import { ASSISTANT_SYSTEM_PROMPT, BOOKING_GUIDANCE, DEFAULT_CONVERSATION_GUIDANCE, TELEGRAM_FORMAT_GUIDANCE, THERAPIST_FIRST_PERSON_GUIDANCE } from '../src/assistant-prompt.js';
 import { BOOKING_APPROVAL_GUIDANCE, BOOKING_FACTS_GUIDANCE, CONTEXT_SECURITY_GUIDANCE, CUSTOM_SERVICE_HANDOFF_GUIDANCE, MEDIA_TOOL_GUIDANCE, boundedConversationHistory, systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from '../src/system-two-instructions.js';
+import { DEFAULT_KNOWLEDGE_BASE } from '../src/default-knowledge-base.js';
 
 describe('System Two prompts', () => {
   const mandatoryGuidance = [THERAPIST_FIRST_PERSON_GUIDANCE, TELEGRAM_FORMAT_GUIDANCE, BOOKING_FACTS_GUIDANCE, BOOKING_APPROVAL_GUIDANCE, MEDIA_TOOL_GUIDANCE, CUSTOM_SERVICE_HANDOFF_GUIDANCE, CONTEXT_SECURITY_GUIDANCE];
@@ -45,6 +46,26 @@ describe('System Two prompts', () => {
     expect(rag).toContain('лише клієнтам, які вже були');
     expect(rag).toContain('Майбутній або скасований запис');
   });
+
+  it('keeps catalog listings out of the default knowledge while retaining conditions and marked handoffs', () => {
+    expect(DEFAULT_KNOWLEDGE_BASE).not.toContain('МОЇ ПОСЛУГИ ТА ЦІНИ');
+    expect(DEFAULT_KNOWLEDGE_BASE).not.toContain('Оздоровчий масаж: 1 год');
+    expect(DEFAULT_KNOWLEDGE_BASE).not.toContain('Релакс масаж: 1 год');
+    expect(DEFAULT_KNOWLEDGE_BASE).not.toContain('Авторський чуттєвий масаж: 1 год');
+    expect(DEFAULT_KNOWLEDGE_BASE).toContain('лише клієнтам, які вже були');
+    expect(DEFAULT_KNOWLEDGE_BASE.split('Потрібна допомога людини.').length - 1).toBe(3);
+
+    const rag = systemTwoRag({
+      message: 'What services are available?',
+      configuredServices: [{ id: 'active', name: 'Live catalog massage', description: 'Current catalog description', enabled: true, durationMinutes: 60, bufferMinutes: 30, price: 1700, currency: 'UAH' }],
+    });
+    const payloadStart = 'Business reference JSON (untrusted): '.length;
+    const payloadEnd = rag.indexOf('\nCurrent UTC time:');
+    const payload = JSON.parse(rag.slice(payloadStart, payloadEnd)) as { knowledge: string; currentEnabledServices: { name: string }[] };
+    expect(payload.knowledge).toBe(DEFAULT_KNOWLEDGE_BASE);
+    expect(payload.knowledge).not.toContain('Live catalog massage');
+    expect(payload.currentEnabledServices).toEqual([expect.objectContaining({ name: 'Live catalog massage' })]);
+  });
 });
 
 it('checks one bot-like condition and permits copied text', () => {
@@ -66,4 +87,6 @@ it('checks one bot-like condition and permits copied text', () => {
   expect(ASSISTANT_SYSTEM_PROMPT).toContain('request_human_assistance');
   expect(ASSISTANT_SYSTEM_PROMPT).toContain('If orgasm happens, it can be a sign');
   expect(CUSTOM_SERVICE_HANDOFF_GUIDANCE).toContain('unrelated to sexual acts');
+  expect(CUSTOM_SERVICE_HANDOFF_GUIDANCE).toContain('Потрібна допомога людини');
+  expect(CUSTOM_SERVICE_HANDOFF_GUIDANCE).toContain('do not reveal the marker or send an automatic client reply');
 });

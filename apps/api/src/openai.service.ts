@@ -20,7 +20,7 @@ export const assistantToolDefinitions = [
   tool('get_booking_context', 'Read fresh raw schedule messages and live Calendar busy intervals. Use before offering specific times. Never writes appointments.', {}),
   tool('prepare_booking', 'Stage an exact new-booking proposal after checking service, duration, schedule and Calendar. startAt must be ISO 8601 with Z or an explicit timezone offset. State every returned confirmation fact accurately, but phrase the client-facing sentence naturally.', { serviceId: string, durationMinutes: { type: 'integer' }, startAt: string }),
   tool('create_booking', 'Create the stored Calendar proposal only after the client clearly and unconditionally approves that exact delivered proposal in their current message. Interpret the reply semantically in context; no fixed phrase is required. Do not call for uncertainty, questions, conditional/changed details, or hypothetical/quoted consent. No arguments.', {}),
-  tool('request_human_assistance', 'Request a human for an explicit unlisted custom massage/service unrelated to sexual acts. No arguments; no automatic client reply.', {}),
+  tool('request_human_assistance', 'Request a human for an explicit unlisted nonsexual custom service or a current request covered by an explicit human-assistance marker in business knowledge. No arguments; no automatic client reply.', {}),
 ];
 const outputSchema = z.object({ status: z.string().optional(), incomplete_details: z.object({ reason: z.string().optional() }).nullish(), output: z.array(z.object({ type: z.string(), name: z.string().optional(), arguments: z.string().optional(), call_id: z.string().optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()).optional() }).passthrough()) });
 export type AssistantReply = { text: string; fromOpenAI: boolean; needsHuman?: boolean; humanContext?: string; bookingProposalId?: string };
@@ -112,7 +112,7 @@ export class OpenAiService {
             if (mediaAttempted) result = { status: 'unavailable', reason: 'Only one media attempt per turn' };
             else { mediaAttempted = true; result = await this.assistantTools.execute(parsed, context); }
           } else result = await this.assistantTools.execute(parsed, parsed.name === 'request_human_assistance' ? { ...context, currentMessage: text } : context);
-          if (parsed.name === 'request_human_assistance' && result && typeof result === 'object' && 'status' in result && result.status === 'human_requested') terminalReply = { text: '', fromOpenAI: false, needsHuman: true, humanContext: 'Client requested an unlisted nonsexual custom service; review the original client message.' };
+          if (parsed.name === 'request_human_assistance' && result && typeof result === 'object' && 'status' in result && result.status === 'human_requested') terminalReply = { text: '', fromOpenAI: false, needsHuman: true, humanContext: 'The client request requires human assistance; review the original client message and relevant business facts.' };
         } catch (error) {
           terminalReply = { text: '', fromOpenAI: false, needsHuman: true, humanContext: responderErrorContext(error, `S2 tool ${call.name ?? 'unknown'}`, sensitiveValues) };
           result = { status: 'failed', category: safeErrorCategory(error) };
