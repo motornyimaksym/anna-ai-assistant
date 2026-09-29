@@ -258,7 +258,7 @@ export class BookingRepository {
     const ref = this.db.collection('conversations').doc(conversation.telegramChatId);
     await this.db.runTransaction(async (tx) => {
       const doc = await tx.get(ref);
-      if (doc.exists) tx.update(ref, { updatedAt: conversation.updatedAt });
+      if (doc.exists) tx.update(ref, { updatedAt: conversation.updatedAt, telegramUsername: conversation.telegramUsername ?? null });
       else tx.set(ref, withoutUndefined(conversation));
     });
   }

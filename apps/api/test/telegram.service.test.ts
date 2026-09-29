@@ -110,6 +110,7 @@ describe('Telegram private test restriction', () => {
 
     expect(repository.claimTelegramUpdate).toHaveBeenCalledWith(101);
     expect(repository.touchConversation).toHaveBeenCalledOnce();
+    expect(repository.touchConversation).toHaveBeenCalledWith(expect.objectContaining({ telegramUsername: 'user61785' }));
     expect(send).toHaveBeenCalledTimes(3);
     expect(assistant.respond).toHaveBeenCalledOnce();
     expect(order.slice(0, 3)).toEqual(['readBusinessMessage', 'sendChatAction', 'assistant']);
@@ -340,8 +341,9 @@ it('routes Telegram delivery API errors with redacted details and no stored assi
   const { service, send, human, repository } = setup({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0, updatedAt: '2026-09-24T10:00:00.000Z' });
   send.mockImplementation(async (url) => url.endsWith('/sendMessage') ? { ok: false, status: 503, headers: { get: () => 'req_123' }, json: async () => ({ ok: false }) } : { ok: true, json: async () => ({ ok: true }) });
   await service.handle('webhook-secret', update('user61785'));
-  expect(human.escalateError).toHaveBeenCalledWith('123', 'connection-1', 101, 'Hello', expect.stringContaining('http=503'));
-  expect(String(human.escalateError.mock.calls[0]?.[4])).toContain('requestId=req_123');
+  expect(human.escalateError).toHaveBeenCalledWith('123', 'connection-1', 101, 'Hello', expect.stringContaining('Не вдалося надіслати відповідь клієнту'));
+  expect(String(human.escalateError.mock.calls[0]?.[4])).toContain('HTTP 503');
+  expect(String(human.escalateError.mock.calls[0]?.[4])).toContain('ID запиту: req_123');
   expect(repository.appendMessage).not.toHaveBeenCalledWith('123', 'assistant', expect.any(String));
 });
 

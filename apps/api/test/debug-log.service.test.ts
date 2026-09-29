@@ -67,13 +67,43 @@ it('keeps responder error details bounded without leaking credentials, client te
   const clientText = 'Private client request';
   const error = Object.assign(new Error(`OpenAI rejected ${clientText}; token=hidden`), { upstreamStatus: 429, code: 'RATE_LIMITED', providerRequestId: 'req_123' });
   const context = humanErrorContext(error, 'OpenAI System Two', [clientText]);
-  expect(context).toContain('http=429');
-  expect(context).toContain('code=RATE_LIMITED');
-  expect(context).toContain('requestId=req_123');
+  expect(context).toContain('Не вдалося сформувати відповідь асистента');
+  expect(context).toContain('HTTP 429');
+  expect(context).toContain('Код помилки: RATE_LIMITED');
+  expect(context).toContain('ID запиту: req_123');
   expect(context).not.toContain(clientText);
   expect(context).not.toContain('hidden');
+  expect(context).not.toContain('OpenAI System Two');
   expect(context).not.toContain(' at ');
   expect(context.length).toBeLessThanOrEqual(700);
+});
+
+it('explains booking date-time validation failures in Ukrainian without Zod internals', () => {
+  const error = Object.assign(new Error('Invalid datetime'), {
+    name: 'ZodError',
+    issues: [{ code: 'invalid_string', path: ['arguments', 'startAt'], message: 'Invalid datetime', validation: 'datetime' }],
+  });
+  const context = humanErrorContext(error, 'S2 tool prepare_booking');
+  expect(context).toContain('Не вдалося перевірити дату й час');
+  expect(context).toContain('Формат дати або часу не прийнято');
+  expect(context).toContain('пропозицію та запис до календаря не створено');
+  expect(context).not.toContain('ZodError');
+  expect(context).not.toContain('invalid_string');
+  expect(context).not.toContain('Invalid datetime');
+});
+
+it('shows a sanitized stack trace when no localized diagnosis is available', () => {
+  const clientText = 'Private appointment details';
+  const error = Object.assign(new Error('Internal failure'), {
+    stack: `Error: ${clientText}\n    at handler (/app/api/handler.ts:12:3)\n    at next (/app/api/next.ts:8:1)`,
+  });
+  const context = humanErrorContext(error, 'Unknown operation', [clientText]);
+  expect(context).toContain('Людське пояснення причини недоступне.');
+  expect(context).toContain('Технічний стек викликів:');
+  expect(context).toContain('at handler (/app/api/handler.ts:12:3)');
+  expect(context).not.toContain(clientText);
+  expect(context).not.toContain('Unknown operation');
+  expect(context.length).toBeLessThanOrEqual(1500);
 });
 
 

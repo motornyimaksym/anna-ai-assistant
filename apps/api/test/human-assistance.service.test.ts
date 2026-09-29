@@ -64,8 +64,8 @@ it('sends operational failures to configured verified responders', async () => {
   store.connected.mockResolvedValue([{ userId: '42', chatId: '42', username: 'responsible' }] as never);
   const fetcher = vi.fn(async (url: string) => ({ ok: true, json: async () => url.endsWith('/getChat') ? { ok: true, result: { id: 42, type: 'private', username: 'responsible' } } : { ok: true } }));
   vi.stubGlobal('fetch', fetcher);
-  await service.escalateError('123', 'business-1', 777, '/confirm', 'Booking safe-id has an uncertain Calendar outcome.');
-  expect(store.open).toHaveBeenCalledWith('123', 'business-1', 777, expect.stringContaining('safe-id'), 'operation_error', undefined, 100);
+  await service.escalateError('123', 'business-1', 777, '/confirm', 'Запис safe-id потребує ручної перевірки в Google Calendar.');
+  expect(store.open).toHaveBeenCalledWith('123', 'business-1', 777, expect.stringContaining('Причина передачі: Запис safe-id'), 'operation_error', undefined, 100);
   const deliveries = fetcher.mock.calls.filter(([url]) => url.endsWith('/sendMessage'));
   expect(deliveries).toHaveLength(1);
   expect(JSON.parse(deliveries[0]![1]!.body as string)).toMatchObject({ chat_id: '42', text: expect.stringContaining('safe-id') });
@@ -127,8 +127,9 @@ describe('outgoing Probability gate', () => {
     selector.estimateProbability.mockRejectedValueOnce(Object.assign(new Error('TypeSafe HTTP 503 token=hidden'), { upstreamStatus: 503, code: 'UNAVAILABLE' }));
     expect(await service.approveOutgoing('123', undefined, 1, 'Question', 'Draft')).toBe(false);
     const caseText = String(store.open.mock.calls[0]?.[3]);
-    expect(caseText).toContain('http=503');
-    expect(caseText).toContain('code=UNAVAILABLE');
+    expect(caseText).toContain('Не вдалося перевірити відповідь перед надсиланням');
+    expect(caseText).toContain('HTTP 503');
+    expect(caseText).toContain('Код помилки: UNAVAILABLE');
     expect(caseText).not.toContain('hidden');
     selector.estimateProbability.mockClear();
     repository.listMessages.mockResolvedValue([{ role: 'user', content: 'x'.repeat(100_001) }]);

@@ -32,6 +32,16 @@ it('updates activity without copying stale workflow or automation state', async 
   expect(read().assistantEnabled).toBe(false);
 });
 
+it('refreshes or clears Telegram username without overwriting conversation state', async () => {
+  const { repository, read } = setup({ ...initial, telegramUsername: 'oldname' });
+  await repository.touchConversation({ ...initial, telegramUsername: 'newname', updatedAt: '2026-09-29T10:00:00.000Z' });
+  expect(read().telegramUsername).toBe('newname');
+  expect(read().pendingAction).toEqual(pending);
+  await repository.touchConversation({ ...initial, telegramUsername: null, updatedAt: '2026-09-29T10:01:00.000Z' });
+  expect(read().telegramUsername).toBeNull();
+  expect(read().pendingAction).toEqual(pending);
+});
+
 describe('poisoned provider conversation replacement', () => {
   it('replaces only the rejected ID and preserves proposals', async () => {
     const { repository, read } = setup({ ...initial, openaiConversationId: 'old' });

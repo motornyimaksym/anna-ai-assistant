@@ -197,21 +197,22 @@ it('includes safe tool API failure details in the human handoff', async () => {
     .mockResolvedValueOnce(answer('Do not send')));
   const reply = await service.respond(conversation, context, 'Is 10:00 free?');
   expect(reply).toMatchObject({ text: '', needsHuman: true });
-  expect(reply.humanContext).toContain('http=503');
-  expect(reply.humanContext).toContain('code=UNAVAILABLE');
+  expect(reply.humanContext).toContain('Не вдалося прочитати розклад і календар');
+  expect(reply.humanContext).toContain('HTTP 503');
+  expect(reply.humanContext).toContain('Код помилки: UNAVAILABLE');
   expect(reply.humanContext).not.toContain('hidden');
 });
 
 it('preserves a failed media API result for the human case', async () => {
   const { service, tools } = setup();
-  tools.execute.mockResolvedValue({ status: 'failed', errorContext: 'Telegram media http=503 requestId=req_123' });
+  tools.execute.mockResolvedValue({ status: 'failed', errorContext: 'Не вдалося надіслати медіа клієнту. Зовнішній сервіс повернув статус HTTP 503. ID запиту: req_123. Перевірте стан операції перед повторною спробою.' });
   vi.stubGlobal('fetch', vi.fn()
     .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'send_media', arguments: '{"mediaId":"media-1"}', call_id: 'media-1' }] }) })
     .mockResolvedValueOnce(answer('Do not send')));
   const reply = await service.respond(conversation, context, 'Send me a photo');
   expect(reply).toMatchObject({ text: '', needsHuman: true });
-  expect(reply.humanContext).toContain('http=503');
-  expect(reply.humanContext).toContain('requestId=req_123');
+  expect(reply.humanContext).toContain('HTTP 503');
+  expect(reply.humanContext).toContain('ID запиту: req_123');
 });
 
 it.each(['', 'x'.repeat(4001)])('fails closed on empty/oversized output without local messages', async (text) => {

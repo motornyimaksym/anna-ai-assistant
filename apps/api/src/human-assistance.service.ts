@@ -62,7 +62,7 @@ export class HumanAssistanceService {
 
   async escalateError(chatId: string, businessConnectionId: string | undefined, updateId: number, question: string, context?: string) {
     const settings = await this.store.settings();
-    await this.escalate(chatId, businessConnectionId, updateId, `${question.slice(0, 2800)}${context ? `\nAction context: ${context.slice(0, 900)}` : ''}\nAutomatic processing stopped; inspect bookings before retrying.`, { reason: 'operation_error', thresholdPercent: settings.thresholdPercent });
+    await this.escalate(chatId, businessConnectionId, updateId, `${question.slice(0, 2600)}${context ? `\n\nПричина передачі: ${context.slice(0, 1200)}` : ''}\n\nАвтоматичну обробку зупинено. Перевірте стан операції перед повторною спробою.`, { reason: 'operation_error', thresholdPercent: settings.thresholdPercent });
   }
 
   async escalate(chatId: string, businessConnectionId: string | undefined, updateId: number, question: string, decision: { reason: HumanRequestDto['reason']; probability?: number; thresholdPercent: number }): Promise<void> {

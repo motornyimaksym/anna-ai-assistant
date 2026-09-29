@@ -72,20 +72,65 @@ function errorDiagnostic(error: unknown, depth = 0, sensitiveValues: string[] = 
   return result;
 }
 export const safeErrorDiagnostic = (error: unknown, sensitiveValues: string[] = []): ErrorDiagnostic => errorDiagnostic(error, 0, sensitiveValues);
-/** Small responder-facing summary; omit stacks, request bodies and arbitrary nested causes. */
+const responderOperations: Array<[string, string]> = [
+  ['S2 tool get_media', 'переглянути матеріали'],
+  ['S2 tool send_media', 'надіслати медіа клієнту'],
+  ['S2 tool get_services', 'прочитати каталог послуг'],
+  ['S2 tool get_bookings', 'переглянути записи клієнта'],
+  ['S2 tool prepare_booking', 'підготувати пропозицію запису'],
+  ['S2 tool create_booking', 'перевірити підтвердження та створити запис'],
+  ['S2 tool get_booking_context', 'прочитати розклад і календар'],
+  ['S2 tool request_human_assistance', 'передати запит людині'],
+  ['System One handoff', 'перевірити відповідь перед надсиланням'],
+  ['OpenAI System Two', 'сформувати відповідь асистента'],
+  ['assistant turn', 'обробити повідомлення клієнта'],
+  ['Telegram delivery', 'надіслати відповідь клієнту'],
+  ['Telegram media', 'надіслати медіа клієнту'],
+];
+const bookingFieldLabels: Record<string, string> = {
+  serviceId: 'послугу',
+  durationMinutes: 'тривалість сеансу',
+  startAt: 'дату й час',
+};
+function bookingValidationMessage(detail: ErrorDiagnostic, source: string): string | undefined {
+  const issuePaths = detail.issues?.flatMap(({ path }) => path.map(String)) ?? [];
+  const fields = [...new Set(issuePaths.flatMap((path) => bookingFieldLabels[path] ? [bookingFieldLabels[path]!] : []))];
+  if (source === 'S2 tool prepare_booking') {
+    if (fields.includes('дату й час')) return 'Не вдалося перевірити дату й час для пропозиції запису. Формат дати або часу не прийнято; пропозицію та запис до календаря не створено. Перевірте обраний час і сформуйте пропозицію повторно.';
+    const fieldText = fields.length ? fields.join(', ') : 'дані пропозиції';
+    return `Не вдалося перевірити ${fieldText} для пропозиції запису. Пропозицію та запис до календаря не створено. Перевірте дані й сформуйте пропозицію повторно.`;
+  }
+  if (source === 'S2 tool create_booking') return 'Дані підтвердження запису не пройшли перевірку. Результат створення не підтверджено; перевірте запис і Google Calendar перед повторною спробою.';
+  return undefined;
+}
+/** Plain Ukrainian responder summary; use a bounded sanitized stack only when no useful diagnosis is available. */
 export function humanErrorContext(error: unknown, source: string, sensitiveValues: string[] = []): string {
   const detail = safeErrorDiagnostic(error, sensitiveValues);
-  const message = detail.providerError?.message ?? detail.message;
-  const fields = [
-    `source=${redact(source, sensitiveValues).slice(0, 80)}`,
-    `type=${detail.type}`,
-    ...(detail.upstreamStatus ? [`http=${detail.upstreamStatus}`] : []),
-    ...(detail.code ? [`code=${detail.code}`] : []),
-    ...(detail.providerError?.code ? [`providerCode=${detail.providerError.code}`] : []),
-    ...(detail.providerRequestId ? [`requestId=${detail.providerRequestId}`] : []),
-    ...(message ? [`message=${message.slice(0, 350)}`] : []),
-  ];
-  return `API/operation error: ${fields.join('; ')}`.slice(0, 700);
+  const stackFallback = (message: string) => detail.stack?.length
+    ? `${message}\nТехнічний стек викликів:\n${detail.stack.join('\n')}`.slice(0, 1500)
+    : message.slice(0, 700);
+  if (detail.type === 'ZodError') {
+    const bookingMessage = bookingValidationMessage(detail, source);
+    if (bookingMessage) return bookingMessage.slice(0, 700);
+    return detail.stack?.length
+      ? stackFallback('Не вдалося локалізувати помилку перевірки даних.')
+      : 'Не вдалося визначити причину помилки перевірки даних. Перевірте запит вручну.';
+  }
+  const operation = responderOperations.find(([name]) => name === source)?.[1] ?? 'виконати операцію асистента';
+  const fields = [`Не вдалося ${operation}.`];
+  if (detail.type === 'TimeoutError' || detail.type === 'AbortError') fields.push('Вичерпано час очікування відповіді.');
+  if (detail.upstreamStatus) fields.push(`Зовнішній сервіс повернув статус HTTP ${detail.upstreamStatus}.`);
+  if (detail.code) fields.push(`Код помилки: ${detail.code}.`);
+  if (detail.providerError?.code) fields.push(`Код сервісу: ${detail.providerError.code}.`);
+  if (detail.providerRequestId) fields.push(`ID запиту: ${detail.providerRequestId}.`);
+  fields.push(source === 'Telegram delivery'
+    ? 'Перевірте чат перед повторним надсиланням, щоб не створити дубль.'
+    : source === 'System One handoff'
+      ? 'Чернетку клієнту не надіслано; перевірте її вручну.'
+      : 'Перевірте стан операції перед повторною спробою.');
+  const summary = fields.join(' ');
+  const hasReadableCause = Boolean(detail.type === 'TimeoutError' || detail.type === 'AbortError' || detail.upstreamStatus || detail.code || detail.providerError?.code);
+  return hasReadableCause ? summary.slice(0, 700) : stackFallback(`${summary}\nЛюдське пояснення причини недоступне.`);
 }
 export function collectSensitiveStrings(value: unknown, limit = 500): string[] {
   const found = new Set<string>();

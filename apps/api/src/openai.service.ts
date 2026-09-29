@@ -17,12 +17,15 @@ export const assistantToolDefinitions = [
   tool('get_services', 'List actual enabled services and prices. Empty means no services configured.', {}),
   tool('get_bookings', 'List this client’s bookings.', {}),
   tool('get_booking_context', 'Read fresh raw schedule messages and live Calendar busy intervals. Use before offering specific times. Never writes appointments.', {}),
-  tool('prepare_booking', 'Stage an exact new-booking proposal after checking service, duration, schedule and Calendar. Include returned confirmationText verbatim in reply.', { serviceId: string, durationMinutes: { type: 'integer' }, startAt: string }),
+  tool('prepare_booking', 'Stage an exact new-booking proposal after checking service, duration, schedule and Calendar. startAt must be ISO 8601 with Z or an explicit timezone offset. Include returned confirmationText verbatim in reply.', { serviceId: string, durationMinutes: { type: 'integer' }, startAt: string }),
   tool('create_booking', 'Create the previously proposed Calendar booking only after a later explicit client confirmation of the delivered proposal. No arguments.', {}),
   tool('request_human_assistance', 'Request a human for an explicit unlisted custom massage/service unrelated to sexual acts. No arguments; no automatic client reply.', {}),
 ];
 const outputSchema = z.object({ status: z.string().optional(), incomplete_details: z.object({ reason: z.string().optional() }).nullish(), output: z.array(z.object({ type: z.string(), name: z.string().optional(), arguments: z.string().optional(), call_id: z.string().optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()).optional() }).passthrough()) });
 export type AssistantReply = { text: string; fromOpenAI: boolean; needsHuman?: boolean; humanContext?: string };
+const responderErrorContext = (error: unknown, source: string, sensitiveValues: string[] = []) => error instanceof BookingNeedsHumanError
+  ? `Запис ${error.bookingId} потребує ручної перевірки в Google Calendar. Перевірте його стан перед повторними діями.`
+  : humanErrorContext(error, source, sensitiveValues);
 @Injectable()
 export class OpenAiService {
   private readonly logger = new Logger(OpenAiService.name);
@@ -34,7 +37,7 @@ export class OpenAiService {
     } catch (error) {
       await this.debug.record(context, 'error', { reason: 'assistant_failed', errorCategory: safeErrorCategory(error) }, 'error');
       this.logger.error(`Assistant request failed trace=${context.traceId ?? 'unknown'} category=${safeErrorCategory(error)}: ${JSON.stringify(safeErrorDiagnostic(error, sensitiveValues))}`);
-      return { text: '', fromOpenAI: false, needsHuman: true, humanContext: error instanceof BookingNeedsHumanError ? error.message : humanErrorContext(error, 'OpenAI System Two', sensitiveValues) };
+      return { text: '', fromOpenAI: false, needsHuman: true, humanContext: responderErrorContext(error, 'OpenAI System Two', sensitiveValues) };
     }
   }
   private async run(conversation: ConversationDto, context: AssistantContext, text: string, sensitiveValues: string[]): Promise<AssistantReply> {
@@ -105,13 +108,14 @@ export class OpenAiService {
           } else result = await this.assistantTools.execute(parsed, parsed.name === 'create_booking' || parsed.name === 'request_human_assistance' ? { ...context, currentMessage: text } : context);
           if (parsed.name === 'request_human_assistance' && result && typeof result === 'object' && 'status' in result && result.status === 'human_requested') terminalReply = { text: '', fromOpenAI: false, needsHuman: true, humanContext: 'Client requested an unlisted nonsexual custom service; review the original client message.' };
         } catch (error) {
-          terminalReply = { text: '', fromOpenAI: false, needsHuman: true, humanContext: error instanceof BookingNeedsHumanError ? error.message : humanErrorContext(error, `S2 tool ${call.name ?? 'unknown'}`, sensitiveValues) };
+          terminalReply = { text: '', fromOpenAI: false, needsHuman: true, humanContext: responderErrorContext(error, `S2 tool ${call.name ?? 'unknown'}`, sensitiveValues) };
           result = { status: 'failed', category: safeErrorCategory(error) };
         }
         if (result && typeof result === 'object' && 'status' in result && ['failed', 'uncertain', 'unavailable'].includes(String(result.status))) {
           const status = String(result.status);
           const detail = 'errorContext' in result && typeof result.errorContext === 'string' ? `: ${result.errorContext}` : 'reason' in result && typeof result.reason === 'string' ? `: ${result.reason}` : '';
-          terminalReply ??= { text: '', fromOpenAI: false, needsHuman: true, humanContext: humanErrorContext(new Error(`${status}${detail}`), `S2 tool ${call.name ?? 'unknown'}`, sensitiveValues) };
+          const safeToolContext = 'errorContext' in result && typeof result.errorContext === 'string' ? result.errorContext.slice(0, 1500) : undefined;
+          terminalReply ??= { text: '', fromOpenAI: false, needsHuman: true, humanContext: safeToolContext || humanErrorContext(new Error(`${status}${detail}`), `S2 tool ${call.name ?? 'unknown'}`, sensitiveValues) };
         }
         sensitiveValues.push(...collectSensitiveStrings(result));
         input.push({ type: 'function_call_output', call_id: call.call_id, output: JSON.stringify(result) });

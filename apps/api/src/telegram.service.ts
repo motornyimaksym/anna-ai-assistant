@@ -85,7 +85,8 @@ export class TelegramService {
     if (!await this.repository.claimTelegramUpdate(update.update_id)) { await this.debug.record(trace, 'ignored', { reason: 'duplicate_update' }); return; }
     await this.debug.record(trace, 'received');
     const chatId = String(message.chat.id); const now = new Date().toISOString();
-    const current = await this.repository.getConversation(chatId); const clientId = message.from ? String(message.from.id) : undefined; const conversation: ConversationDto = current && current.clientId === clientId ? current : { telegramChatId: chatId, clientId, businessConnectionId: message.business_connection_id, assistantEnabled: true, state: 'active', summary: '', createdAt: now, updatedAt: now };
+    const current = await this.repository.getConversation(chatId); const clientId = message.from ? String(message.from.id) : undefined; const baseConversation: ConversationDto = current && current.clientId === clientId ? current : { telegramChatId: chatId, clientId, businessConnectionId: message.business_connection_id, assistantEnabled: true, state: 'active', summary: '', createdAt: now, updatedAt: now };
+    const conversation: ConversationDto = { ...baseConversation, telegramUsername: message.from?.username?.toLowerCase() ?? null };
     if (current && current.clientId !== clientId) await this.repository.resetTelegramConversationIdentity(conversation);
     if (!conversation.assistantEnabled || (conversation.humanTakeoverUntil && conversation.humanTakeoverUntil > now)) { await this.debug.record(trace, 'ignored', { reason: conversation.assistantEnabled ? 'manual_takeover' : 'assistant_disabled' }); await this.repository.touchConversation({ ...conversation, updatedAt: now }); return; }
     await this.repository.touchConversation({ ...conversation, updatedAt: now });

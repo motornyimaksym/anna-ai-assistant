@@ -9,7 +9,7 @@ import { Schedule } from "./Schedule.js";
 import { CssBaseline, Box, Typography } from "@mui/material";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { onAuthStateChanged, type User } from "firebase/auth";
+import { onAuthStateChanged, onIdTokenChanged, type User } from "firebase/auth";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { auth } from "./auth.js";
@@ -115,6 +115,35 @@ const App = () => {
       }),
     [],
   );
+  useEffect(() => {
+    let generation = 0;
+    let sessionSync = Promise.resolve();
+    return onIdTokenChanged(auth, (next) => {
+      const current = ++generation;
+      sessionSync = sessionSync.then(async () => {
+        if (current !== generation) return;
+        if (!next) {
+          await fetch("/api/docs/session", {
+            method: "DELETE",
+            credentials: "same-origin",
+            keepalive: true,
+          }).catch(() => undefined);
+          return;
+        }
+        try {
+          const token = await next.getIdToken();
+          if (current !== generation) return;
+          await fetch("/api/docs/session", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { authorization: `Bearer ${token}` },
+          });
+        } catch {
+          // Swagger authorization must not block the admin app.
+        }
+      });
+    });
+  }, []);
   if (user === undefined) return <Loading />;
   return (
     <Box>

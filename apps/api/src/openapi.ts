@@ -3,6 +3,7 @@ import type { INestApplication } from '@nestjs/common';
 import { z, type ZodTypeAny } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import * as C from '@booking/contracts';
+import { AdminAuthService } from './auth.js';
 
 type RouteDoc = { summary: string; request?: ZodTypeAny; response?: ZodTypeAny; note?: string; requestRequired?: boolean };
 const route = (summary: string, response?: ZodTypeAny, request?: ZodTypeAny, note?: string, requestRequired = true): RouteDoc => ({ summary, response, request, note, requestRequired });
@@ -119,7 +120,7 @@ const tagFor = (path: string): string => {
 export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
   const config = new DocumentBuilder()
     .setTitle('Telegram Booking Assistant API')
-    .setDescription('HTTP API for the massage booking assistant. Admin endpoints require a Firebase ID token. Documentation contains no live data.')
+    .setDescription('HTTP API for the massage booking assistant. Swagger UI, OpenAPI JSON and admin endpoints require an authorized Firebase ID token. Documentation contains no live data.')
     .setVersion('1.0.0')
     .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'Firebase ID token' }, 'firebaseBearer')
     .addApiKey({ type: 'apiKey', in: 'header', name: 'X-Telegram-Bot-Api-Secret-Token' }, 'telegramWebhookSecret')
@@ -160,6 +161,47 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
 }
 
 export function setupOpenApi(app: INestApplication): void {
+  const adminAuth = app.get(AdminAuthService);
+  type DocsRequest = { method: string; secure: boolean; headers: { authorization?: string; cookie?: string; host?: string; 'x-forwarded-host'?: string | string[]; 'x-forwarded-proto'?: string | string[] } };
+  type DocsResponse = { setHeader: (name: string, value: string) => void; status: (code: number) => DocsResponse; end: () => void; json: (body: unknown) => void };
+  type DocsNext = () => void;
+  app.use('/docs/session', (request: DocsRequest, response: DocsResponse, next: DocsNext) => {
+    response.setHeader('Cache-Control', 'private, no-store');
+    const forwardedHost = request.headers['x-forwarded-host'];
+    const host = (Array.isArray(forwardedHost) ? forwardedHost[0] : forwardedHost) ?? request.headers.host ?? '';
+    const firebaseHosting = /\.(?:web\.app|firebaseapp\.com)(?::\d+)?$/i.test(host);
+    const forwardedProto = request.headers['x-forwarded-proto'];
+    const forwardedScheme = (Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto)?.split(',')[0]?.trim();
+    const secureCookie = firebaseHosting || request.secure || forwardedScheme === 'https';
+    const cookieFlags = `Path=/api/docs; Max-Age=3600; HttpOnly; SameSite=Strict${secureCookie ? '; Secure' : ''}`;
+    if (request.method === 'DELETE') {
+      response.setHeader('Set-Cookie', `admin_docs_session=; ${cookieFlags.replace('Max-Age=3600', 'Max-Age=0')}`);
+      response.status(204).end();
+      return;
+    }
+    if (request.method !== 'POST') { next(); return; }
+    const authorization = request.headers.authorization;
+    void adminAuth.verify(authorization).then(() => {
+      const token = authorization!.slice('Bearer '.length);
+      response.setHeader('Set-Cookie', `admin_docs_session=${encodeURIComponent(token)}; ${cookieFlags}`);
+      response.status(204).end();
+    }).catch(() => {
+      response.setHeader('Set-Cookie', `admin_docs_session=; ${cookieFlags.replace('Max-Age=3600', 'Max-Age=0')}`);
+      response.setHeader('WWW-Authenticate', 'Bearer');
+      response.status(401).json({ statusCode: 401, message: 'Unauthorized' });
+    });
+  });
+  app.use('/docs', (request: DocsRequest, response: DocsResponse, next: DocsNext) => {
+    response.setHeader('Cache-Control', 'private, no-store');
+    const cookieValue = request.headers.cookie?.split(';').map((item) => item.trim()).find((item) => item.startsWith('admin_docs_session='))?.slice('admin_docs_session='.length);
+    let cookieToken: string | undefined;
+    try { cookieToken = cookieValue ? decodeURIComponent(cookieValue) : undefined; } catch { cookieToken = undefined; }
+    const authorization = request.headers.authorization ?? (cookieToken ? `Bearer ${cookieToken}` : undefined);
+    void adminAuth.verify(authorization).then(() => next()).catch(() => {
+      response.setHeader('WWW-Authenticate', 'Bearer');
+      response.status(401).json({ statusCode: 401, message: 'Unauthorized' });
+    });
+  });
   app.use((request: { path: string }, response: { redirect: (status: number, url: string) => void }, next: () => void) => {
     if (request.path === '/docs') response.redirect(308, 'docs/');
     else next();

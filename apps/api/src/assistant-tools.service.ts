@@ -8,7 +8,7 @@ import { BookingRepository } from './repository.js';
 import { selectServiceOption } from './service-options.js';
 import { randomUUID } from 'node:crypto';
 export type AssistantContext = { clientId: string; telegramChatId: string; businessConnectionId?: string; traceId?: string; currentMessage?: string };
-const bookingArguments = z.object({ serviceId: z.string().min(1), durationMinutes: z.number().int().min(15).max(480), startAt: z.string().datetime() }).strict();
+const bookingArguments = z.object({ serviceId: z.string().min(1), durationMinutes: z.number().int().min(15).max(480), startAt: z.string().datetime({ offset: true }) }).strict();
 const explicitConfirmation = /^(?:(?:так[,\s]+)?(?:підтверджую(?: запис)?|все підходить|усе підходить|мені підходить|мене все влаштовує|записуйте|запишіть мене|підходить|добре|ок)|так|yes|yes,? confirm|i confirm|confirm|book it|ok|okay)[.!\s]*$/iu;
 const readable = (value: string) => value.replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
 export const assistantToolSchema = z.discriminatedUnion('name', [
