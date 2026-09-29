@@ -49,7 +49,7 @@ export function containsBookingConfirmationFacts(message: string, facts: Booking
   ];
   const allNumbers = (value: string) => value.normalize('NFKC').match(/\d+/gu) ?? [];
   const expectedNumbers = new Map<string, number>();
-  for (const number of allNumbers(`${facts.serviceName} ${duration} ${facts.localDate} ${facts.localTime} ${facts.price} ${facts.referenceCode}`)) expectedNumbers.set(number, (expectedNumbers.get(number) ?? 0) + 1);
+  for (const number of allNumbers(`${facts.serviceName} ${duration} ${facts.localDate} ${facts.localTime} ${facts.price}${facts.referenceCode ? ` ${facts.referenceCode}` : ''}`)) expectedNumbers.set(number, (expectedNumbers.get(number) ?? 0) + 1);
   const usedNumbers = new Map<string, number>();
   for (const number of allNumbers(readable)) usedNumbers.set(number, (usedNumbers.get(number) ?? 0) + 1);
   const hasNoConflictingNumbers = [...usedNumbers].every(([number, count]) => count <= (expectedNumbers.get(number) ?? 0));
@@ -62,5 +62,5 @@ export function containsBookingConfirmationFacts(message: string, facts: Booking
     && containsPhrase(text, facts.localTime)
     && durationPhrases.some((phrase) => containsPhrase(text, phrase))
     && containsPhrase(text, `${facts.price} ${facts.currency}`)
-    && containsPhrase(text, facts.referenceCode);
+    && (!facts.referenceCode || containsPhrase(text, facts.referenceCode));
 }

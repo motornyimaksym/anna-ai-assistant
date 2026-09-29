@@ -291,8 +291,16 @@ export class BookingRepository {
     const snapshot = await this.db.collection('conversations').doc(chatId).collection('messages').orderBy('createdAt', 'desc').limit(20).get();
     return snapshot.docs.reverse().map((doc) => ({ role: doc.data().role === 'user' ? 'user' as const : 'assistant' as const, content: String(doc.data().text) }));
   }
-  async appendMessage(chatId: string, role: 'user' | 'assistant' | 'human', text: string): Promise<void> {
-    await this.db.collection('conversations').doc(chatId).collection('messages').add({ role, text, createdAt: new Date().toISOString() });
+  async listMessagesForBookingCheck(chatId: string): Promise<{ role: 'user' | 'assistant' | 'human'; content: string; bookingProposalId?: string }[]> {
+    const snapshot = await this.db.collection('conversations').doc(chatId).collection('messages').orderBy('createdAt', 'desc').limit(20).get();
+    return snapshot.docs.reverse().map((doc) => {
+      const data = doc.data();
+      const role = data.role === 'user' ? 'user' as const : data.role === 'human' ? 'human' as const : 'assistant' as const;
+      return { role, content: String(data.text), ...(typeof data.bookingProposalId === 'string' ? { bookingProposalId: data.bookingProposalId } : {}) };
+    });
+  }
+  async appendMessage(chatId: string, role: 'user' | 'assistant' | 'human', text: string, bookingProposalId?: string): Promise<void> {
+    await this.db.collection('conversations').doc(chatId).collection('messages').add({ role, text, createdAt: new Date().toISOString(), ...(role === 'assistant' && bookingProposalId ? { bookingProposalId } : {}) });
   }
   async clearConversationContext(chatId: string, expectedBusinessConnectionId?: string): Promise<{ clearedMessages: number } | undefined> {
     const conversationRef = this.db.collection('conversations').doc(chatId);

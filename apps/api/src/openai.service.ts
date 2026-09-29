@@ -23,7 +23,7 @@ export const assistantToolDefinitions = [
   tool('request_human_assistance', 'Request a human for an explicit unlisted custom massage/service unrelated to sexual acts. No arguments; no automatic client reply.', {}),
 ];
 const outputSchema = z.object({ status: z.string().optional(), incomplete_details: z.object({ reason: z.string().optional() }).nullish(), output: z.array(z.object({ type: z.string(), name: z.string().optional(), arguments: z.string().optional(), call_id: z.string().optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()).optional() }).passthrough()) });
-export type AssistantReply = { text: string; fromOpenAI: boolean; needsHuman?: boolean; humanContext?: string };
+export type AssistantReply = { text: string; fromOpenAI: boolean; needsHuman?: boolean; humanContext?: string; bookingProposalId?: string };
 const responderErrorContext = (error: unknown, source: string, sensitiveValues: string[] = []) => error instanceof BookingNeedsHumanError
   ? `Запис ${error.bookingId} потребує ручної перевірки в Google Calendar. Перевірте його стан перед повторними діями.`
   : humanErrorContext(error, source, sensitiveValues);
@@ -65,6 +65,7 @@ export class OpenAiService {
     let input: unknown[] = requestContext.input;
     let mediaAttempted = false;
     let preparedConfirmationFacts: BookingConfirmationFacts | undefined;
+    let preparedProposalId: string | undefined;
     let terminalReply: AssistantReply | undefined;
     for (let round = 0; round <= 4; round++) {
       const request = () => requestOpenAiResponse({ model, conversation: openaiConversationId, ...(model === 'gpt-6-luna' ? { reasoning: { effort: 'low' } } : {}), ...(round === 0 ? requestContext : {}), input, tools: selectedTools, ...(terminalReply || round === 4 ? { tool_choice: 'none' } : {}), parallel_tool_calls: false, max_output_tokens: 4096 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]), 's2_assistant');
@@ -93,7 +94,7 @@ export class OpenAiService {
         if (reply.length > 4000) throw new Error('Model reply too long');
         const normalizedReply = TextUtils.replaceLongDashes(reply);
         if (preparedConfirmationFacts && !containsBookingConfirmationFacts(normalizedReply, preparedConfirmationFacts)) throw new Error('Booking proposal response omitted or changed verified facts');
-        return { text: normalizedReply, fromOpenAI: true };
+        return { text: normalizedReply, fromOpenAI: true, ...(preparedProposalId ? { bookingProposalId: preparedProposalId } : {}) };
       }
       for (const call of calls) {
         if (terminalReply) {
@@ -116,8 +117,15 @@ export class OpenAiService {
           terminalReply = { text: '', fromOpenAI: false, needsHuman: true, humanContext: responderErrorContext(error, `S2 tool ${call.name ?? 'unknown'}`, sensitiveValues) };
           result = { status: 'failed', category: safeErrorCategory(error) };
         }
-        if (parsed?.name === 'prepare_booking' && result && typeof result === 'object' && 'status' in result && result.status === 'prepared' && 'confirmationFacts' in result) {
-          preparedConfirmationFacts = bookingConfirmationFactsSchema.parse(result.confirmationFacts);
+        let modelResult = result;
+        if (parsed?.name === 'prepare_booking' && result && typeof result === 'object' && 'status' in result && result.status === 'prepared') {
+          const prepared = result as Record<string, unknown>;
+          if (!('confirmationFacts' in prepared) || !('proposalId' in prepared)) throw new Error('Prepared booking proposal missing verification metadata');
+          preparedConfirmationFacts = bookingConfirmationFactsSchema.parse(prepared.confirmationFacts);
+          preparedProposalId = z.string().uuid().parse(prepared.proposalId);
+          const publicResult = { ...prepared };
+          delete publicResult.proposalId;
+          modelResult = publicResult;
         }
         if (result && typeof result === 'object' && 'status' in result && ['failed', 'uncertain', 'unavailable'].includes(String(result.status))) {
           const status = String(result.status);
@@ -126,7 +134,7 @@ export class OpenAiService {
           terminalReply ??= { text: '', fromOpenAI: false, needsHuman: true, humanContext: safeToolContext || humanErrorContext(new Error(`${status}${detail}`), `S2 tool ${call.name ?? 'unknown'}`, sensitiveValues) };
         }
         sensitiveValues.push(...collectSensitiveStrings(result));
-        input.push({ type: 'function_call_output', call_id: call.call_id, output: JSON.stringify(result) });
+        input.push({ type: 'function_call_output', call_id: call.call_id, output: JSON.stringify(modelResult) });
       }
     }
     return { text: '', fromOpenAI: false, needsHuman: true };

@@ -120,6 +120,18 @@ describe('Telegram private test restriction', () => {
     expect(JSON.parse(send.mock.calls[2]![1]!.body as string)).toMatchObject({ parse_mode: 'HTML', text: 'OK' });
   });
 
+  it('persists proposal binding only with the successfully delivered assistant reply', async () => {
+    vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+    vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-bot-token');
+    vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+    const { service, repository, assistant } = setup({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0, testerUsernames: ['user61785'] });
+    assistant.respond.mockResolvedValueOnce({ text: 'Offer', fromOpenAI: true, bookingProposalId: 'proposal-uuid' });
+
+    await service.handle('webhook-secret', update('user61785'));
+
+    expect(repository.appendMessage).toHaveBeenCalledWith('123', 'assistant', 'Offer', 'proposal-uuid');
+  });
+
   it('uses the saved tester list instead of the legacy environment fallback', async () => {
     vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
     vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-bot-token');
@@ -365,13 +377,15 @@ it('routes assistant errors directly to configured responders without sending fa
 
 it('routes Telegram delivery API errors with redacted details and no stored assistant reply', async () => {
   vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret'); vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785'); vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
-  const { service, send, human, repository } = setup({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0, updatedAt: '2026-09-24T10:00:00.000Z' });
+  const { service, send, human, repository, assistant } = setup({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0, updatedAt: '2026-09-24T10:00:00.000Z' });
+  assistant.respond.mockResolvedValueOnce({ text: 'not sent', fromOpenAI: true, bookingProposalId: 'proposal-uuid' });
   send.mockImplementation(async (url) => url.endsWith('/sendMessage') ? { ok: false, status: 503, headers: { get: () => 'req_123' }, json: async () => ({ ok: false }) } : { ok: true, json: async () => ({ ok: true }) });
   await service.handle('webhook-secret', update('user61785'));
   expect(human.escalateError).toHaveBeenCalledWith('123', 'connection-1', 101, 'Hello', expect.stringContaining('Не вдалося надіслати відповідь клієнту'));
   expect(String(human.escalateError.mock.calls[0]?.[4])).toContain('HTTP 503');
   expect(String(human.escalateError.mock.calls[0]?.[4])).toContain('ID запиту: req_123');
   expect(repository.appendMessage).not.toHaveBeenCalledWith('123', 'assistant', expect.any(String));
+  expect(repository.appendMessage).not.toHaveBeenCalledWith('123', 'assistant', expect.any(String), 'proposal-uuid');
 });
 
 

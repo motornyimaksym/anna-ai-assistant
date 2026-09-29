@@ -105,6 +105,7 @@ export class TelegramService {
     const stopTyping = await this.startTyping(chatId, message.business_connection_id);
     let reply: string;
     let parseMode: 'HTML' | undefined;
+    let bookingProposalId: string | undefined;
     try {
       const answer = await this.assistant.respond(conversation, { clientId: String(message.from!.id), telegramChatId: chatId, businessConnectionId: message.business_connection_id, traceId: trace.traceId }, message.text);
       if (answer.needsHuman) {
@@ -114,6 +115,7 @@ export class TelegramService {
         return;
       }
       const outgoingText = TextUtils.replaceLongDashes(answer.text);
+      bookingProposalId = answer.bookingProposalId;
       if (answer.fromOpenAI) await waitForResponsePacing(outgoingText, settings.typingDelayPerSymbolMs);
       reply = answer.fromOpenAI ? formatTelegramHtml(outgoingText) : outgoingText;
       if (answer.fromOpenAI) parseMode = 'HTML';
@@ -129,7 +131,7 @@ export class TelegramService {
     try {
       if (!await this.human.approveOutgoing(chatId, message.business_connection_id, update.update_id, message.text, reply)) return;
       await this.reply(chatId, message.business_connection_id, reply, parseMode);
-      await this.repository.appendMessage(chatId, 'assistant', reply);
+      await this.repository.appendMessage(chatId, 'assistant', reply, bookingProposalId);
       await this.debug.record(trace, 'reply_sent');
     } catch (error) {
       await this.debug.record(trace, 'reply_failed', { reason: 'delivery_or_persistence_uncertain', errorCategory: safeErrorCategory(error) }, 'error');

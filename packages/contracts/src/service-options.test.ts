@@ -30,5 +30,7 @@ it('preserves natural confirmation facts and legacy exact-text proposals', () =>
   expect(pendingActionSchema.safeParse({ ...proposal, confirmationText: 'x'.repeat(4001) }).success).toBe(false);
   const facts = { serviceName: 'Massage', durationMinutes: 60, localDate: '30 вер. 2026 р.', localTime: '20:00', price: 1500, currency: 'UAH', referenceCode: 'f6b473a6' };
   expect(pendingActionSchema.parse({ ...legacy, id: '2a1c75d0-d891-4e04-8b54-341cba762ae6', confirmationFacts: facts })).toMatchObject({ confirmationFacts: facts });
+  const codeFreeFacts = { serviceName: 'Massage', durationMinutes: 60, localDate: '30 вер. 2026 р.', localTime: '20:00', price: 1500, currency: 'UAH' };
+  expect(pendingActionSchema.parse({ ...legacy, id: '2a1c75d0-d891-4e04-8b54-341cba762ae6', confirmationFacts: codeFreeFacts })).toMatchObject({ confirmationFacts: codeFreeFacts });
   expect(pendingActionSchema.safeParse({ ...legacy, confirmationFacts: { ...facts, referenceCode: 'not-a-code' } }).success).toBe(false);
 });

@@ -59,6 +59,7 @@ it('checks one bot-like condition and permits copied text', () => {
   expect(BOOKING_GUIDANCE).toContain('Do not require a fixed phrase');
   expect(BOOKING_GUIDANCE).not.toContain('verbatim');
   expect(BOOKING_FACTS_GUIDANCE).toContain('Preserve these values');
+  expect(BOOKING_FACTS_GUIDANCE).toContain('Do not add a reference code');
   expect(BOOKING_APPROVAL_GUIDANCE).toContain('create_booking');
   expect(BOOKING_APPROVAL_GUIDANCE).toContain('do not require a fixed phrase or phrase whitelist');
   expect(ASSISTANT_SYSTEM_PROMPT).not.toContain('Use regular hyphens.');

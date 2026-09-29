@@ -117,18 +117,21 @@ describe('Unified OpenAI conversation', () => {
   });
   it('allows natural booking wording when all proposal facts are preserved', async () => {
     const { service, tools } = setup();
-    const facts = { serviceName: 'Massage', durationMinutes: 60, localDate: '30 вер. 2026 р.', localTime: '20:00', price: 1500, currency: 'UAH', referenceCode: 'f6b473a6' };
-    tools.execute.mockResolvedValueOnce({ status: 'prepared', confirmationFacts: facts, expiresAt: '2099-01-01T00:00:00.000Z' });
+    const facts = { serviceName: 'Massage', durationMinutes: 60, localDate: '30 вер. 2026 р.', localTime: '20:00', price: 1500, currency: 'UAH' };
+    tools.execute.mockResolvedValueOnce({ status: 'prepared', proposalId: '2a1c75d0-d891-4e04-8b54-341cba762ae6', confirmationFacts: facts, expiresAt: '2099-01-01T00:00:00.000Z' });
     const fetch = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'prepare_booking', arguments: '{"serviceId":"massage","durationMinutes":60,"startAt":"2026-09-30T17:00:00.000Z"}', call_id: 'prepare-1' }] }) })
-      .mockResolvedValueOnce(answer('Запишу вас на Massage: 60 хвилин, 30 вер. 2026 року о 20:00, вартість 1500 UAH. Код f6b473a6. Підійде?'));
+      .mockResolvedValueOnce(answer('Запишу вас на Massage: 60 хвилин, 30 вер. 2026 року о 20:00, вартість 1500 UAH. Підійде?'));
     vi.stubGlobal('fetch', fetch);
-    expect(await service.respond(conversation, context, 'Запиши мене')).toEqual({ text: 'Запишу вас на Massage: 60 хвилин, 30 вер. 2026 року о 20:00, вартість 1500 UAH. Код f6b473a6. Підійде?', fromOpenAI: true });
+    const reply = await service.respond(conversation, context, 'Запиши мене');
+    expect(reply).toEqual({ text: 'Запишу вас на Massage: 60 хвилин, 30 вер. 2026 року о 20:00, вартість 1500 UAH. Підійде?', fromOpenAI: true, bookingProposalId: '2a1c75d0-d891-4e04-8b54-341cba762ae6' });
+    const followup = JSON.parse(fetch.mock.calls[1]![1]!.body as string);
+    expect(JSON.stringify(followup.input)).not.toContain('2a1c75d0-d891-4e04-8b54-341cba762ae6');
   });
   it('withholds a booking proposal draft that omits or changes required facts', async () => {
     const { service, tools } = setup();
-    const facts = { serviceName: 'Massage', durationMinutes: 60, localDate: '30 вер. 2026 р.', localTime: '20:00', price: 1500, currency: 'UAH', referenceCode: 'f6b473a6' };
-    tools.execute.mockResolvedValueOnce({ status: 'prepared', confirmationFacts: facts, expiresAt: '2099-01-01T00:00:00.000Z' });
+    const facts = { serviceName: 'Massage', durationMinutes: 60, localDate: '30 вер. 2026 р.', localTime: '20:00', price: 1500, currency: 'UAH' };
+    tools.execute.mockResolvedValueOnce({ status: 'prepared', proposalId: '2a1c75d0-d891-4e04-8b54-341cba762ae6', confirmationFacts: facts, expiresAt: '2099-01-01T00:00:00.000Z' });
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'prepare_booking', arguments: '{"serviceId":"massage","durationMinutes":60,"startAt":"2026-09-30T17:00:00.000Z"}', call_id: 'prepare-1' }] }) })
       .mockResolvedValueOnce(answer('Запишу вас на Massage на годину, 30 вересня о 20:00 за 1400 гривень.')));

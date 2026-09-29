@@ -7,7 +7,6 @@ import { BookingService } from './booking.service.js';
 import { BookingRepository } from './repository.js';
 import { selectServiceOption } from './service-options.js';
 import { containsBookingConfirmationFacts } from './booking-confirmation.js';
-import { randomUUID } from 'node:crypto';
 export type AssistantContext = { clientId: string; telegramChatId: string; businessConnectionId?: string; traceId?: string; currentMessage?: string };
 const bookingArguments = z.object({ serviceId: z.string().min(1), durationMinutes: z.number().int().min(15).max(480), startAt: z.string().datetime({ offset: true }) }).strict();
 const readable = (value: string) => value.replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
@@ -54,20 +53,27 @@ export class AssistantToolsService {
           localTime: new Intl.DateTimeFormat('uk-UA', { timeZone: zone, timeStyle: 'short' }).format(date),
           price: option.price,
           currency: service.currency,
-          referenceCode: randomUUID().slice(0, 8),
         };
         const proposal = await this.repository.stageAssistantBooking(context.telegramChatId, context.clientId, { serviceId: service.id, durationMinutes: option.durationMinutes, startAt: date.toISOString(), confirmationFacts });
-        return { status: 'prepared', confirmationFacts: proposal.confirmationFacts, expiresAt: proposal.expiresAt };
+        if (!proposal.id) throw new Error('Booking proposal ID missing');
+        return { status: 'prepared', proposalId: proposal.id, confirmationFacts: proposal.confirmationFacts, expiresAt: proposal.expiresAt };
       }
       case 'create_booking': {
         const conversation = await this.repository.getConversation(context.telegramChatId);
         const proposal = conversation?.pendingAction;
         if (!proposal?.id || proposal.name !== 'create_booking' || (!proposal.confirmationText && !proposal.confirmationFacts) || proposal.expiresAt <= new Date().toISOString() || conversation?.clientId !== context.clientId) throw new Error('Valid booking proposal required');
-        const history = await this.repository.listMessages(context.telegramChatId);
+        const history = await this.repository.listMessagesForBookingCheck(context.telegramChatId);
         const latestAssistant = history.at(-1);
-        const deliveredSummary = latestAssistant?.role === 'assistant' && (proposal.confirmationFacts
+        const contentMatches = latestAssistant?.role === 'assistant' && (proposal.confirmationFacts
           ? containsBookingConfirmationFacts(latestAssistant.content, proposal.confirmationFacts)
           : Boolean(proposal.confirmationText && readable(latestAssistant.content).includes(proposal.confirmationText)));
+        const hasLegacyDeliveryEvidence = proposal.confirmationFacts
+          ? Boolean(proposal.confirmationFacts.referenceCode)
+          : Boolean(proposal.confirmationText);
+        const bindingMatches = latestAssistant?.bookingProposalId
+          ? latestAssistant.bookingProposalId === proposal.id
+          : hasLegacyDeliveryEvidence;
+        const deliveredSummary = latestAssistant?.role === 'assistant' && contentMatches && bindingMatches;
         if (!deliveredSummary) throw new Error('Booking proposal was not delivered accurately');
         const consumed = await this.repository.consumeAssistantBooking(context.telegramChatId, context.clientId, proposal.id);
         if (JSON.stringify(consumed) !== JSON.stringify(proposal)) throw new Error('Booking proposal changed before confirmation');

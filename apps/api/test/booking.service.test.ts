@@ -74,6 +74,15 @@ describe.skipIf(!withEmulator)('Firestore conversation and settings', () => {
     expect((await repository.getConversation('history-test'))?.pendingAction).toBeUndefined();
   });
 
+  it('keeps booking proposal binding out of ordinary message history', async () => {
+    const { repository } = await setup();
+    const proposalId = '2a1c75d0-d891-4e04-8b54-341cba762ae6';
+    await repository.appendMessage('proposal-history-test', 'assistant', 'Massage proposal', proposalId);
+
+    expect(await repository.listMessages('proposal-history-test')).toEqual([{ role: 'assistant', content: 'Massage proposal' }]);
+    expect(await repository.listMessagesForBookingCheck('proposal-history-test')).toEqual([{ role: 'assistant', content: 'Massage proposal', bookingProposalId: proposalId }]);
+  });
+
   it('clears deleted business chat context and pending action', async () => {
     const { repository } = await setup();
     const now = new Date().toISOString();

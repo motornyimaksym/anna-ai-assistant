@@ -62,7 +62,7 @@ export const bookingConfirmationFactsSchema = z.object({
   localTime: z.string().min(1).max(32),
   price: z.number().finite().nonnegative(),
   currency: z.string().length(3),
-  referenceCode: z.string().regex(/^[a-f0-9]{8}$/i),
+  referenceCode: z.string().regex(/^[a-f0-9]{8}$/i).optional(),
 }).strict();
 export type BookingConfirmationFacts = z.infer<typeof bookingConfirmationFactsSchema>;
 export const pendingActionSchema = z.object({ id: z.string().uuid().optional(), confirmationText: z.string().min(1).max(4000).optional(), confirmationFacts: bookingConfirmationFactsSchema.optional(), name: z.enum(['create_booking', 'cancel_booking', 'reschedule_booking']), arguments: z.record(z.union([z.string(), z.number().finite()])), expiresAt: z.string().datetime() });
