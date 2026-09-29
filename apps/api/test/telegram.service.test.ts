@@ -301,6 +301,31 @@ it('accepts /answer only from enrolled configured responders', async () => {
   expect(repository.saveConversation).not.toHaveBeenCalled();
 });
 
+it('accepts Telegram bot-qualified answer commands', async () => {
+  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+  vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+  const { service, human, assistant } = setup();
+  human.authorizedResponder.mockResolvedValueOnce({ userId: '888', chatId: '777', username: 'helper123', enrolledAt: '2026-09-25T10:00:00.000Z' } as never);
+
+  await service.handle('webhook-secret', { update_id: 702, message: { message_id: 1, chat: { id: 777, type: 'private' }, from: { id: 888, username: 'Helper123' }, text: '/answer@AssistantBot case-1 Human answer' } });
+
+  expect(human.reply).toHaveBeenCalledWith('case-1', 'Human answer', 'telegram:888');
+  expect(assistant.respond).not.toHaveBeenCalled();
+});
+
+it('gives usage guidance when copied answer command has no answer text', async () => {
+  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+  vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+  const { service, human, assistant } = setup();
+  human.authorizedResponder.mockResolvedValueOnce({ userId: '888', chatId: '777', username: 'helper123', enrolledAt: '2026-09-25T10:00:00.000Z' } as never);
+
+  await service.handle('webhook-secret', { update_id: 703, message: { message_id: 1, chat: { id: 777, type: 'private' }, from: { id: 888, username: 'Helper123' }, text: '/answer case-1 ' } });
+
+  expect(human.reply).not.toHaveBeenCalled();
+  expect(human.send).toHaveBeenCalledWith('777', undefined, expect.stringContaining('/answer <номер запиту> <текст>'));
+  expect(assistant.respond).not.toHaveBeenCalled();
+});
+
 it('routes assistant errors directly to configured responders without sending false success', async () => {
   vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret'); vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
   const { service, assistant, human, send } = setup();

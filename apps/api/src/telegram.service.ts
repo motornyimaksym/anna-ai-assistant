@@ -59,7 +59,8 @@ export class TelegramService {
     const message = update.business_message ?? (update.message?.chat.type === 'private' ? update.message : undefined);
     const responder = update.message?.chat.type === 'private' ? update.message : undefined;
     const responderCommand = responder?.text?.trim();
-    if (responder?.from?.username && !responder.from.is_bot && responderCommand && (responderCommand === '/start' || responderCommand.startsWith('/answer '))) {
+    const isAnswerCommand = Boolean(responderCommand && /^\/answer(?:@[a-zA-Z0-9_]+)?(?:\s|$)/i.test(responderCommand));
+    if (responder?.from?.username && !responder.from.is_bot && responderCommand && (responderCommand === '/start' || isAnswerCommand)) {
       const userId = String(responder.from.id);
       const chatId = String(responder.chat.id);
       const username = responder.from.username.toLowerCase();
@@ -70,7 +71,7 @@ export class TelegramService {
       }
       if (await this.human.authorizedResponder(userId, chatId, username)) {
         if (!await this.repository.claimTelegramUpdate(update.update_id)) return;
-        const match = /^\/answer\s+(\S+)\s+([\s\S]+)$/i.exec(responderCommand);
+        const match = /^\/answer(?:@[a-zA-Z0-9_]+)?\s+(\S+)(?:\s+([\s\S]+))?$/i.exec(responderCommand);
         if (!match || !match[1] || !match[2]?.trim()) { await this.human.send(chatId, undefined, 'Формат: /answer <номер запиту> <текст>'); return; }
         try {
           await this.human.reply(match[1], match[2].trim(), `telegram:${userId}`);
@@ -79,7 +80,7 @@ export class TelegramService {
         return;
       }
     }
-    if (responderCommand?.startsWith('/answer ')) return;
+    if (isAnswerCommand) return;
     if (message?.from?.is_bot || (message?.chat.type && message.chat.type !== 'private') || !this.allowedUsername || message?.from?.username?.toLowerCase() !== this.allowedUsername || !message.text) { await this.debug.record(trace, 'ignored', { reason: 'sender_or_message_not_eligible' }); return; }
     if (!await this.repository.claimTelegramUpdate(update.update_id)) { await this.debug.record(trace, 'ignored', { reason: 'duplicate_update' }); return; }
     await this.debug.record(trace, 'received');

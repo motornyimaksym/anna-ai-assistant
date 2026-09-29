@@ -6,6 +6,23 @@ import { BookingRepository } from './repository.js';
 import { HumanAssistanceStore, type Responder } from './human-assistance.store.js';
 import { fetchWithLinearBackoff } from '@booking/http';
 
+const TELEGRAM_MESSAGE_LIMIT = 4096;
+type AnswerReplyMarkup = { inline_keyboard: Array<Array<{ text: string; copy_text: { text: string } }>> };
+
+function truncateTelegramText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  if (maxLength <= 0) return '';
+  const suffix = '…';
+  let result = '';
+  let used = 0;
+  for (const character of text) {
+    if (used + character.length > maxLength - suffix.length) break;
+    result += character;
+    used += character.length;
+  }
+  return `${result.trimEnd()}${suffix}`;
+}
+
 @Injectable()
 export class HumanAssistanceService {
   private readonly logger = new Logger(HumanAssistanceService.name);
@@ -56,12 +73,13 @@ export class HumanAssistanceService {
       return;
     }
     const history = await this.repository.listMessages(chatId);
-    const context = history.slice(-3, -1).map(({ role, content }) => `${role}: ${content.slice(0, 350)}`).join('\n');
-    await this.notify(request.id, `Потрібна відповідь людини. Запит ${request.id}:\n${question.slice(0, 3000)}${context ? `\nКонтекст:\n${context}` : ''}\nВідповісти: /answer ${request.id} <текст>`, 'initial', chatId);
+    const context = history.slice(-3, -1).map(({ role, content }) => `${role}: ${truncateTelegramText(content, 350)}`).join('\n\n');
+    const handoff = `Потрібна відповідь людини.\n\nЗапит: ${request.id}\n\nПоточне повідомлення:\n${truncateTelegramText(question, 3000)}${context ? `\n\nОстанні повідомлення:\n${context}` : ''}`;
+    await this.notify(request.id, handoff, 'initial', chatId);
   }
 
   async queueExisting(requestId: string, text: string, updateId: number): Promise<void> {
-    if (await this.store.queue(requestId, text)) await this.notify(requestId, `Нове повідомлення щодо запиту ${requestId}:\n${text.slice(0, 3500)}`, String(updateId));
+    if (await this.store.queue(requestId, text)) await this.notify(requestId, `Нове повідомлення щодо запиту ${requestId}:\n${text}`, String(updateId));
   }
 
   private async notify(requestId: string, text: string, eventId: string, chatId = 'unknown'): Promise<void> {
@@ -70,8 +88,11 @@ export class HumanAssistanceService {
     if (!responders.length) return;
     const clientChatId = chatId === 'unknown' ? (await this.store.get(requestId))?.telegramChatId : chatId;
     const contact = clientChatId ? await this.clientContact(clientChatId) : '';
-    const notification = `${text.slice(0, 3850)}${contact ? `\n${contact}` : ''}`;
-    for (const responder of responders) await this.deliver(requestId, `${responder.userId}:${eventId}`, responder.chatId, undefined, notification);
+    const contactSection = contact ? `\n\n${contact}` : '';
+    const commandHint = `\n\nНатисніть кнопку, вставте команду в це поле та додайте текст відповіді.\nКоманда: /answer ${requestId} <текст>`;
+    const notification = `${truncateTelegramText(text, TELEGRAM_MESSAGE_LIMIT - contactSection.length - commandHint.length)}${contactSection}${commandHint}`;
+    const replyMarkup: AnswerReplyMarkup = { inline_keyboard: [[{ text: 'Копіювати /answer', copy_text: { text: `/answer ${requestId} ` } }]] };
+    for (const responder of responders) await this.deliver(requestId, `${responder.userId}:${eventId}`, responder.chatId, undefined, notification, replyMarkup);
   }
 
   private async clientContact(chatId: string): Promise<string> {
@@ -105,10 +126,10 @@ export class HumanAssistanceService {
     return verified.filter((item): item is Responder => Boolean(item));
   }
 
-  private async deliver(requestId: string, recipient: string, chatId: string, businessConnectionId: string | undefined, text: string): Promise<void> {
+  private async deliver(requestId: string, recipient: string, chatId: string, businessConnectionId: string | undefined, text: string, replyMarkup?: AnswerReplyMarkup): Promise<void> {
     await this.store.setDelivery(requestId, recipient, 'sending');
     try {
-      await this.send(chatId, businessConnectionId, text);
+      await this.send(chatId, businessConnectionId, text, replyMarkup);
       await this.store.setDelivery(requestId, recipient, 'sent');
     } catch (error) {
       await this.store.setDelivery(requestId, recipient, error instanceof TelegramRejected ? 'failed' : 'uncertain');
@@ -141,12 +162,12 @@ export class HumanAssistanceService {
     if (!await this.store.release(requestId, actor)) throw new ConflictException('Human request is no longer releasable');
     return { ok: true as const };
   }
-  async send(chatId: string, businessConnectionId: string | undefined, text: string): Promise<void> {
+  async send(chatId: string, businessConnectionId: string | undefined, text: string, replyMarkup?: AnswerReplyMarkup): Promise<void> {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     if (!token) throw new Error('Telegram token missing');
     const response = await fetchWithLinearBackoff(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text, ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}) }),
+      body: JSON.stringify({ chat_id: chatId, text, ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}), ...(replyMarkup ? { reply_markup: replyMarkup } : {}) }),
     }, { timeoutMs: 10_000 });
     const result = await response.json().catch(() => undefined) as { ok?: boolean } | undefined;
     if (!response.ok || result?.ok === false) throw Object.assign(new TelegramRejected(), { upstreamStatus: response.status, providerRequestId: response.headers?.get('x-request-id') ?? undefined });

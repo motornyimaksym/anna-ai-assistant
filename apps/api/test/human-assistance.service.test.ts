@@ -156,6 +156,51 @@ it.each([true, false])('includes a client link when available: %s', async (avail
   expect(text.length).toBeLessThanOrEqual(4096);
 });
 
+it('formats recent context as separate paragraphs and adds a copy-answer button', async () => {
+  vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
+  const { service, store, repository } = setup();
+  store.open.mockResolvedValue({ request, created: true });
+  store.connected.mockResolvedValue([{ userId: '42', chatId: '42', username: 'responsible' }] as never);
+  repository.listMessages.mockResolvedValue([
+    { role: 'user', content: 'Earlier question' },
+    { role: 'assistant', content: 'Recent answer' },
+    { role: 'user', content: 'Current question' },
+  ] as never);
+  const fetcher = vi.fn(async (url: string) => ({ ok: true, json: async () => url.endsWith('/getChat') ? { ok: true, result: { id: 42, type: 'private', username: 'responsible' } } : { ok: true } }));
+  vi.stubGlobal('fetch', fetcher);
+
+  await service.escalate('123', undefined, 1, 'Current question', { reason: 'knowledge_gap', thresholdPercent: 60 });
+
+  const delivery = fetcher.mock.calls.find(([url]) => url.endsWith('/sendMessage'))!;
+  const body = JSON.parse(delivery[1]!.body as string);
+  expect(body.text).toContain('user: Earlier question\n\nassistant: Recent answer');
+  expect(body.text).toContain('/answer case-1 <текст>');
+  expect(body.reply_markup).toEqual({ inline_keyboard: [[{ text: 'Копіювати /answer', copy_text: { text: '/answer case-1 ' } }]] });
+});
+
+it('keeps command and client contact inside Telegram text limit for long Unicode follow-ups', async () => {
+  vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
+  const { service, store } = setup();
+  store.connected.mockResolvedValue([{ userId: '42', chatId: '42', username: 'responsible' }] as never);
+  store.get.mockResolvedValue(request as never);
+  const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+    const body = JSON.parse(init!.body as string);
+    return { ok: true, json: async () => url.endsWith('/getChat') ? { ok: true, result: { id: body.chat_id, type: 'private', username: body.chat_id === '42' ? 'responsible' : 'client123' } } : { ok: true } };
+  });
+  vi.stubGlobal('fetch', fetcher);
+
+  await service.queueExisting('case-1', '🧖'.repeat(5000), 1);
+
+  const delivery = fetcher.mock.calls.find(([url]) => url.endsWith('/sendMessage'))!;
+  const body = JSON.parse(delivery[1]!.body as string);
+  expect(body.text.length).toBeLessThanOrEqual(4096);
+  expect(body.text).toContain('https://t.me/client123');
+  expect(body.text).toContain('/answer case-1 <текст>');
+  expect(body.text).toContain('…');
+  expect(body.reply_markup.inline_keyboard[0][0].copy_text.text).toBe('/answer case-1 ');
+  expect(body.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+});
+
 
 it('still sends queued assistance when client chat lookup fails', async () => {
   vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
