@@ -1,10 +1,11 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { FirebaseAdminService } from '../src/firebase-admin.js';
 import { BookingRepository } from '../src/repository.js';
 
 const withEmulator = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
+afterEach(() => vi.unstubAllEnvs());
 describe.skipIf(!withEmulator)('Firestore conversation and settings', () => {
   beforeAll(async () => {
     if (!getApps().length) initializeApp({ projectId: 'demo-ai-massage' });
@@ -39,9 +40,17 @@ describe.skipIf(!withEmulator)('Firestore conversation and settings', () => {
   it('persists bot timing settings in the shared assistant settings collection', async () => {
     const repository = new BookingRepository(new FirebaseAdminService());
     expect(await repository.getBotSettingsOverride()).toBeUndefined();
-    const saved = await repository.saveBotSettingsOverride({ maxReadDelayMs: 900, typingDelayPerSymbolMs: 350 });
-    expect(saved).toMatchObject({ maxReadDelayMs: 900, typingDelayPerSymbolMs: 350, updatedAt: expect.any(String) });
+    const saved = await repository.saveBotSettingsOverride({ maxReadDelayMs: 900, typingDelayPerSymbolMs: 350, testerUsernames: ['User61785', '@AnotherUser'] });
+    expect(saved).toMatchObject({ maxReadDelayMs: 900, typingDelayPerSymbolMs: 350, testerUsernames: ['user61785', 'anotheruser'], updatedAt: expect.any(String) });
     expect(await repository.getBotSettingsOverride()).toEqual(saved);
+  });
+  it('uses the legacy tester fallback for old behavior documents until a list is saved', async () => {
+    vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+    const repository = new BookingRepository(new FirebaseAdminService());
+    await getFirestore().collection('assistantSettings').doc('behavior').set({ maxReadDelayMs: 900, typingDelayPerSymbolMs: 350, updatedAt: new Date().toISOString() });
+    expect(await repository.getBotSettingsOverride()).toMatchObject({ testerUsernames: ['user61785'] });
+    await repository.saveBotSettingsOverride({ maxReadDelayMs: 900, typingDelayPerSymbolMs: 350, testerUsernames: [] });
+    expect(await repository.getBotSettingsOverride()).toMatchObject({ testerUsernames: [] });
   });
   it('persists a normalized stakeholder email allowlist', async () => {
     const repository = new BookingRepository(new FirebaseAdminService());

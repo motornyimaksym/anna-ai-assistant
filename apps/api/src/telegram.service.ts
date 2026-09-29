@@ -6,9 +6,8 @@ import { OpenAiService } from './openai.service.js';
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { z } from 'zod';
 import { type ConversationDto } from '@booking/contracts';
-import { loadBackendRuntimeEnv } from '@booking/config';
 import { BookingRepository } from './repository.js';
-import { DEFAULT_BOT_SETTINGS } from './bot-settings.js';
+import { getDefaultBotSettings, getLegacyTesterUsernames } from './bot-settings.js';
 import { HumanAssistanceService } from './human-assistance.service.js';
 import { TelegramScheduleImportService } from './telegram-schedule-import.service.js';
 import { fetchWithLinearBackoff } from '@booking/http';
@@ -35,7 +34,6 @@ export const formatTelegramHtml = (value: string): string => {
 @Injectable()
 export class TelegramService {
   private readonly logger = new Logger(TelegramService.name);
-  private readonly allowedUsername = loadBackendRuntimeEnv(process.env).TELEGRAM_ALLOWED_USERNAME?.toLowerCase();
   constructor(private readonly repository: BookingRepository, private readonly assistant: OpenAiService, private readonly human: HumanAssistanceService, private readonly scheduleImport: TelegramScheduleImportService, private readonly debug: DebugLogService) {}
   async handle(secret: string | undefined, body: unknown): Promise<void> {
     if (!process.env.TELEGRAM_WEBHOOK_SECRET || secret !== process.env.TELEGRAM_WEBHOOK_SECRET) throw new UnauthorizedException('Invalid webhook secret');
@@ -81,7 +79,10 @@ export class TelegramService {
       }
     }
     if (isAnswerCommand) return;
-    if (message?.from?.is_bot || (message?.chat.type && message.chat.type !== 'private') || !this.allowedUsername || message?.from?.username?.toLowerCase() !== this.allowedUsername || !message.text) { await this.debug.record(trace, 'ignored', { reason: 'sender_or_message_not_eligible' }); return; }
+    if (message?.from?.is_bot || (message?.chat.type && message.chat.type !== 'private') || !message?.from?.username || !message.text) { await this.debug.record(trace, 'ignored', { reason: 'sender_or_message_not_eligible' }); return; }
+    const settings = await this.repository.getBotSettingsOverride() ?? getDefaultBotSettings();
+    const testerUsernames = settings.testerUsernames ?? getLegacyTesterUsernames();
+    if (!testerUsernames.includes(message.from.username.toLowerCase())) { await this.debug.record(trace, 'ignored', { reason: 'sender_or_message_not_eligible' }); return; }
     if (!await this.repository.claimTelegramUpdate(update.update_id)) { await this.debug.record(trace, 'ignored', { reason: 'duplicate_update' }); return; }
     await this.debug.record(trace, 'received');
     const chatId = String(message.chat.id); const now = new Date().toISOString();
@@ -90,7 +91,6 @@ export class TelegramService {
     if (current && current.clientId !== clientId) await this.repository.resetTelegramConversationIdentity(conversation);
     if (!conversation.assistantEnabled || (conversation.humanTakeoverUntil && conversation.humanTakeoverUntil > now)) { await this.debug.record(trace, 'ignored', { reason: conversation.assistantEnabled ? 'manual_takeover' : 'assistant_disabled' }); await this.repository.touchConversation({ ...conversation, updatedAt: now }); return; }
     await this.repository.touchConversation({ ...conversation, updatedAt: now });
-    const settings = await this.repository.getBotSettingsOverride() ?? DEFAULT_BOT_SETTINGS;
     if (update.business_message?.business_connection_id) {
       await waitForRandomReadDelay(settings.maxReadDelayMs);
       await this.markBusinessMessageRead(update.business_message.business_connection_id, message.chat.id, message.message_id);

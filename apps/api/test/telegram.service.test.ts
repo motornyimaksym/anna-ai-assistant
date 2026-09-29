@@ -15,7 +15,7 @@ const update = (username?: string) => ({
   },
 });
 
-const setup = (settings = { maxReadDelayMs: 0, typingDelayPerSymbolMs: 600, updatedAt: '2026-09-24T10:00:00.000Z' }) => {
+const setup = (settings: { maxReadDelayMs: number; typingDelayPerSymbolMs: number; testerUsernames?: string[]; updatedAt?: string } = { maxReadDelayMs: 0, typingDelayPerSymbolMs: 600, updatedAt: '2026-09-24T10:00:00.000Z' }) => {
   const order: string[] = [];
   const repository = {
     appendMessage: vi.fn(),
@@ -118,6 +118,33 @@ describe('Telegram private test restriction', () => {
     expect(JSON.parse(send.mock.calls[1]![1]!.body as string)).toMatchObject({ chat_id: '123', business_connection_id: 'connection-1', action: 'typing' });
     expect(send.mock.calls[2]![0]).toContain('/sendMessage');
     expect(JSON.parse(send.mock.calls[2]![1]!.body as string)).toMatchObject({ parse_mode: 'HTML', text: 'OK' });
+  });
+
+  it('uses the saved tester list instead of the legacy environment fallback', async () => {
+    vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+    vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-bot-token');
+    vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+    const { service, repository, assistant } = setup({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0, testerUsernames: ['anotheruser'], updatedAt: '2026-09-24T10:00:00.000Z' });
+    await service.handle('webhook-secret', { ...update('user61785'), update_id: 111 });
+    expect(repository.claimTelegramUpdate).not.toHaveBeenCalled();
+    expect(assistant.respond).not.toHaveBeenCalled();
+
+    await service.handle('webhook-secret', { ...update('AnotherUser'), update_id: 112 });
+    expect(repository.claimTelegramUpdate).toHaveBeenCalledWith(112);
+    expect(assistant.respond).toHaveBeenCalledOnce();
+    const privateMessage = { ...update('AnotherUser').business_message, business_connection_id: undefined, chat: { id: 124, type: 'private' } };
+    await service.handle('webhook-secret', { update_id: 113, message: privateMessage });
+    expect(repository.claimTelegramUpdate).toHaveBeenCalledWith(113);
+    expect(assistant.respond).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats a saved empty tester list as authoritative over the legacy environment', async () => {
+    vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+    vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+    const { service, repository, assistant } = setup({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0, testerUsernames: [], updatedAt: '2026-09-24T10:00:00.000Z' });
+    await service.handle('webhook-secret', update('user61785'));
+    expect(repository.claimTelegramUpdate).not.toHaveBeenCalled();
+    expect(assistant.respond).not.toHaveBeenCalled();
   });
 });
 

@@ -10,6 +10,7 @@ import {
 import { BookingConflictError, BookingNotFoundError, lockedSlotKeys, serviceEndAt } from '@booking/domain';
 import { FirebaseAdminService } from './firebase-admin.js';
 import type { RequestBodies } from './request-diagnostics.js';
+import { getLegacyTesterUsernames } from './bot-settings.js';
 
 export type CreateStoredBooking = Omit<BookingDto, 'id' | 'createdAt' | 'updatedAt'> & { lockedSlots: string[]; bufferMinutes: number };
 export type BookingOperation = { id: string; kind: 'create' | 'reschedule' | 'cancel'; targetStartAt?: string; targetEndAt?: string; leaseId?: string; leaseUntil?: number };
@@ -441,7 +442,8 @@ export class BookingRepository {
     if (!doc.exists) return undefined;
     const data = doc.data();
     if (typeof data?.updatedAt !== 'string') return undefined;
-    return { ...botSettingsSchema.parse(data), updatedAt: data.updatedAt };
+    const settings = botSettingsSchema.parse({ ...data, testerUsernames: data.testerUsernames ?? getLegacyTesterUsernames() });
+    return { ...settings, updatedAt: data.updatedAt };
   }
   async saveBotSettingsOverride(settings: BotSettings): Promise<BotSettings & { updatedAt: string }> {
     const value = { ...botSettingsSchema.parse(settings), updatedAt: new Date().toISOString() };

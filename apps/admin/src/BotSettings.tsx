@@ -20,12 +20,15 @@ export const BotSettings = () => {
   const query = useQuery({ queryKey, queryFn: adminApi.botSettings });
   const accessQuery = useQuery({ queryKey: adminAccessQueryKey, queryFn: adminApi.adminAccess });
   const [draft, setDraft] = useState<Draft>({ maxReadDelaySeconds: '', typingDelayPerSymbolMs: '' });
+  const [testerUsernames, setTesterUsernames] = useState<string[]>([]);
+  const [newTester, setNewTester] = useState('');
+  const [testerError, setTesterError] = useState('');
   const [emails, setEmails] = useState<string[]>([]);
   const [newEmail, setNewEmail] = useState('');
   const [message, setMessage] = useState('');
   const [accessMessage, setAccessMessage] = useState('');
   const [accessError, setAccessError] = useState('');
-  useEffect(() => { if (query.data) setDraft(toDraft(query.data)); }, [query.data]);
+  useEffect(() => { if (query.data) { setDraft(toDraft(query.data)); setTesterUsernames(query.data.testerUsernames); } }, [query.data]);
   useEffect(() => { if (accessQuery.data) setEmails(accessQuery.data.emails); }, [accessQuery.data]);
 
   const readDelaySeconds = draft.maxReadDelaySeconds.trim() === '' ? Number.NaN : Number(draft.maxReadDelaySeconds);
@@ -34,12 +37,14 @@ export const BotSettings = () => {
   const parsed = botSettingsSchema.safeParse({
     maxReadDelayMs: Number.isInteger(readDelayMs) ? readDelayMs : Number.NaN,
     typingDelayPerSymbolMs: draft.typingDelayPerSymbolMs.trim() === '' ? Number.NaN : Number(draft.typingDelayPerSymbolMs),
+    testerUsernames,
   });
   const save = useMutation({
     mutationFn: (settings: BotSettingsDto) => adminApi.saveBotSettings(settings),
     onSuccess: (value) => {
       queryClient.setQueryData(queryKey, value);
       setDraft(toDraft(value));
+      setTesterUsernames(value.testerUsernames);
       setMessage('Saved. Changes apply to the next incoming message.');
     },
   });
@@ -56,9 +61,17 @@ export const BotSettings = () => {
   if (query.isPending) return <Typography>Loading bot settings…</Typography>;
   if (query.isError) return <Alert severity="error">Could not load bot settings. {errorText(query.error)}</Alert>;
 
-  const dirty = draft.maxReadDelaySeconds !== millisecondsToSeconds(query.data.maxReadDelayMs) || draft.typingDelayPerSymbolMs !== String(query.data.typingDelayPerSymbolMs);
+  const dirty = draft.maxReadDelaySeconds !== millisecondsToSeconds(query.data.maxReadDelayMs) || draft.typingDelayPerSymbolMs !== String(query.data.typingDelayPerSymbolMs) || JSON.stringify(testerUsernames) !== JSON.stringify(query.data.testerUsernames);
   const canSave = dirty && parsed.success && !save.isPending;
   const saveDraft = () => { if (parsed.success) { setMessage(''); save.mutate(parsed.data); } };
+  const addTester = () => {
+    const result = botSettingsSchema.shape.testerUsernames.safeParse([...testerUsernames, newTester]);
+    if (!result.success) { setTesterError(result.error.issues[0]?.message ?? 'Enter a valid Telegram username.'); return; }
+    setTesterUsernames(result.data);
+    setNewTester('');
+    setTesterError('');
+    setMessage('');
+  };
   const accessParsed = updateAdminAccessSchema.safeParse({ emails });
   const currentEmails = accessQuery.data?.emails ?? [];
   const accessDirty = JSON.stringify(emails) !== JSON.stringify(currentEmails);
@@ -102,6 +115,27 @@ export const BotSettings = () => {
       error={draft.typingDelayPerSymbolMs !== '' && !botSettingsSchema.shape.typingDelayPerSymbolMs.safeParse(Number(draft.typingDelayPerSymbolMs)).success}
       disabled={save.isPending}
     />
+    <Divider />
+    <Stack spacing={1.5}>
+      <Typography variant="h6">Telegram testers</Typography>
+      <Typography variant="body2" color="text.secondary">Only these usernames can use the assistant in Business messages or private bot chats. Add up to 20 usernames.</Typography>
+      <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
+        {testerUsernames.map((username) => <Chip key={username} label={username} onDelete={!save.isPending ? () => { setTesterUsernames((current) => current.filter((item) => item !== username)); setTesterError(''); setMessage(''); } : undefined} />)}
+        {testerUsernames.length === 0 && <Typography variant="body2" color="text.secondary">No testers configured.</Typography>}
+      </Stack>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'flex-start' }}>
+        <TextField
+          label="Tester username"
+          value={newTester}
+          onChange={(event) => { setNewTester(event.target.value); setTesterError(''); }}
+          disabled={save.isPending || testerUsernames.length >= 20}
+          helperText="Enter username with or without @. Usernames are saved lowercase."
+          size="small"
+        />
+        <Button variant="outlined" onClick={addTester} disabled={save.isPending || testerUsernames.length >= 20 || !newTester.trim()}>Add tester</Button>
+      </Stack>
+      {testerError && <Alert severity="error">{testerError}</Alert>}
+    </Stack>
     {message && <Alert severity="success">{message}</Alert>}
     {save.isError && <Alert severity="error">Could not save bot settings. {errorText(save.error)}</Alert>}
     <Box display="flex" gap={1}>

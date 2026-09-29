@@ -76,7 +76,11 @@ export const promptCatalogEntrySchema = z.object({ id: z.string(), label: z.stri
 export const promptCatalogResponseSchema = z.object({ systemOne: z.array(promptCatalogEntrySchema), systemTwo: z.array(promptCatalogEntrySchema) });
 export type PromptCatalogResponse = z.infer<typeof promptCatalogResponseSchema>;
 export const updateAssistantPromptSchema = z.object({ prompt: z.string().min(1).max(20_000).refine((prompt) => prompt.trim().length > 0, 'Prompt must not be blank') });
-export const botSettingsSchema = z.object({ maxReadDelayMs: z.number().int().min(0).max(3_540_000), typingDelayPerSymbolMs: z.number().int().min(0).max(800) });
+const testerUsernameSchema = z.string().trim().transform((value) => value.replace(/^@/, '').toLowerCase()).pipe(z.string().regex(/^[a-z0-9_]{5,32}$/, 'Enter a Telegram username (5–32 letters, digits, or underscores)'));
+const testerUsernamesSchema = z.array(testerUsernameSchema).max(20).superRefine((usernames, ctx) => {
+  if (new Set(usernames).size !== usernames.length) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Telegram usernames must be unique' });
+});
+export const botSettingsSchema = z.object({ maxReadDelayMs: z.number().int().min(0).max(3_540_000), typingDelayPerSymbolMs: z.number().int().min(0).max(800), testerUsernames: testerUsernamesSchema });
 export const botSettingsResponseSchema = botSettingsSchema.extend({ isCustom: z.boolean(), updatedAt: z.string().datetime().optional() });
 export const updateBotSettingsSchema = botSettingsSchema;
 const adminAccessEmailSchema = z.string().trim().email().max(254).transform((email) => email.toLowerCase());
