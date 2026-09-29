@@ -5,7 +5,7 @@ import { HumanAssistanceService } from '../src/human-assistance.service.js';
 
 const setup = (thresholdPercent = 60) => {
   const store = { settings: vi.fn(async () => ({ thresholdPercent, usernames: [] })), connected: vi.fn(async () => []), queue: vi.fn(async () => true), open: vi.fn(), setDelivery: vi.fn(), get: vi.fn(), claimAnswer: vi.fn(), completeAnswer: vi.fn() };
-  const repository = { getKnowledgeBaseOverride: vi.fn(async () => ({ content: 'Open 10:00–20:00', updatedAt: '2026-09-25T10:00:00.000Z' })), listServices: vi.fn(async () => [{ id: 'massage-60', name: 'Massage', description: 'Classic', durationMinutes: 60, price: 1500, currency: 'UAH', enabled: true }]), listMessages: vi.fn(async () => [{ role: 'user' as const, content: 'Earlier question' }]), appendMessage: vi.fn() };
+  const repository = { getConversation: vi.fn(async () => ({ telegramUsername: 'client123' })), getKnowledgeBaseOverride: vi.fn(async () => ({ content: 'Open 10:00–20:00', updatedAt: '2026-09-25T10:00:00.000Z' })), listServices: vi.fn(async () => [{ id: 'massage-60', name: 'Massage', description: 'Classic', durationMinutes: 60, price: 1500, currency: 'UAH', enabled: true }]), listMessages: vi.fn(async () => [{ role: 'user' as const, content: 'Earlier question' }]), appendMessage: vi.fn() };
   const debug = { record: vi.fn(async () => {}) };
   const selector = { estimateProbability: vi.fn(async () => 0.5) };
   return { selector, service: new HumanAssistanceService(store as unknown as HumanAssistanceStore, repository as unknown as BookingRepository, debug as never, selector as never), store, repository, debug };
@@ -140,9 +140,10 @@ describe('outgoing Probability gate', () => {
 
 it.each([true, false])('includes a client link when available: %s', async (available) => {
   vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
-  const { service, store } = setup();
+  const { service, store, repository } = setup();
   store.open.mockResolvedValue({ request, created: true });
   store.connected.mockResolvedValue([{ userId: '42', chatId: '42', username: 'responsible' }] as never);
+  repository.getConversation.mockResolvedValue((available ? { telegramUsername: 'client123' } : undefined) as never);
   const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
     const body = JSON.parse(init!.body as string);
     return { ok: true, json: async () => url.endsWith('/getChat') ? { ok: true, result: { id: body.chat_id, type: 'private', username: body.chat_id === '42' ? 'responsible' : available ? 'client123' : undefined } } : { ok: true } };
@@ -151,20 +152,26 @@ it.each([true, false])('includes a client link when available: %s', async (avail
   await service.escalate('123', 'business-1', 1, 'Question', { reason: 'handoff_probability', probability: 0.9, thresholdPercent: 60 });
   const delivery = fetcher.mock.calls.find(([url]) => url.endsWith('/sendMessage'))!;
   const text = JSON.parse(delivery[1]!.body as string).text;
-  expect(text).toContain('123');
-  if (available) expect(text).toContain('https://t.me/client123');
-  else expect(text).not.toContain('https://t.me/');
+  expect(text).not.toContain('Чат клієнта: 123');
+  expect(text).not.toContain('case-1');
+  if (available) {
+    expect(text).toContain('client123: Earlier question');
+    expect(text).toContain('Чат клієнта: https://t.me/client123');
+  } else {
+    expect(text).toContain('Клієнт: Earlier question');
+    expect(text).not.toContain('https://t.me/');
+  }
   expect(text.length).toBeLessThanOrEqual(4096);
 });
 
-it('formats recent context as separate paragraphs and adds a copy-answer button', async () => {
+it('formats a chronological transcript and adds only a copy-answer button', async () => {
   vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
   const { service, store, repository } = setup();
   store.open.mockResolvedValue({ request, created: true });
   store.connected.mockResolvedValue([{ userId: '42', chatId: '42', username: 'responsible' }] as never);
   repository.listMessages.mockResolvedValue([
     { role: 'user', content: 'Earlier question' },
-    { role: 'assistant', content: 'Recent answer' },
+    { role: 'assistant', content: '<b>Recent answer</b> &amp; info' },
     { role: 'user', content: 'Current question' },
   ] as never);
   const fetcher = vi.fn(async (url: string) => ({ ok: true, json: async () => url.endsWith('/getChat') ? { ok: true, result: { id: 42, type: 'private', username: 'responsible' } } : { ok: true } }));
@@ -174,9 +181,46 @@ it('formats recent context as separate paragraphs and adds a copy-answer button'
 
   const delivery = fetcher.mock.calls.find(([url]) => url.endsWith('/sendMessage'))!;
   const body = JSON.parse(delivery[1]!.body as string);
-  expect(body.text).toContain('user: Earlier question\n\nassistant: Recent answer');
-  expect(body.text).toContain('/answer case-1 <текст>');
+  expect(body.text).toContain('<b>Діалог:</b>\nclient123: Earlier question\n\nБот: Recent answer &amp; info\n\nclient123: Current question');
+  expect(body.text).not.toContain('case-1');
+  expect(body.text).not.toContain('/answer');
+  expect(body.text).not.toContain('Натисніть кнопку');
+  expect(body.text).not.toContain('Не надіслане повідомлення');
+  expect(body.parse_mode).toBe('HTML');
   expect(body.reply_markup).toEqual({ inline_keyboard: [[{ text: 'Копіювати /answer', copy_text: { text: '/answer case-1 ' } }]] });
+});
+
+it('separates a withheld draft, escapes transcript text, and hides request and chat IDs', async () => {
+  vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
+  const { service, store, repository, selector } = setup();
+  store.open.mockResolvedValue({ request, created: true });
+  store.connected.mockResolvedValue([{ userId: '42', chatId: '42', username: 'responsible' }] as never);
+  repository.listMessages.mockResolvedValue([
+    { role: 'user', content: 'Старе питання <прайс> & час' },
+    { role: 'assistant', content: 'Стара відповідь бота' },
+    { role: 'user', content: 'Середа' },
+  ] as never);
+  const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+    const body = JSON.parse(init!.body as string);
+    return { ok: true, json: async () => url.endsWith('/getChat')
+      ? { ok: true, result: { id: body.chat_id, type: 'private', username: body.chat_id === '42' ? 'responsible' : 'client123' } }
+      : { ok: true } };
+  });
+  vi.stubGlobal('fetch', fetcher);
+  selector.estimateProbability.mockResolvedValue(0.9);
+
+  await service.approveOutgoing('123', undefined, 1, 'Середа', 'Запис: Масаж, 120 хв. Код abc12345.\n\nПідтверджуєте запис?');
+
+  const delivery = fetcher.mock.calls.find(([url]) => url.endsWith('/sendMessage'))!;
+  const body = JSON.parse(delivery[1]!.body as string);
+  expect(body.text).toContain('<b>Діалог:</b>\nclient123: Старе питання &lt;прайс&gt; &amp; час\n\nБот: Стара відповідь бота\n\nclient123: Середа');
+  expect(body.text).toContain('<b>Не надіслане повідомлення:</b>\nЗапис: Масаж, 120 хв. Код abc12345.\n\nПідтверджуєте запис?');
+  expect(body.text).toContain('Чат клієнта: https://t.me/client123');
+  expect(body.text).not.toContain('Запит: case-1');
+  expect(body.text).not.toContain('Чат клієнта: 123');
+  expect(body.text).not.toContain('/answer case-1');
+  expect(body.parse_mode).toBe('HTML');
+  expect(body.reply_markup.inline_keyboard[0][0].copy_text.text).toBe('/answer case-1 ');
 });
 
 it('keeps command and client contact inside Telegram text limit for long Unicode follow-ups', async () => {
@@ -195,8 +239,9 @@ it('keeps command and client contact inside Telegram text limit for long Unicode
   const delivery = fetcher.mock.calls.find(([url]) => url.endsWith('/sendMessage'))!;
   const body = JSON.parse(delivery[1]!.body as string);
   expect(body.text.length).toBeLessThanOrEqual(4096);
-  expect(body.text).toContain('https://t.me/client123');
-  expect(body.text).toContain('/answer case-1 <текст>');
+  expect(body.text).toContain('Чат клієнта: https://t.me/client123');
+  expect(body.text).not.toContain('case-1');
+  expect(body.text).not.toContain('/answer');
   expect(body.text).toContain('…');
   expect(body.reply_markup.inline_keyboard[0][0].copy_text.text).toBe('/answer case-1 ');
   expect(body.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
@@ -216,7 +261,8 @@ it('still sends queued assistance when client chat lookup fails', async () => {
   vi.stubGlobal('fetch', fetcher);
   await service.queueExisting('case-1', 'Follow-up question', 999);
   const delivery = fetcher.mock.calls.find(([url]) => url.endsWith('/sendMessage'))!;
-  expect(JSON.parse(delivery[1]!.body as string).text).toContain('Чат клієнта: 123');
+  expect(JSON.parse(delivery[1]!.body as string).text).toContain('Чат клієнта:');
+  expect(JSON.parse(delivery[1]!.body as string).text).not.toContain('Чат клієнта: 123');
   expect(JSON.parse(delivery[1]!.body as string).text).toContain('Follow-up question');
   expect(store.setDelivery).toHaveBeenCalledWith('case-1', '42:999', 'sent');
 });

@@ -8,6 +8,9 @@ import { fetchWithLinearBackoff } from '@booking/http';
 
 const TELEGRAM_MESSAGE_LIMIT = 4096;
 type AnswerReplyMarkup = { inline_keyboard: Array<Array<{ text: string; copy_text: { text: string } }>> };
+type DialogMessage = { role: 'user' | 'assistant'; content: string };
+type NotificationTranscript = { messages: DialogMessage[]; username?: string; unsentMessage?: string; transferContext?: string };
+type ClientContact = { username?: string; link?: string };
 
 function truncateTelegramText(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
@@ -21,6 +24,78 @@ function truncateTelegramText(text: string, maxLength: number): string {
     used += character.length;
   }
   return `${result.trimEnd()}${suffix}`;
+}
+
+const escapeHtmlText = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const escapedHtmlLength = (text: string) => escapeHtmlText(text).length;
+
+function truncateHtmlText(text: string, maxEncodedLength: number): string {
+  if (escapedHtmlLength(text) <= maxEncodedLength) return text;
+  if (maxEncodedLength <= 0) return '';
+  let result = '';
+  let used = 0;
+  for (const character of text) {
+    const encodedLength = escapeHtmlText(character).length;
+    if (used + encodedLength > maxEncodedLength - 1) break;
+    result += character;
+    used += encodedLength;
+  }
+  return `${result.trimEnd()}…`;
+}
+
+function readableTelegramDraft(text: string): string {
+  return text
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/?(?:b|i|code)>/gi, '')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+}
+
+function ensureCurrentMessage(messages: DialogMessage[], currentMessage: string): DialogMessage[] {
+  const current = truncateTelegramText(currentMessage, 4000);
+  const last = messages.at(-1);
+  if (last?.role === 'user' && last.content === current) return messages.slice(-20);
+  return [...messages.slice(-19), { role: 'user', content: current }];
+}
+
+function formatResponderNotification(transcript: NotificationTranscript, contact: ClientContact): string {
+  const messages = [...transcript.messages];
+  let unsentMessage = transcript.unsentMessage;
+  let transferContext = transcript.transferContext;
+  const username = [transcript.username, contact.username]
+    .find((value): value is string => typeof value === 'string' && /^[a-zA-Z0-9_]{5,32}$/.test(value.replace(/^@/, '')))
+    ?.replace(/^@/, '');
+  const footer = `\n\nЧат клієнта:${contact.link ? ` ${contact.link}` : ''}`;
+  const render = () => {
+    const turns = messages.map(({ role, content }) => `${role === 'user' ? `${username ?? 'Клієнт'}` : 'Бот'}: ${escapeHtmlText(role === 'assistant' ? readableTelegramDraft(content) : content)}`).join('\n\n');
+    let output = `<b>Діалог:</b>${turns ? `\n${turns}` : ''}`;
+    if (unsentMessage) output += `\n\n<b>Не надіслане повідомлення:</b>\n${escapeHtmlText(unsentMessage)}`;
+    if (transferContext) output += `\n\n<b>Контекст передачі:</b>\n${escapeHtmlText(transferContext)}`;
+    return `${output}${footer}`;
+  };
+
+  let output = render();
+  while (output.length > TELEGRAM_MESSAGE_LIMIT && messages.length > 1) {
+    messages.shift();
+    output = render();
+  }
+  for (const field of ['transferContext', 'unsentMessage', 'lastMessage'] as const) {
+    while (output.length > TELEGRAM_MESSAGE_LIMIT) {
+      const excess = output.length - TELEGRAM_MESSAGE_LIMIT;
+      if (field === 'transferContext' && transferContext) {
+        transferContext = truncateHtmlText(transferContext, Math.max(0, escapedHtmlLength(transferContext) - excess - 1));
+        if (!transferContext) transferContext = undefined;
+      } else if (field === 'unsentMessage' && unsentMessage) {
+        unsentMessage = truncateHtmlText(unsentMessage, Math.max(0, escapedHtmlLength(unsentMessage) - excess - 1));
+        if (!unsentMessage) unsentMessage = undefined;
+      } else if (field === 'lastMessage' && messages.length) {
+        const last = messages.at(-1)!;
+        last.content = truncateHtmlText(last.content, Math.max(0, escapedHtmlLength(last.content) - excess - 1));
+      } else break;
+      output = render();
+    }
+  }
+  return output;
 }
 
 @Injectable()
@@ -49,7 +124,7 @@ export class HumanAssistanceService {
     await this.escalate(chatId, businessConnectionId, updateId, context, {
       reason: probability === undefined ? 'probability_unavailable' : 'handoff_probability',
       ...(probability === undefined ? {} : { probability }), thresholdPercent,
-    });
+    }, { clientMessage: question, unsentMessage: readableTelegramDraft(draft), transferContext: errorDetails });
     return false;
   }
 
@@ -62,52 +137,60 @@ export class HumanAssistanceService {
 
   async escalateError(chatId: string, businessConnectionId: string | undefined, updateId: number, question: string, context?: string) {
     const settings = await this.store.settings();
-    await this.escalate(chatId, businessConnectionId, updateId, `${question.slice(0, 2600)}${context ? `\n\nПричина передачі: ${context.slice(0, 1200)}` : ''}\n\nАвтоматичну обробку зупинено. Перевірте стан операції перед повторною спробою.`, { reason: 'operation_error', thresholdPercent: settings.thresholdPercent });
+    await this.escalate(chatId, businessConnectionId, updateId, `${question.slice(0, 2600)}${context ? `\n\nПричина передачі: ${context.slice(0, 1200)}` : ''}\n\nАвтоматичну обробку зупинено. Перевірте стан операції перед повторною спробою.`, { reason: 'operation_error', thresholdPercent: settings.thresholdPercent }, { clientMessage: question, transferContext: context });
   }
 
-  async escalate(chatId: string, businessConnectionId: string | undefined, updateId: number, question: string, decision: { reason: HumanRequestDto['reason']; probability?: number; thresholdPercent: number }): Promise<void> {
+  async escalate(chatId: string, businessConnectionId: string | undefined, updateId: number, question: string, decision: { reason: HumanRequestDto['reason']; probability?: number; thresholdPercent: number }, display: { clientMessage?: string; unsentMessage?: string; transferContext?: string } = {}): Promise<void> {
     const { request, created } = await this.store.open(chatId, businessConnectionId, updateId, question, decision.reason, decision.probability, decision.thresholdPercent);
     if (!created) {
       await this.store.queue(request.id, question);
-      await this.notify(request.id, `Нове повідомлення щодо запиту ${request.id}:\n${question.slice(0, 3500)}`, String(updateId), chatId);
+      await this.notify(request.id, await this.notificationTranscript(chatId, display.clientMessage ?? question, display), String(updateId), chatId);
       return;
     }
-    const history = await this.repository.listMessages(chatId);
-    const context = history.slice(-3, -1).map(({ role, content }) => `${role}: ${truncateTelegramText(content, 350)}`).join('\n\n');
-    const handoff = `Потрібна відповідь людини.\n\nЗапит: ${request.id}\n\nПоточне повідомлення:\n${truncateTelegramText(question, 3000)}${context ? `\n\nОстанні повідомлення:\n${context}` : ''}`;
-    await this.notify(request.id, handoff, 'initial', chatId);
+    await this.notify(request.id, await this.notificationTranscript(chatId, display.clientMessage ?? question, display), 'initial', chatId);
   }
 
   async queueExisting(requestId: string, text: string, updateId: number): Promise<void> {
-    if (await this.store.queue(requestId, text)) await this.notify(requestId, `Нове повідомлення щодо запиту ${requestId}:\n${text}`, String(updateId));
+    if (!await this.store.queue(requestId, text)) return;
+    const request = await this.store.get(requestId);
+    const chatId = request?.telegramChatId;
+    const transcript = chatId ? await this.notificationTranscript(chatId, text) : { messages: [{ role: 'user' as const, content: text }] };
+    await this.notify(requestId, transcript, String(updateId), chatId ?? 'unknown');
   }
 
-  private async notify(requestId: string, text: string, eventId: string, chatId = 'unknown'): Promise<void> {
+  private async notificationTranscript(chatId: string, currentMessage: string, display: { unsentMessage?: string; transferContext?: string } = {}): Promise<NotificationTranscript> {
+    const [history, conversation] = await Promise.all([this.repository.listMessages(chatId), this.repository.getConversation(chatId)]);
+    return {
+      messages: ensureCurrentMessage(history, currentMessage),
+      ...(conversation?.telegramUsername ? { username: conversation.telegramUsername } : {}),
+      ...(display.unsentMessage ? { unsentMessage: display.unsentMessage } : {}),
+      ...(display.transferContext ? { transferContext: display.transferContext } : {}),
+    };
+  }
+
+  private async notify(requestId: string, transcript: NotificationTranscript, eventId: string, chatId = 'unknown'): Promise<void> {
     const responders = await this.verifiedResponders();
     await this.debug.record({ telegramChatId: chatId }, 'handoff', { requestId, responderCount: responders.length, reason: responders.length ? 'notifying_responders' : 'no_connected_responders' }, responders.length ? 'info' : 'warn');
     if (!responders.length) return;
     const clientChatId = chatId === 'unknown' ? (await this.store.get(requestId))?.telegramChatId : chatId;
-    const contact = clientChatId ? await this.clientContact(clientChatId) : '';
-    const contactSection = contact ? `\n\n${contact}` : '';
-    const commandHint = `\n\nНатисніть кнопку, вставте команду в це поле та додайте текст відповіді.\nКоманда: /answer ${requestId} <текст>`;
-    const notification = `${truncateTelegramText(text, TELEGRAM_MESSAGE_LIMIT - contactSection.length - commandHint.length)}${contactSection}${commandHint}`;
+    const contact = clientChatId ? await this.clientContact(clientChatId) : {};
+    const notification = formatResponderNotification(transcript, contact);
     const replyMarkup: AnswerReplyMarkup = { inline_keyboard: [[{ text: 'Копіювати /answer', copy_text: { text: `/answer ${requestId} ` } }]] };
-    for (const responder of responders) await this.deliver(requestId, `${responder.userId}:${eventId}`, responder.chatId, undefined, notification, replyMarkup);
+    for (const responder of responders) await this.deliver(requestId, `${responder.userId}:${eventId}`, responder.chatId, undefined, notification, replyMarkup, 'HTML');
   }
 
-  private async clientContact(chatId: string): Promise<string> {
-    const fallback = `Чат клієнта: ${chatId}`;
+  private async clientContact(chatId: string): Promise<ClientContact> {
     const token = process.env.TELEGRAM_BOT_TOKEN;
-    if (!token) return fallback;
+    if (!token) return {};
     try {
       const response = await fetchWithLinearBackoff(`https://api.telegram.org/bot${token}/getChat`, {
         method: 'POST', signal: AbortSignal.timeout(3_000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId }),
       }, { replaySafe: true });
       const result = await response.json() as { ok?: boolean; result?: { id?: number | string; type?: string; username?: string } };
       const username = result.result?.username;
-      if (response.ok && result.ok === true && result.result?.type === 'private' && String(result.result.id) === chatId && typeof username === 'string' && /^[a-zA-Z0-9_]{5,32}$/.test(username)) return `${fallback}\nhttps://t.me/${username}`;
+      if (response.ok && result.ok === true && result.result?.type === 'private' && String(result.result.id) === chatId && typeof username === 'string' && /^[a-zA-Z0-9_]{5,32}$/.test(username)) return { username, link: `https://t.me/${username}` };
     } catch { /* A missing public link must never prevent human assistance. */ }
-    return fallback;
+    return {};
   }
 
   private async verifiedResponders(settings?: { thresholdPercent: number; usernames: string[] }): Promise<Responder[]> {
@@ -126,10 +209,10 @@ export class HumanAssistanceService {
     return verified.filter((item): item is Responder => Boolean(item));
   }
 
-  private async deliver(requestId: string, recipient: string, chatId: string, businessConnectionId: string | undefined, text: string, replyMarkup?: AnswerReplyMarkup): Promise<void> {
+  private async deliver(requestId: string, recipient: string, chatId: string, businessConnectionId: string | undefined, text: string, replyMarkup?: AnswerReplyMarkup, parseMode?: 'HTML'): Promise<void> {
     await this.store.setDelivery(requestId, recipient, 'sending');
     try {
-      await this.send(chatId, businessConnectionId, text, replyMarkup);
+      await this.send(chatId, businessConnectionId, text, replyMarkup, parseMode);
       await this.store.setDelivery(requestId, recipient, 'sent');
     } catch (error) {
       await this.store.setDelivery(requestId, recipient, error instanceof TelegramRejected ? 'failed' : 'uncertain');
@@ -162,12 +245,12 @@ export class HumanAssistanceService {
     if (!await this.store.release(requestId, actor)) throw new ConflictException('Human request is no longer releasable');
     return { ok: true as const };
   }
-  async send(chatId: string, businessConnectionId: string | undefined, text: string, replyMarkup?: AnswerReplyMarkup): Promise<void> {
+  async send(chatId: string, businessConnectionId: string | undefined, text: string, replyMarkup?: AnswerReplyMarkup, parseMode?: 'HTML'): Promise<void> {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     if (!token) throw new Error('Telegram token missing');
     const response = await fetchWithLinearBackoff(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text, ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}), ...(replyMarkup ? { reply_markup: replyMarkup } : {}) }),
+      body: JSON.stringify({ chat_id: chatId, text, ...(parseMode ? { parse_mode: parseMode } : {}), ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}), ...(replyMarkup ? { reply_markup: replyMarkup } : {}) }),
     }, { timeoutMs: 10_000 });
     const result = await response.json().catch(() => undefined) as { ok?: boolean } | undefined;
     if (!response.ok || result?.ok === false) throw Object.assign(new TelegramRejected(), { upstreamStatus: response.status, providerRequestId: response.headers?.get('x-request-id') ?? undefined });
