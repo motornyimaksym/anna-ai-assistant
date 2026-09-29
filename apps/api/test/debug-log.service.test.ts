@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { safeErrorCategory, safeErrorDiagnostic } from '../src/debug-log.service.js';
+import { humanErrorContext, safeErrorCategory, safeErrorDiagnostic } from '../src/debug-log.service.js';
 
 describe('safeErrorDiagnostic', () => {
   it('keeps underlying cause and stack while redacting credential-bearing URLs', () => {
@@ -61,6 +61,19 @@ describe('safeErrorDiagnostic', () => {
     expect(diagnostic).not.toContain('/private/path');
     expect(diagnostic).not.toContain('token=secret');
   });
+});
+
+it('keeps responder error details bounded without leaking credentials, client text or stack', () => {
+  const clientText = 'Private client request';
+  const error = Object.assign(new Error(`OpenAI rejected ${clientText}; token=hidden`), { upstreamStatus: 429, code: 'RATE_LIMITED', providerRequestId: 'req_123' });
+  const context = humanErrorContext(error, 'OpenAI System Two', [clientText]);
+  expect(context).toContain('http=429');
+  expect(context).toContain('code=RATE_LIMITED');
+  expect(context).toContain('requestId=req_123');
+  expect(context).not.toContain(clientText);
+  expect(context).not.toContain('hidden');
+  expect(context).not.toContain(' at ');
+  expect(context.length).toBeLessThanOrEqual(700);
 });
 
 

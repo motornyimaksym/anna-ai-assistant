@@ -1,5 +1,5 @@
 import { SystemOneSelector, systemOneDecisionInputSchema, systemOneProbabilitySchema } from './system-one.js';
-import { DebugLogService, safeErrorDiagnostic } from './debug-log.service.js';
+import { DebugLogService, humanErrorContext, safeErrorDiagnostic } from './debug-log.service.js';
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { humanReplySchema, type HumanRequestDto } from '@booking/contracts';
 import { BookingRepository } from './repository.js';
@@ -14,6 +14,7 @@ export class HumanAssistanceService {
   async approveOutgoing(chatId: string, businessConnectionId: string | undefined, updateId: number, question: string, draft: string): Promise<boolean> {
     const { thresholdPercent } = await this.store.settings();
     let probability: number | undefined;
+    let errorDetails: string | undefined;
     try {
       const history = await this.repository.listMessages(chatId);
       const recent = history.at(-1)?.role === 'user' && history.at(-1)?.content === question ? history.slice(-20) : [...history.slice(-19), { role: 'user' as const, content: question }];
@@ -22,11 +23,12 @@ export class HumanAssistanceService {
         context: JSON.stringify({ recent_messages: recent, proposed_reply: draft }),
       });
       probability = systemOneProbabilitySchema.parse(await this.selector.estimateProbability(input, AbortSignal.timeout(45_000)));
-    } catch {
+    } catch (error) {
+      errorDetails = humanErrorContext(error, 'System One handoff', [question, draft]);
       this.logger.warn('Handoff assessment failed; withholding automatic reply');
     }
     if (probability !== undefined && probability < 1 && probability * 100 <= thresholdPercent) return true;
-    const context = `Client question: ${question.slice(0, 1000)}\nUnsent draft: ${draft.slice(0, 2500)}\nAutomatic reply withheld; inspect the conversation and Calendar before replying.`;
+    const context = `Client question: ${question.slice(0, 1000)}\nUnsent draft: ${draft.slice(0, 2500)}${errorDetails ? `\n${errorDetails}` : ''}\nAutomatic reply withheld; inspect the conversation and Calendar before replying.`;
     await this.escalate(chatId, businessConnectionId, updateId, context, {
       reason: probability === undefined ? 'probability_unavailable' : 'handoff_probability',
       ...(probability === undefined ? {} : { probability }), thresholdPercent,

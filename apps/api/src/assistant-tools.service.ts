@@ -19,6 +19,7 @@ export const assistantToolSchema = z.discriminatedUnion('name', [
   z.object({ name: z.literal('get_bookings'), arguments: z.object({}) }),
   z.object({ name: z.literal('prepare_booking'), arguments: bookingArguments }),
   z.object({ name: z.literal('create_booking'), arguments: z.object({}).strict() }),
+  z.object({ name: z.literal('request_human_assistance'), arguments: z.object({}).strict() }),
 ]);
 @Injectable()
 export class AssistantToolsService {
@@ -27,6 +28,10 @@ export class AssistantToolsService {
   async execute(input: unknown, context: AssistantContext): Promise<unknown> {
     const tool = assistantToolSchema.parse(input);
     switch (tool.name) {
+      case 'request_human_assistance': {
+        if (!context.currentMessage?.trim()) throw new Error('Client request required for human assistance');
+        return { status: 'human_requested' };
+      }
       case 'get_media': return this.media.available(context.telegramChatId);
       case 'send_media': return this.media.send(tool.arguments.mediaId, context.telegramChatId, context.businessConnectionId);
       case 'get_services': return (await this.repository.listServices()).filter((service) => service.enabled);

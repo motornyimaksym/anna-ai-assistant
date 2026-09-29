@@ -15,9 +15,10 @@ describe('read-only booking evidence', () => {
     expect(result).not.toHaveProperty('reply');
     expect(result).not.toHaveProperty('question');
   });
-  it('marks stale schedule and failed Calendar unavailable', async () => {
+  it('marks stale schedule unavailable but propagates live Calendar API errors', async () => {
     schedule.readSnapshot.mockResolvedValue({ status: 'success', syncedAt: new Date(Date.now() - 301_000).toISOString(), slots: [{ text: '10:00' }] });
+    expect(await service.read()).toMatchObject({ schedule: { status: 'unavailable' }, calendar: { status: 'ready' } });
     calendar.getBusyIntervals.mockRejectedValue(new Error('offline'));
-    expect(await service.read()).toMatchObject({ schedule: { status: 'unavailable' }, calendar: { status: 'unavailable' } });
+    await expect(service.read()).rejects.toThrow('offline');
   });
 });

@@ -72,6 +72,21 @@ function errorDiagnostic(error: unknown, depth = 0, sensitiveValues: string[] = 
   return result;
 }
 export const safeErrorDiagnostic = (error: unknown, sensitiveValues: string[] = []): ErrorDiagnostic => errorDiagnostic(error, 0, sensitiveValues);
+/** Small responder-facing summary; omit stacks, request bodies and arbitrary nested causes. */
+export function humanErrorContext(error: unknown, source: string, sensitiveValues: string[] = []): string {
+  const detail = safeErrorDiagnostic(error, sensitiveValues);
+  const message = detail.providerError?.message ?? detail.message;
+  const fields = [
+    `source=${redact(source, sensitiveValues).slice(0, 80)}`,
+    `type=${detail.type}`,
+    ...(detail.upstreamStatus ? [`http=${detail.upstreamStatus}`] : []),
+    ...(detail.code ? [`code=${detail.code}`] : []),
+    ...(detail.providerError?.code ? [`providerCode=${detail.providerError.code}`] : []),
+    ...(detail.providerRequestId ? [`requestId=${detail.providerRequestId}`] : []),
+    ...(message ? [`message=${message.slice(0, 350)}`] : []),
+  ];
+  return `API/operation error: ${fields.join('; ')}`.slice(0, 700);
+}
 export function collectSensitiveStrings(value: unknown, limit = 500): string[] {
   const found = new Set<string>();
   const visit = (item: unknown, depth: number): void => {

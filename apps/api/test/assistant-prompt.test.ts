@@ -1,10 +1,10 @@
 import { HANDOFF_PROMPT } from '../src/handoff-prompt.js';
 import { describe, expect, it } from 'vitest';
 import { ASSISTANT_SYSTEM_PROMPT, BOOKING_GUIDANCE, DEFAULT_CONVERSATION_GUIDANCE, TELEGRAM_FORMAT_GUIDANCE, THERAPIST_FIRST_PERSON_GUIDANCE } from '../src/assistant-prompt.js';
-import { CONTEXT_SECURITY_GUIDANCE, MEDIA_TOOL_GUIDANCE, boundedConversationHistory, systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from '../src/system-two-instructions.js';
+import { CONTEXT_SECURITY_GUIDANCE, CUSTOM_SERVICE_HANDOFF_GUIDANCE, MEDIA_TOOL_GUIDANCE, boundedConversationHistory, systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from '../src/system-two-instructions.js';
 
 describe('System Two prompts', () => {
-  const mandatoryGuidance = [THERAPIST_FIRST_PERSON_GUIDANCE, TELEGRAM_FORMAT_GUIDANCE, MEDIA_TOOL_GUIDANCE, CONTEXT_SECURITY_GUIDANCE];
+  const mandatoryGuidance = [THERAPIST_FIRST_PERSON_GUIDANCE, TELEGRAM_FORMAT_GUIDANCE, MEDIA_TOOL_GUIDANCE, CUSTOM_SERVICE_HANDOFF_GUIDANCE, CONTEXT_SECURITY_GUIDANCE];
 
   it('merges conversation and booking instructions with mandatory constraints on overrides', () => {
     expect(ASSISTANT_SYSTEM_PROMPT).toContain(DEFAULT_CONVERSATION_GUIDANCE);
@@ -52,4 +52,8 @@ it('checks one bot-like condition and permits copied text', () => {
   expect(ASSISTANT_SYSTEM_PROMPT).toContain('neither confirm nor deny');
   expect(ASSISTANT_SYSTEM_PROMPT).toContain('outside the knowledge base');
   expect(BOOKING_GUIDANCE).toContain('create_booking');
+  expect(ASSISTANT_SYSTEM_PROMPT).not.toContain('Use regular hyphens.');
+  expect(ASSISTANT_SYSTEM_PROMPT).toContain('request_human_assistance');
+  expect(ASSISTANT_SYSTEM_PROMPT).toContain('If orgasm happens, it can be a sign');
+  expect(CUSTOM_SERVICE_HANDOFF_GUIDANCE).toContain('unrelated to sexual acts');
 });

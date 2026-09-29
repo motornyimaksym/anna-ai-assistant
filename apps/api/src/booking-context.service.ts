@@ -13,13 +13,15 @@ export class BookingContextService {
     const [scheduleResult, calendarResult] = await Promise.allSettled([
       this.schedule.readSnapshot(), this.calendar.getBusyIntervals(rangeStart, rangeEnd),
     ]);
-    const snapshot = scheduleResult.status === 'fulfilled' ? scheduleResult.value : undefined;
+    if (scheduleResult.status === 'rejected') throw scheduleResult.reason;
+    if (calendarResult.status === 'rejected') throw calendarResult.reason;
+    const snapshot = scheduleResult.value;
     const age = snapshot?.syncedAt ? Date.now() - Date.parse(snapshot.syncedAt) : NaN;
     const ready = snapshot?.status === 'success' && Number.isFinite(age) && age >= 0 && age <= 300_000 && snapshot.slots.length > 0;
     return {
       timezone: process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv', currentTime: rangeStart,
       schedule: ready ? { status: 'ready' as const, syncedAt: snapshot!.syncedAt, messages: snapshot!.slots.slice(-5).map(({ text, createdAt }) => ({ text, createdAt })) } : { status: 'unavailable' as const },
-      calendar: calendarResult.status === 'fulfilled' && calendarResult.value.length <= 500
+      calendar: calendarResult.value.length <= 500
         ? { status: 'ready' as const, checkedAt: new Date().toISOString(), rangeStart, rangeEnd, busy: calendarResult.value }
         : { status: 'unavailable' as const },
     };

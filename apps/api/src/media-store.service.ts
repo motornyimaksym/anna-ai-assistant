@@ -3,7 +3,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { getFirestore } from 'firebase-admin/firestore';
 import { getDownloadURL, getStorage } from 'firebase-admin/storage';
 import { fetchWithLinearBackoff } from '@booking/http';
-import { collectSensitiveStrings, safeErrorDiagnostic } from './debug-log.service.js';
+import { collectSensitiveStrings, humanErrorContext, safeErrorDiagnostic } from './debug-log.service.js';
 import { createMediaSchema, updateMediaSchema, mediaSchema, mediaIdSchema, MEDIA_PHOTO_MAX_BYTES, MEDIA_VIDEO_MAX_BYTES, type MediaDto, type MediaFileInput } from '@booking/contracts';
 import { FirebaseAdminService } from './firebase-admin.js';
 
@@ -101,7 +101,7 @@ export class MediaStoreService {
       return { id: item.id, description: item.description, kind: item.kind, debounceSeconds: item.debounceSeconds, eligible: nextEligibleAt <= now && !(state?.leaseUntil > now), ...(nextEligibleAt > now ? { nextEligibleAt: new Date(nextEligibleAt).toISOString() } : {}) };
     });
   }
-  async send(id: string, chatId: string, businessConnectionId?: string): Promise<{ status: SendStatus }> {
+  async send(id: string, chatId: string, businessConnectionId?: string): Promise<{ status: SendStatus; errorContext?: string }> {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     if (!token) return { status: 'failed' };
     const ref = this.ref(id); const stateRef = this.deliveryRef(chatId, id); const leaseId = randomUUID();
@@ -118,6 +118,7 @@ export class MediaStoreService {
     if ('status' in claim) return { status: claim.status! };
     const item = claim.item;
     let status: SendStatus = 'uncertain';
+    let errorContext: string | undefined;
     try {
       const response = await fetchWithLinearBackoff(`https://api.telegram.org/bot${token}/${item.kind === 'photo' ? 'sendPhoto' : 'sendVideo'}`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -128,11 +129,14 @@ export class MediaStoreService {
       else if (!response.ok || result?.ok === false) {
         status = 'failed';
         const error = Object.assign(new Error('Telegram rejected media delivery'), { upstreamStatus: response.status, providerRequestId: response.headers?.get('x-request-id') ?? undefined });
+        errorContext = humanErrorContext(error, 'Telegram media', [chatId, ...collectSensitiveStrings(item.url)]);
         this.logger.error(`Media delivery rejected: ${JSON.stringify(safeErrorDiagnostic(error, [chatId, ...collectSensitiveStrings(item.url)]))}`);
       } else {
-        this.logger.error(`Media delivery unconfirmed: ${JSON.stringify(safeErrorDiagnostic(Object.assign(new Error('Telegram media response was invalid'), { upstreamStatus: response.status, providerRequestId: response.headers?.get('x-request-id') ?? undefined }), [chatId, ...collectSensitiveStrings(item.url)]))}`);
+        const error = Object.assign(new Error('Telegram media response was invalid'), { upstreamStatus: response.status, providerRequestId: response.headers?.get('x-request-id') ?? undefined });
+        errorContext = humanErrorContext(error, 'Telegram media', [chatId, ...collectSensitiveStrings(item.url)]);
+        this.logger.error(`Media delivery unconfirmed: ${JSON.stringify(safeErrorDiagnostic(error, [chatId, ...collectSensitiveStrings(item.url)]))}`);
       }
-    } catch (error) { this.logger.error(`Media delivery outcome uncertain: ${JSON.stringify(safeErrorDiagnostic(error, [chatId, ...collectSensitiveStrings(item.url)]))}`); }
+    } catch (error) { errorContext = humanErrorContext(error, 'Telegram media', [chatId, ...collectSensitiveStrings(item.url)]); this.logger.error(`Media delivery outcome uncertain: ${JSON.stringify(safeErrorDiagnostic(error, [chatId, ...collectSensitiveStrings(item.url)]))}`); }
     try {
       await this.db.runTransaction(async (tx) => {
         const state = (await tx.get(stateRef)).data();
@@ -140,6 +144,6 @@ export class MediaStoreService {
         tx.set(stateRef, status === 'sent' || status === 'uncertain' ? { lastSentAt: Date.now() } : typeof state.lastSentAt === 'number' ? { lastSentAt: state.lastSentAt } : {});
       });
     } catch { this.logger.warn('Media delivery state update failed'); return { status: 'uncertain' }; }
-    return { status };
+    return { status, ...(errorContext ? { errorContext } : {}) };
   }
 }

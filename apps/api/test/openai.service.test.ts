@@ -173,7 +173,45 @@ it.each(['cancel_booking', 'reschedule_booking', 'plan_booking'])('rejects remov
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name, arguments: '{}', call_id: 'bad' }] }) }));
   expect(await service.respond(conversation, context, 'Запиши мене')).toMatchObject({ needsHuman: true, text: '' });
   expect(tools.execute).not.toHaveBeenCalled();
-  expect(assistantToolDefinitions.map(({ name }) => name)).toEqual(['get_media', 'send_media', 'get_services', 'get_bookings', 'get_booking_context', 'prepare_booking', 'create_booking']);
+  expect(assistantToolDefinitions.map(({ name }) => name)).toEqual(['get_media', 'send_media', 'get_services', 'get_bookings', 'get_booking_context', 'prepare_booking', 'create_booking', 'request_human_assistance']);
+});
+
+it('hands an unlisted custom-service request to a person without an automatic reply', async () => {
+  const { service, tools } = setup();
+  tools.execute.mockResolvedValue({ status: 'human_requested' });
+  const fetcher = vi.fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'request_human_assistance', arguments: '{}', call_id: 'human-1' }] }) })
+    .mockResolvedValueOnce(answer('This draft must not be delivered'));
+  vi.stubGlobal('fetch', fetcher);
+  const reply = await service.respond(conversation, context, 'Do you offer custom hot stone massage?');
+  expect(reply).toMatchObject({ text: '', needsHuman: true, humanContext: expect.stringContaining('custom service') });
+  expect(tools.execute).toHaveBeenCalledWith({ name: 'request_human_assistance', arguments: {} }, { ...context, currentMessage: 'Do you offer custom hot stone massage?' });
+  expect(JSON.parse(fetcher.mock.calls[1]![1].body).input).toContainEqual({ type: 'function_call_output', call_id: 'human-1', output: JSON.stringify({ status: 'human_requested' }) });
+});
+
+it('includes safe tool API failure details in the human handoff', async () => {
+  const { service, tools } = setup();
+  tools.execute.mockRejectedValue(Object.assign(new Error('Calendar HTTP 503 token=hidden'), { upstreamStatus: 503, code: 'UNAVAILABLE' }));
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'get_booking_context', arguments: '{}', call_id: 'context-1' }] }) })
+    .mockResolvedValueOnce(answer('Do not send')));
+  const reply = await service.respond(conversation, context, 'Is 10:00 free?');
+  expect(reply).toMatchObject({ text: '', needsHuman: true });
+  expect(reply.humanContext).toContain('http=503');
+  expect(reply.humanContext).toContain('code=UNAVAILABLE');
+  expect(reply.humanContext).not.toContain('hidden');
+});
+
+it('preserves a failed media API result for the human case', async () => {
+  const { service, tools } = setup();
+  tools.execute.mockResolvedValue({ status: 'failed', errorContext: 'Telegram media http=503 requestId=req_123' });
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'send_media', arguments: '{"mediaId":"media-1"}', call_id: 'media-1' }] }) })
+    .mockResolvedValueOnce(answer('Do not send')));
+  const reply = await service.respond(conversation, context, 'Send me a photo');
+  expect(reply).toMatchObject({ text: '', needsHuman: true });
+  expect(reply.humanContext).toContain('http=503');
+  expect(reply.humanContext).toContain('requestId=req_123');
 });
 
 it.each(['', 'x'.repeat(4001)])('fails closed on empty/oversized output without local messages', async (text) => {

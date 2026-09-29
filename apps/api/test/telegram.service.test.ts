@@ -310,6 +310,16 @@ it('routes assistant errors directly to configured responders without sending fa
   expect(send.mock.calls.some(([url]) => url.endsWith('/sendMessage'))).toBe(false);
 });
 
+it('routes Telegram delivery API errors with redacted details and no stored assistant reply', async () => {
+  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret'); vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785'); vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
+  const { service, send, human, repository } = setup({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0, updatedAt: '2026-09-24T10:00:00.000Z' });
+  send.mockImplementation(async (url) => url.endsWith('/sendMessage') ? { ok: false, status: 503, headers: { get: () => 'req_123' }, json: async () => ({ ok: false }) } : { ok: true, json: async () => ({ ok: true }) });
+  await service.handle('webhook-secret', update('user61785'));
+  expect(human.escalateError).toHaveBeenCalledWith('123', 'connection-1', 101, 'Hello', expect.stringContaining('http=503'));
+  expect(String(human.escalateError.mock.calls[0]?.[4])).toContain('requestId=req_123');
+  expect(repository.appendMessage).not.toHaveBeenCalledWith('123', 'assistant', expect.any(String));
+});
+
 
 it.each([true, false])('gates generated and fixed outgoing text: fromOpenAI=%s', async (fromOpenAI) => {
   vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');

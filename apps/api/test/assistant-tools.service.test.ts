@@ -15,6 +15,12 @@ describe('assistant tools', () => {
   it('supplies raw context without authoring messages', async () => {
     expect(await tools.execute({ name: 'get_booking_context', arguments: {} }, context)).toEqual(await bookingContext.read());
   });
+  it('requires a client message and no arguments, without classifying message words', async () => {
+    await expect(tools.execute({ name: 'request_human_assistance', arguments: { detail: 'invented' } }, { ...context, currentMessage: 'Custom hot stone massage?' })).rejects.toThrow();
+    await expect(tools.execute({ name: 'request_human_assistance', arguments: {} }, { ...context, currentMessage: '  ' })).rejects.toThrow('Client request required');
+    expect(await tools.execute({ name: 'request_human_assistance', arguments: {} }, { ...context, currentMessage: 'Custom hot stone massage?' })).toEqual({ status: 'human_requested' });
+    expect(await tools.execute({ name: 'request_human_assistance', arguments: {} }, { ...context, currentMessage: 'Is lingam massage customized for me?' })).toEqual({ status: 'human_requested' });
+  });
   it('creates only a confirmed, delivered proposal bound to the current client', async () => {
     const startAt = new Date(Date.now() + 24 * 60 * 60_000).toISOString();
     const service = { id: 'massage', name: 'Massage', durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH', enabled: true };

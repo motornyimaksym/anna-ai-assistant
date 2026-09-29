@@ -124,8 +124,12 @@ describe('outgoing Probability gate', () => {
   it('withholds provider failures and oversized context', async () => {
     const { service, selector, store, repository } = setup();
     store.open.mockResolvedValue({ request, created: true });
-    selector.estimateProbability.mockRejectedValueOnce(new Error('provider failed'));
+    selector.estimateProbability.mockRejectedValueOnce(Object.assign(new Error('TypeSafe HTTP 503 token=hidden'), { upstreamStatus: 503, code: 'UNAVAILABLE' }));
     expect(await service.approveOutgoing('123', undefined, 1, 'Question', 'Draft')).toBe(false);
+    const caseText = String(store.open.mock.calls[0]?.[3]);
+    expect(caseText).toContain('http=503');
+    expect(caseText).toContain('code=UNAVAILABLE');
+    expect(caseText).not.toContain('hidden');
     selector.estimateProbability.mockClear();
     repository.listMessages.mockResolvedValue([{ role: 'user', content: 'x'.repeat(100_001) }]);
     expect(await service.approveOutgoing('123', undefined, 2, 'Question', 'Draft')).toBe(false);

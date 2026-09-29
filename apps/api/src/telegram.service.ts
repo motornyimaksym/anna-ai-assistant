@@ -1,6 +1,6 @@
 import { withRequestDiagnostics } from './request-diagnostics.js';
 import { randomUUID } from 'node:crypto';
-import { DebugLogService, safeErrorCategory, safeErrorDiagnostic } from './debug-log.service.js';
+import { DebugLogService, humanErrorContext, safeErrorCategory, safeErrorDiagnostic } from './debug-log.service.js';
 import { waitForRandomReadDelay, waitForResponsePacing } from './response-pacing.js';
 import { OpenAiService } from './openai.service.js';
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
@@ -118,7 +118,7 @@ export class TelegramService {
     } catch (error) {
       await this.debug.record(trace, 'error', { reason: 'assistant_operation_failed', errorCategory: safeErrorCategory(error) }, 'error');
       this.logger.error(`Assistant operation failed update=${update.update_id} trace=${trace.traceId}: ${JSON.stringify(safeErrorDiagnostic(error, [message.text]))}`);
-      await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text);
+      await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, humanErrorContext(error, 'assistant turn', [message.text]));
       return;
     } finally {
       stopTyping();
@@ -132,7 +132,7 @@ export class TelegramService {
     } catch (error) {
       await this.debug.record(trace, 'reply_failed', { reason: 'delivery_or_persistence_uncertain', errorCategory: safeErrorCategory(error) }, 'error');
       this.logger.error(`Telegram reply failed or is uncertain update=${update.update_id} trace=${trace.traceId}: ${JSON.stringify(safeErrorDiagnostic(error, [message.text, reply]))}`);
-      await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, 'Client reply delivery or persistence is uncertain. Check before resending.');
+      await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, `Client reply delivery or persistence is uncertain. Check before resending. ${humanErrorContext(error, 'Telegram delivery', [message.text, reply])}`);
     }
   }
   private async startTyping(chatId: string, businessConnectionId: string | undefined): Promise<() => void> {
