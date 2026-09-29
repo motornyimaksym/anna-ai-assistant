@@ -55,7 +55,17 @@ export const updateBookingRequestSchema = z.object({ status: bookingStatusSchema
 export const rescheduleBookingRequestSchema = z.object({ startAt: z.string().datetime() });
 export const availableSlotsRequestSchema = z.object({ durationMinutes: serviceDurationOptionSchema.shape.durationMinutes.optional(), serviceId: z.string().min(1), date: z.string().date(), after: timeSchema.optional(), before: timeSchema.optional() });
 export const availableSlotsResponseSchema = z.object({ slots: z.array(z.string().datetime()) });
-export const pendingActionSchema = z.object({ id: z.string().uuid().optional(), confirmationText: z.string().min(1).max(4000).optional(), name: z.enum(['create_booking', 'cancel_booking', 'reschedule_booking']), arguments: z.record(z.union([z.string(), z.number().finite()])), expiresAt: z.string().datetime() });
+export const bookingConfirmationFactsSchema = z.object({
+  serviceName: z.string().min(1).max(120),
+  durationMinutes: z.number().int().min(15).max(480),
+  localDate: z.string().min(1).max(100),
+  localTime: z.string().min(1).max(32),
+  price: z.number().finite().nonnegative(),
+  currency: z.string().length(3),
+  referenceCode: z.string().regex(/^[a-f0-9]{8}$/i),
+}).strict();
+export type BookingConfirmationFacts = z.infer<typeof bookingConfirmationFactsSchema>;
+export const pendingActionSchema = z.object({ id: z.string().uuid().optional(), confirmationText: z.string().min(1).max(4000).optional(), confirmationFacts: bookingConfirmationFactsSchema.optional(), name: z.enum(['create_booking', 'cancel_booking', 'reschedule_booking']), arguments: z.record(z.union([z.string(), z.number().finite()])), expiresAt: z.string().datetime() });
 export const conversationSchema = z.object({ telegramChatId: z.string().min(1), telegramUsername: z.string().regex(/^[a-z0-9_]{5,32}$/).nullable().optional(), clientId: z.string().optional(), businessConnectionId: z.string().optional(), openaiConversationId: z.string().min(1).optional(), assistantEnabled: z.boolean(), state: z.string().default('active'), summary: z.string().default(''), pendingAction: pendingActionSchema.optional(), humanTakeoverUntil: z.string().datetime().optional(), activeHumanRequestId: z.string().optional(), createdAt: z.string().datetime(), updatedAt: z.string().datetime() });
 export const clearConversationContextResponseSchema = z.object({ clearedMessages: z.number().int().min(0) }).strict();
 export const patchConversationSchema = z.object({ assistantEnabled: z.boolean().optional(), humanTakeoverUntil: z.string().datetime().nullable().optional() }).refine((value) => Object.keys(value).length > 0, 'At least one field is required');

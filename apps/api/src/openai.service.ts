@@ -2,8 +2,9 @@ import { BookingNeedsHumanError } from './booking.service.js';
 import { createOpenAiConversation, requestOpenAiResponse } from './openai-transport.js';
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
-import { type ConversationDto } from '@booking/contracts';
+import { bookingConfirmationFactsSchema, type BookingConfirmationFacts, type ConversationDto } from '@booking/contracts';
 import { boundedConversationHistory, systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from './system-two-instructions.js';
+import { containsBookingConfirmationFacts } from './booking-confirmation.js';
 import { AssistantToolsService, assistantToolSchema, type AssistantContext } from './assistant-tools.service.js';
 import { BookingRepository } from './repository.js';
 import { collectSensitiveStrings, DebugLogService, humanErrorContext, safeErrorCategory, safeErrorDiagnostic } from './debug-log.service.js';
@@ -17,8 +18,8 @@ export const assistantToolDefinitions = [
   tool('get_services', 'List actual enabled services and prices. Empty means no services configured.', {}),
   tool('get_bookings', 'List this client’s bookings.', {}),
   tool('get_booking_context', 'Read fresh raw schedule messages and live Calendar busy intervals. Use before offering specific times. Never writes appointments.', {}),
-  tool('prepare_booking', 'Stage an exact new-booking proposal after checking service, duration, schedule and Calendar. startAt must be ISO 8601 with Z or an explicit timezone offset. Include returned confirmationText verbatim in reply.', { serviceId: string, durationMinutes: { type: 'integer' }, startAt: string }),
-  tool('create_booking', 'Create the previously proposed Calendar booking only after a later explicit client confirmation of the delivered proposal. No arguments.', {}),
+  tool('prepare_booking', 'Stage an exact new-booking proposal after checking service, duration, schedule and Calendar. startAt must be ISO 8601 with Z or an explicit timezone offset. State every returned confirmation fact accurately, but phrase the client-facing sentence naturally.', { serviceId: string, durationMinutes: { type: 'integer' }, startAt: string }),
+  tool('create_booking', 'Create the stored Calendar proposal only after the client clearly and unconditionally approves that exact delivered proposal in their current message. Interpret the reply semantically in context; no fixed phrase is required. Do not call for uncertainty, questions, conditional/changed details, or hypothetical/quoted consent. No arguments.', {}),
   tool('request_human_assistance', 'Request a human for an explicit unlisted custom massage/service unrelated to sexual acts. No arguments; no automatic client reply.', {}),
 ];
 const outputSchema = z.object({ status: z.string().optional(), incomplete_details: z.object({ reason: z.string().optional() }).nullish(), output: z.array(z.object({ type: z.string(), name: z.string().optional(), arguments: z.string().optional(), call_id: z.string().optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()).optional() }).passthrough()) });
@@ -63,6 +64,7 @@ export class OpenAiService {
     let requestContext = systemTwoRequestContext({ instructions, rag, history: recentHistory, message: text, model });
     let input: unknown[] = requestContext.input;
     let mediaAttempted = false;
+    let preparedConfirmationFacts: BookingConfirmationFacts | undefined;
     let terminalReply: AssistantReply | undefined;
     for (let round = 0; round <= 4; round++) {
       const request = () => requestOpenAiResponse({ model, conversation: openaiConversationId, ...(model === 'gpt-6-luna' ? { reasoning: { effort: 'low' } } : {}), ...(round === 0 ? requestContext : {}), input, tools: selectedTools, ...(terminalReply || round === 4 ? { tool_choice: 'none' } : {}), parallel_tool_calls: false, max_output_tokens: 4096 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]), 's2_assistant');
@@ -89,7 +91,9 @@ export class OpenAiService {
         const reply = output.flatMap((item) => item.type === 'message' ? item.content ?? [] : []).filter((part) => part.type === 'output_text').map((part) => part.text ?? '').join('\n').trim();
         if (!reply) throw new Error('Empty model reply');
         if (reply.length > 4000) throw new Error('Model reply too long');
-        return { text: TextUtils.replaceLongDashes(reply), fromOpenAI: true };
+        const normalizedReply = TextUtils.replaceLongDashes(reply);
+        if (preparedConfirmationFacts && !containsBookingConfirmationFacts(normalizedReply, preparedConfirmationFacts)) throw new Error('Booking proposal response omitted or changed verified facts');
+        return { text: normalizedReply, fromOpenAI: true };
       }
       for (const call of calls) {
         if (terminalReply) {
@@ -98,18 +102,22 @@ export class OpenAiService {
         }
         sensitiveValues.push(...collectSensitiveStrings(call.arguments));
         let result: unknown;
+        let parsed: z.infer<typeof assistantToolSchema> | undefined;
         await this.debug.record(context, 'tool_called', { tool: call.name?.slice(0, 100) });
         try {
           if (!selectedTools.some((item) => item.name === call.name)) throw new Error('Unsupported tool');
-          const parsed = assistantToolSchema.parse({ name: call.name, arguments: JSON.parse(call.arguments ?? '{}') });
+          parsed = assistantToolSchema.parse({ name: call.name, arguments: JSON.parse(call.arguments ?? '{}') });
           if (parsed.name === 'send_media') {
             if (mediaAttempted) result = { status: 'unavailable', reason: 'Only one media attempt per turn' };
             else { mediaAttempted = true; result = await this.assistantTools.execute(parsed, context); }
-          } else result = await this.assistantTools.execute(parsed, parsed.name === 'create_booking' || parsed.name === 'request_human_assistance' ? { ...context, currentMessage: text } : context);
+          } else result = await this.assistantTools.execute(parsed, parsed.name === 'request_human_assistance' ? { ...context, currentMessage: text } : context);
           if (parsed.name === 'request_human_assistance' && result && typeof result === 'object' && 'status' in result && result.status === 'human_requested') terminalReply = { text: '', fromOpenAI: false, needsHuman: true, humanContext: 'Client requested an unlisted nonsexual custom service; review the original client message.' };
         } catch (error) {
           terminalReply = { text: '', fromOpenAI: false, needsHuman: true, humanContext: responderErrorContext(error, `S2 tool ${call.name ?? 'unknown'}`, sensitiveValues) };
           result = { status: 'failed', category: safeErrorCategory(error) };
+        }
+        if (parsed?.name === 'prepare_booking' && result && typeof result === 'object' && 'status' in result && result.status === 'prepared' && 'confirmationFacts' in result) {
+          preparedConfirmationFacts = bookingConfirmationFactsSchema.parse(result.confirmationFacts);
         }
         if (result && typeof result === 'object' && 'status' in result && ['failed', 'uncertain', 'unavailable'].includes(String(result.status))) {
           const status = String(result.status);

@@ -6,10 +6,10 @@ import { BookingContextService } from './booking-context.service.js';
 import { BookingService } from './booking.service.js';
 import { BookingRepository } from './repository.js';
 import { selectServiceOption } from './service-options.js';
+import { containsBookingConfirmationFacts } from './booking-confirmation.js';
 import { randomUUID } from 'node:crypto';
 export type AssistantContext = { clientId: string; telegramChatId: string; businessConnectionId?: string; traceId?: string; currentMessage?: string };
 const bookingArguments = z.object({ serviceId: z.string().min(1), durationMinutes: z.number().int().min(15).max(480), startAt: z.string().datetime({ offset: true }) }).strict();
-const explicitConfirmation = /^(?:(?:так[,\s]+)?(?:підтверджую(?: запис)?|все підходить|усе підходить|мені підходить|мене все влаштовує|записуйте|запишіть мене|підходить|добре|ок)|так|yes|yes,? confirm|i confirm|confirm|book it|ok|okay)[.!\s]*$/iu;
 const readable = (value: string) => value.replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
 export const assistantToolSchema = z.discriminatedUnion('name', [
   z.object({ name: z.literal('get_media'), arguments: z.object({}).strict() }),
@@ -46,19 +46,29 @@ export class AssistantToolsService {
         const end = start + (option.durationMinutes + service.bufferMinutes) * 60_000;
         if (evidence.schedule.status !== 'ready' || evidence.calendar.status !== 'ready' || !Number.isFinite(start) || start <= Date.now() || start < Date.parse(evidence.calendar.rangeStart) || end > Date.parse(evidence.calendar.rangeEnd) || evidence.calendar.busy.some(({ start: busyStart, end: busyEnd }) => Date.parse(busyStart) < end && Date.parse(busyEnd) > start)) throw new Error('Booking availability is not verified');
         const zone = process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv';
-        const localTime = new Intl.DateTimeFormat('uk-UA', { timeZone: zone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(start));
-        const confirmationText = `Запис: ${service.name}, ${option.durationMinutes} хв, ${localTime}, ${option.price} ${service.currency}. Код ${randomUUID().slice(0, 8)}.`;
-        const proposal = await this.repository.stageAssistantBooking(context.telegramChatId, context.clientId, { serviceId: service.id, durationMinutes: option.durationMinutes, startAt: new Date(start).toISOString(), confirmationText });
-        return { status: 'prepared', confirmationText: proposal.confirmationText, expiresAt: proposal.expiresAt };
+        const date = new Date(start);
+        const confirmationFacts = {
+          serviceName: service.name,
+          durationMinutes: option.durationMinutes,
+          localDate: new Intl.DateTimeFormat('uk-UA', { timeZone: zone, dateStyle: 'medium' }).format(date),
+          localTime: new Intl.DateTimeFormat('uk-UA', { timeZone: zone, timeStyle: 'short' }).format(date),
+          price: option.price,
+          currency: service.currency,
+          referenceCode: randomUUID().slice(0, 8),
+        };
+        const proposal = await this.repository.stageAssistantBooking(context.telegramChatId, context.clientId, { serviceId: service.id, durationMinutes: option.durationMinutes, startAt: date.toISOString(), confirmationFacts });
+        return { status: 'prepared', confirmationFacts: proposal.confirmationFacts, expiresAt: proposal.expiresAt };
       }
       case 'create_booking': {
-        if (!context.currentMessage || !explicitConfirmation.test(context.currentMessage.trim())) throw new Error('Explicit client confirmation required');
         const conversation = await this.repository.getConversation(context.telegramChatId);
         const proposal = conversation?.pendingAction;
-        if (!proposal?.id || proposal.name !== 'create_booking' || !proposal.confirmationText || proposal.expiresAt <= new Date().toISOString() || conversation?.clientId !== context.clientId) throw new Error('Valid booking proposal required');
+        if (!proposal?.id || proposal.name !== 'create_booking' || (!proposal.confirmationText && !proposal.confirmationFacts) || proposal.expiresAt <= new Date().toISOString() || conversation?.clientId !== context.clientId) throw new Error('Valid booking proposal required');
         const history = await this.repository.listMessages(context.telegramChatId);
         const latestAssistant = history.at(-1);
-        if (latestAssistant?.role !== 'assistant' || !readable(latestAssistant.content).includes(proposal.confirmationText)) throw new Error('Booking proposal was not delivered');
+        const deliveredSummary = latestAssistant?.role === 'assistant' && (proposal.confirmationFacts
+          ? containsBookingConfirmationFacts(latestAssistant.content, proposal.confirmationFacts)
+          : Boolean(proposal.confirmationText && readable(latestAssistant.content).includes(proposal.confirmationText)));
+        if (!deliveredSummary) throw new Error('Booking proposal was not delivered accurately');
         const consumed = await this.repository.consumeAssistantBooking(context.telegramChatId, context.clientId, proposal.id);
         if (JSON.stringify(consumed) !== JSON.stringify(proposal)) throw new Error('Booking proposal changed before confirmation');
         const args = bookingArguments.parse(consumed.arguments);

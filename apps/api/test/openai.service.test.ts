@@ -115,6 +115,25 @@ describe('Unified OpenAI conversation', () => {
     expect(tools.execute).toHaveBeenCalledWith({ name: 'get_services', arguments: {} }, context);
     expect(fetch).toHaveBeenCalledTimes(2);
   });
+  it('allows natural booking wording when all proposal facts are preserved', async () => {
+    const { service, tools } = setup();
+    const facts = { serviceName: 'Massage', durationMinutes: 60, localDate: '30 вер. 2026 р.', localTime: '20:00', price: 1500, currency: 'UAH', referenceCode: 'f6b473a6' };
+    tools.execute.mockResolvedValueOnce({ status: 'prepared', confirmationFacts: facts, expiresAt: '2099-01-01T00:00:00.000Z' });
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'prepare_booking', arguments: '{"serviceId":"massage","durationMinutes":60,"startAt":"2026-09-30T17:00:00.000Z"}', call_id: 'prepare-1' }] }) })
+      .mockResolvedValueOnce(answer('Запишу вас на Massage: 60 хвилин, 30 вер. 2026 року о 20:00, вартість 1500 UAH. Код f6b473a6. Підійде?'));
+    vi.stubGlobal('fetch', fetch);
+    expect(await service.respond(conversation, context, 'Запиши мене')).toEqual({ text: 'Запишу вас на Massage: 60 хвилин, 30 вер. 2026 року о 20:00, вартість 1500 UAH. Код f6b473a6. Підійде?', fromOpenAI: true });
+  });
+  it('withholds a booking proposal draft that omits or changes required facts', async () => {
+    const { service, tools } = setup();
+    const facts = { serviceName: 'Massage', durationMinutes: 60, localDate: '30 вер. 2026 р.', localTime: '20:00', price: 1500, currency: 'UAH', referenceCode: 'f6b473a6' };
+    tools.execute.mockResolvedValueOnce({ status: 'prepared', confirmationFacts: facts, expiresAt: '2099-01-01T00:00:00.000Z' });
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'prepare_booking', arguments: '{"serviceId":"massage","durationMinutes":60,"startAt":"2026-09-30T17:00:00.000Z"}', call_id: 'prepare-1' }] }) })
+      .mockResolvedValueOnce(answer('Запишу вас на Massage на годину, 30 вересня о 20:00 за 1400 гривень.')));
+    expect(await service.respond(conversation, context, 'Запиши мене')).toMatchObject({ text: '', needsHuman: true });
+  });
   it('returns catalog facts without automatic Telegram card delivery', async () => {
     const { service, tools } = setup();
     const services = [{ id: 'massage', name: 'Massage', description: 'Relaxing massage', durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH', enabled: true, photoUrl: 'https://firebasestorage.googleapis.com/v0/b/demo/o/massage.jpg?token=x' }];
@@ -147,14 +166,21 @@ it('lets the model write availability and confirmation wording after reading evi
   expect(fetcher).toHaveBeenCalledTimes(2);
 });
 
-it('passes the current client message to confirmed Calendar creation', async () => {
+it('uses the model create_booking call as semantic approval without a phrase whitelist', async () => {
   const { service, tools } = setup();
   tools.execute.mockResolvedValueOnce({ status: 'created', booking: { id: 'booking-1' } });
   vi.stubGlobal('fetch', vi.fn()
     .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'create_booking', arguments: '{}', call_id: 'create-1' }] }) })
     .mockResolvedValueOnce(answer('Запис підтверджено.')));
-  expect(await service.respond(conversation, context, 'Так, підтверджую')).toEqual({ text: 'Запис підтверджено.', fromOpenAI: true });
-  expect(tools.execute).toHaveBeenCalledWith({ name: 'create_booking', arguments: {} }, { ...context, currentMessage: 'Так, підтверджую' });
+  expect(await service.respond(conversation, context, 'Цей час мені чудово підходить, можете мене записати')).toEqual({ text: 'Запис підтверджено.', fromOpenAI: true });
+  expect(tools.execute).toHaveBeenCalledWith({ name: 'create_booking', arguments: {} }, context);
+});
+
+it('does not create a booking when the model replies without calling create_booking', async () => {
+  const { service, tools } = setup();
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(answer('Звісно, уточню ціну перед записом.')));
+  expect(await service.respond(conversation, context, 'Так, але спершу хочу уточнити ціну')).toEqual({ text: 'Звісно, уточню ціну перед записом.', fromOpenAI: true });
+  expect(tools.execute).not.toHaveBeenCalled();
 });
 
 it('ignores legacy pending actions even on explicit approval', async () => {

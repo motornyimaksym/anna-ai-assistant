@@ -21,23 +21,24 @@ describe('assistant tools', () => {
     expect(await tools.execute({ name: 'request_human_assistance', arguments: {} }, { ...context, currentMessage: 'Custom hot stone massage?' })).toEqual({ status: 'human_requested' });
     expect(await tools.execute({ name: 'request_human_assistance', arguments: {} }, { ...context, currentMessage: 'Is lingam massage customized for me?' })).toEqual({ status: 'human_requested' });
   });
-  it('creates only a confirmed, delivered proposal bound to the current client', async () => {
+  it('creates only the delivered, fact-checked proposal selected by the assistant', async () => {
     const utcStart = new Date(Math.ceil((Date.now() + 24 * 60 * 60_000) / 1000) * 1000);
     const startAt = `${new Date(utcStart.getTime() + 3 * 60 * 60_000).toISOString().slice(0, 19)}+03:00`;
     const normalizedStartAt = utcStart.toISOString();
     const service = { id: 'massage', name: 'Massage', durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH', enabled: true };
-    let proposal: { id: string; name: 'create_booking'; arguments: { serviceId: string; durationMinutes: number; startAt: string }; confirmationText: string; expiresAt: string } | undefined;
+    let proposal: { id: string; name: 'create_booking'; arguments: { serviceId: string; durationMinutes: number; startAt: string }; confirmationFacts: { serviceName: string; durationMinutes: number; localDate: string; localTime: string; price: number; currency: string; referenceCode: string }; expiresAt: string } | undefined;
     let delivered = false;
+    let omitCurrency = false;
     let superseded = false;
     let consumed = false;
     const repository = {
       getService: vi.fn(async () => service),
-      stageAssistantBooking: vi.fn(async (_chat: string, _client: string, args: typeof service & { startAt: string; confirmationText: string }) => {
-        proposal = { id: 'proposal-1', name: 'create_booking', arguments: { serviceId: args.serviceId, durationMinutes: args.durationMinutes, startAt: args.startAt }, confirmationText: args.confirmationText, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() };
+      stageAssistantBooking: vi.fn(async (_chat: string, _client: string, args: { serviceId: string; durationMinutes: number; startAt: string; confirmationFacts: NonNullable<typeof proposal>['confirmationFacts'] }) => {
+        proposal = { id: 'proposal-1', name: 'create_booking', arguments: { serviceId: args.serviceId, durationMinutes: args.durationMinutes, startAt: args.startAt }, confirmationFacts: args.confirmationFacts, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() };
         return proposal;
       }),
       getConversation: vi.fn(async () => ({ clientId: 'alice', pendingAction: consumed ? undefined : proposal })),
-      listMessages: vi.fn(async () => delivered ? [{ role: 'assistant', content: proposal!.confirmationText }, ...(superseded ? [{ role: 'assistant', content: 'Маю інший час.' }] : [])] : []),
+      listMessages: vi.fn(async () => delivered ? [{ role: 'assistant', content: `${proposal!.confirmationFacts.serviceName}, ${proposal!.confirmationFacts.durationMinutes} хв, ${proposal!.confirmationFacts.localDate} о ${proposal!.confirmationFacts.localTime}, ${proposal!.confirmationFacts.price}${omitCurrency ? '' : ` ${proposal!.confirmationFacts.currency}`}. Код ${proposal!.confirmationFacts.referenceCode}. Підтверджуєте?` }, ...(superseded ? [{ role: 'assistant', content: 'Маю інший час.' }] : [])] : []),
       consumeAssistantBooking: vi.fn(async () => { consumed = true; return proposal; }),
     };
     const booking = { id: 'created', clientId: 'alice', telegramChatId: 'chat' };
@@ -45,18 +46,20 @@ describe('assistant tools', () => {
     const evidence = { read: vi.fn(async () => ({ schedule: { status: 'ready' }, calendar: { status: 'ready', rangeStart: new Date().toISOString(), rangeEnd: new Date(Date.now() + 30 * 24 * 60 * 60_000).toISOString(), busy: [] } })) };
     const subject = new AssistantToolsService(repository as never, bookingService as never, evidence as never);
     const prepared = await subject.execute({ name: 'prepare_booking', arguments: { serviceId: 'massage', durationMinutes: 60, startAt } }, context);
-    expect(prepared).toMatchObject({ status: 'prepared', confirmationText: expect.stringContaining('Massage') });
-    expect(repository.stageAssistantBooking).toHaveBeenCalledWith('chat', 'alice', expect.objectContaining({ startAt: normalizedStartAt }));
-    await expect(subject.execute({ name: 'create_booking', arguments: {} }, { ...context, currentMessage: 'Так, підтверджую' })).rejects.toThrow('not delivered');
+    expect(prepared).toMatchObject({ status: 'prepared', confirmationFacts: expect.objectContaining({ serviceName: 'Massage', durationMinutes: 60, price: 1500, currency: 'UAH', referenceCode: expect.stringMatching(/^[a-f0-9]{8}$/i) }) });
+    expect(repository.stageAssistantBooking).toHaveBeenCalledWith('chat', 'alice', expect.objectContaining({ startAt: normalizedStartAt, confirmationFacts: expect.any(Object) }));
+    await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toThrow('not delivered');
     delivered = true;
-    await expect(subject.execute({ name: 'create_booking', arguments: {} }, { ...context, currentMessage: 'Так, але на годину пізніше' })).rejects.toThrow('Explicit client confirmation');
+    omitCurrency = true;
+    await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toThrow('not delivered accurately');
+    omitCurrency = false;
     superseded = true;
-    await expect(subject.execute({ name: 'create_booking', arguments: {} }, { ...context, currentMessage: 'Так' })).rejects.toThrow('not delivered');
+    await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toThrow('not delivered');
     superseded = false;
     expect(bookingService.create).not.toHaveBeenCalled();
-    expect(await subject.execute({ name: 'create_booking', arguments: {} }, { ...context, currentMessage: 'Так, все підходить' })).toEqual({ status: 'created', booking });
+    expect(await subject.execute({ name: 'create_booking', arguments: {} }, context)).toEqual({ status: 'created', booking });
     expect(bookingService.create).toHaveBeenCalledWith({ serviceId: 'massage', durationMinutes: 60, startAt: normalizedStartAt, clientId: 'alice', telegramChatId: 'chat' });
-    await expect(subject.execute({ name: 'create_booking', arguments: {} }, { ...context, currentMessage: 'Так' })).rejects.toThrow('Valid booking proposal');
+    await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toThrow('Valid booking proposal');
     expect(bookingService.create).toHaveBeenCalledTimes(1);
   });
 });

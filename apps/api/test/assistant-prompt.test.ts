@@ -1,10 +1,10 @@
 import { HANDOFF_PROMPT } from '../src/handoff-prompt.js';
 import { describe, expect, it } from 'vitest';
 import { ASSISTANT_SYSTEM_PROMPT, BOOKING_GUIDANCE, DEFAULT_CONVERSATION_GUIDANCE, TELEGRAM_FORMAT_GUIDANCE, THERAPIST_FIRST_PERSON_GUIDANCE } from '../src/assistant-prompt.js';
-import { CONTEXT_SECURITY_GUIDANCE, CUSTOM_SERVICE_HANDOFF_GUIDANCE, MEDIA_TOOL_GUIDANCE, boundedConversationHistory, systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from '../src/system-two-instructions.js';
+import { BOOKING_APPROVAL_GUIDANCE, BOOKING_FACTS_GUIDANCE, CONTEXT_SECURITY_GUIDANCE, CUSTOM_SERVICE_HANDOFF_GUIDANCE, MEDIA_TOOL_GUIDANCE, boundedConversationHistory, systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from '../src/system-two-instructions.js';
 
 describe('System Two prompts', () => {
-  const mandatoryGuidance = [THERAPIST_FIRST_PERSON_GUIDANCE, TELEGRAM_FORMAT_GUIDANCE, MEDIA_TOOL_GUIDANCE, CUSTOM_SERVICE_HANDOFF_GUIDANCE, CONTEXT_SECURITY_GUIDANCE];
+  const mandatoryGuidance = [THERAPIST_FIRST_PERSON_GUIDANCE, TELEGRAM_FORMAT_GUIDANCE, BOOKING_FACTS_GUIDANCE, BOOKING_APPROVAL_GUIDANCE, MEDIA_TOOL_GUIDANCE, CUSTOM_SERVICE_HANDOFF_GUIDANCE, CONTEXT_SECURITY_GUIDANCE];
 
   it('merges conversation and booking instructions with mandatory constraints on overrides', () => {
     expect(ASSISTANT_SYSTEM_PROMPT).toContain(DEFAULT_CONVERSATION_GUIDANCE);
@@ -12,6 +12,8 @@ describe('System Two prompts', () => {
     for (const input of [{}, { promptOverride: 'Custom style' }]) {
       const instructions = systemTwoInstructions(input);
       expect(instructions).toContain(BOOKING_GUIDANCE);
+      expect(instructions).toContain(BOOKING_FACTS_GUIDANCE);
+      expect(instructions).toContain(BOOKING_APPROVAL_GUIDANCE);
       for (const section of mandatoryGuidance) expect(instructions.split(section)).toHaveLength(2);
       expect(instructions).not.toContain('plan_booking');
     }
@@ -52,6 +54,13 @@ it('checks one bot-like condition and permits copied text', () => {
   expect(ASSISTANT_SYSTEM_PROMPT).toContain('neither confirm nor deny');
   expect(ASSISTANT_SYSTEM_PROMPT).toContain('outside the knowledge base');
   expect(BOOKING_GUIDANCE).toContain('create_booking');
+  expect(BOOKING_GUIDANCE).toContain('phrase and order the sentence naturally');
+  expect(BOOKING_GUIDANCE).toContain('semantically in context');
+  expect(BOOKING_GUIDANCE).toContain('Do not require a fixed phrase');
+  expect(BOOKING_GUIDANCE).not.toContain('verbatim');
+  expect(BOOKING_FACTS_GUIDANCE).toContain('Preserve these values');
+  expect(BOOKING_APPROVAL_GUIDANCE).toContain('create_booking');
+  expect(BOOKING_APPROVAL_GUIDANCE).toContain('do not require a fixed phrase or phrase whitelist');
   expect(ASSISTANT_SYSTEM_PROMPT).not.toContain('Use regular hyphens.');
   expect(ASSISTANT_SYSTEM_PROMPT).toContain('request_human_assistance');
   expect(ASSISTANT_SYSTEM_PROMPT).toContain('If orgasm happens, it can be a sign');

@@ -117,11 +117,11 @@
     <p class="eyebrow">06 · State machine</p><h2>Створення запису</h2>
     <div class="slide-body"><div class="diagram"><div class="diagram-title">Тільки новий запис · дві різні репліки клієнта</div><div class="flow">
       <div class="node"><strong>1. Вибір</strong><span>Послуга + тривалість + час із чату.</span></div><div class="arrow">→</div>
-      <div class="node"><strong>2. prepare_booking</strong><span>Каталог, час, schedule, Calendar, buffer → exact proposal із TTL.</span></div><div class="arrow">→</div>
-      <div class="node amber"><strong>3. Доставка proposal</strong><span>Точний confirmationText у надісланій відповіді.</span></div><div class="arrow">→</div>
+      <div class="node"><strong>2. prepare_booking</strong><span>Каталог, час, schedule, Calendar, buffer → незмінні факти proposal із TTL.</span></div><div class="arrow">→</div>
+      <div class="node amber"><strong>3. Доставка proposal</strong><span>Природне формулювання; сервер перевіряє послугу, тривалість, дату/час, ціну, валюту й код.</span></div><div class="arrow">→</div>
       <div class="node mint"><strong>4. Наступне «так»</strong><span>Явне підтвердження → create_booking без model-selected деталей.</span></div>
     </div></div>
-    <div class="branch"><div class="node mint"><strong>Сервер перевіряє</strong><span>Той самий client/chat; дійсний proposal; остання доставлена відповідь містить confirmationText; atomic consume; свіжий conflict check; перевірений Calendar event.</span></div><div class="node rose"><strong>Стоп-умови</strong><span>Неявна згода, прострочення, змінений proposal, конфлікт часу або невідомий результат Calendar → без фальшивого підтвердження, передача людині.</span></div></div>
+    <div class="branch"><div class="node mint"><strong>Сервер перевіряє</strong><span>Той самий client/chat; дійсний proposal; остання доставлена відповідь містить точні факти без суперечливих чисел/валют; atomic consume; свіжий conflict check; перевірений Calendar event.</span></div><div class="node rose"><strong>Стоп-умови</strong><span>Неявна згода, прострочення, змінений proposal, конфлікт часу або невідомий результат Calendar → без фальшивого підтвердження, передача людині.</span></div></div>
     <p class="source">SPEC.md §61–62; apps/api/src/assistant-tools.service.ts; apps/api/src/booking.service.ts</p></div>
   </section>
 
