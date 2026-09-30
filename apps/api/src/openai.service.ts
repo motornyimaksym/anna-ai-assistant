@@ -55,7 +55,8 @@ export class OpenAiService {
       this.repository.listServices(),
     ]);
     const instructions = systemTwoInstructions({ promptOverride: promptOverride?.prompt });
-    const rag = systemTwoRag({ message: text, knowledgeBaseOverride: knowledgeBaseOverride?.content, configuredServices });
+    const bookingProposalState = conversation.pendingAction?.name === 'create_booking' && conversation.pendingAction.expiresAt > new Date().toISOString() ? 'pending' : 'none';
+    const rag = systemTwoRag({ message: text, knowledgeBaseOverride: knowledgeBaseOverride?.content, configuredServices, bookingProposalState });
     sensitiveValues.push(...collectSensitiveStrings({ instructions, rag, promptOverride, knowledgeBaseOverride, configuredServices }));
     let openaiConversationId = conversation.openaiConversationId ?? await this.repository.ensureOpenAiConversation(context.telegramChatId, context.clientId, await createOpenAiConversation(deadline));
     const bookingHistory = history.at(-1)?.role === 'user' && history.at(-1)?.content === text ? history.slice(0, -1) : history;

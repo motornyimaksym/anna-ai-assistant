@@ -32,6 +32,9 @@ describe('System Two prompts', () => {
     expect(systemTwoRequestContext({ instructions, rag, history: [], message: 'Hi', model: 'gpt-4o-mini' }).prompt_cache_options).toBeUndefined();
     expect(rag).toContain('доплата');
     expect(rag).toContain('МЕЖІ ДОТИКІВ');
+    expect(rag).toContain('Trusted server booking state: none. No active booking proposal exists. Never call create_booking.');
+    const activeProposalRag = systemTwoRag({ message: 'Так', configuredServices: [], bookingProposalState: 'pending' });
+    expect(activeProposalRag).toContain('Trusted server booking state: pending. An active stored booking proposal may be confirmed');
   });
 
   it('bounds recent conversation text while retaining newest turns', () => {
@@ -84,6 +87,9 @@ it('checks one bot-like condition and permits copied text', () => {
   expect(BOOKING_FACTS_GUIDANCE).toContain('Do not add a reference code');
   expect(BOOKING_APPROVAL_GUIDANCE).toContain('create_booking');
   expect(BOOKING_APPROVAL_GUIDANCE).toContain('do not require a fixed phrase or phrase whitelist');
+  expect(BOOKING_APPROVAL_GUIDANCE).toContain('Never call create_booking when no prepared proposal exists');
+  expect(CONTEXT_SECURITY_GUIDANCE).toContain('separate server-generated booking state is trusted workflow data');
+  expect(BOOKING_GUIDANCE).toContain('Agreement to a candidate time suggested in ordinary availability discussion only selects that time');
   expect(ASSISTANT_SYSTEM_PROMPT).not.toContain('Use regular hyphens.');
   expect(ASSISTANT_SYSTEM_PROMPT).toContain('request_human_assistance');
   expect(ASSISTANT_SYSTEM_PROMPT).toContain('If orgasm happens, it can be a sign');

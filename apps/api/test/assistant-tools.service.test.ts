@@ -51,14 +51,14 @@ describe('assistant tools', () => {
     expect(prepared).toMatchObject({ status: 'prepared', proposalId, confirmationFacts: { serviceName: 'Massage', durationMinutes: 60, price: 1500, currency: 'UAH' } });
     expect((prepared as { confirmationFacts: object }).confirmationFacts).not.toHaveProperty('referenceCode');
     expect(repository.stageAssistantBooking).toHaveBeenCalledWith('chat', 'alice', expect.objectContaining({ startAt: normalizedStartAt, confirmationFacts: expect.any(Object) }));
-    await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toThrow('not delivered');
+    await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toMatchObject({ code: 'BOOKING_PROPOSAL_STATE', proposalIssue: 'undelivered' });
     delivered = true;
     await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toThrow('not delivered');
     deliveredProposalId = 'different-proposal';
     await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toThrow('not delivered');
     deliveredProposalId = proposalId;
     omitCurrency = true;
-    await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toThrow('not delivered accurately');
+    await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toMatchObject({ code: 'BOOKING_PROPOSAL_FACT_MISMATCH', factIssues: ['currency'] });
     omitCurrency = false;
     superseded = true;
     await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toThrow('not delivered');
@@ -66,8 +66,18 @@ describe('assistant tools', () => {
     expect(bookingService.create).not.toHaveBeenCalled();
     expect(await subject.execute({ name: 'create_booking', arguments: {} }, context)).toEqual({ status: 'created', booking });
     expect(bookingService.create).toHaveBeenCalledWith({ serviceId: 'massage', durationMinutes: 60, startAt: normalizedStartAt, clientId: 'alice', telegramChatId: 'chat' });
-    await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toThrow('Valid booking proposal');
+    await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toMatchObject({ code: 'BOOKING_PROPOSAL_STATE', proposalIssue: 'missing' });
     expect(bookingService.create).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['expired', { clientId: 'alice', pendingAction: { id: 'expired', name: 'create_booking', confirmationFacts: { serviceName: 'Massage', durationMinutes: 60, localDate: '30 вер. 2026 р.', localTime: '20:00', price: 1500, currency: 'UAH' }, expiresAt: '2000-01-01T00:00:00.000Z' } }, 'expired'],
+    ['client mismatch', { clientId: 'bob', pendingAction: { id: 'valid', name: 'create_booking', confirmationFacts: { serviceName: 'Massage', durationMinutes: 60, localDate: '30 вер. 2026 р.', localTime: '20:00', price: 1500, currency: 'UAH' }, expiresAt: '2099-01-01T00:00:00.000Z' } }, 'client_mismatch'],
+    ['factless legacy proposal', { clientId: 'alice', pendingAction: { id: 'legacy', name: 'create_booking', confirmationText: 'Massage at 20:00?', expiresAt: '2099-01-01T00:00:00.000Z' } }, 'incomplete'],
+  ])('identifies a safe proposal state issue: %s', async (_label, conversation, proposalIssue) => {
+    const repository = { getConversation: vi.fn(async () => conversation) };
+    const subject = new AssistantToolsService(repository as never, { create: vi.fn() } as never, {} as never);
+    await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toMatchObject({ code: 'BOOKING_PROPOSAL_STATE', proposalIssue });
   });
 
   it('keeps legacy reference-code proposals verifiable without message binding metadata', async () => {

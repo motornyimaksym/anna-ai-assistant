@@ -22,7 +22,7 @@ describe('service duration options', () => {
   });
 });
 
-it('preserves natural confirmation facts and legacy exact-text proposals', () => {
+it('preserves natural confirmation facts and readable legacy stored text', () => {
   const legacy = { name: 'cancel_booking', arguments: { bookingId: 'booking' }, expiresAt: '2099-01-01T00:00:00.000Z' };
   expect(pendingActionSchema.parse(legacy)).toEqual(legacy);
   const proposal = { ...legacy, id: '2a1c75d0-d891-4e04-8b54-341cba762ae6', confirmationText: 'Cancel your appointment tomorrow at 10:00?' };

@@ -117,6 +117,22 @@ it.each([
   expect(safeErrorDiagnostic(error).code).toBe(code);
 });
 
+it('reports a safe booking proposal state without exposing IDs, values or stack', () => {
+  const error = Object.assign(new Error('Booking proposal is no longer valid: internal payload'), {
+    code: 'BOOKING_PROPOSAL_STATE',
+    proposalIssue: 'expired',
+    stack: 'Error\n    at private (/workspace/apps/api/src/assistant-tools.service.ts:83:27)',
+  });
+  const context = humanErrorContext(error, 'S2 tool create_booking');
+  expect(context).toContain('строк дії пропозиції сплив');
+  expect(context).toContain('Запис не створено');
+  expect(context).not.toContain('internal payload');
+  expect(context).not.toContain('assistant-tools.service.ts');
+  expect(safeErrorCategory(error)).toBe('booking proposal state: expired');
+  expect(safeErrorDiagnostic(error).proposalIssue).toBe('expired');
+  expect(safeErrorDiagnostic(Object.assign(new Error('x'), { code: 'BOOKING_PROPOSAL_STATE', proposalIssue: 'private-client-id' })).proposalIssue).toBeUndefined();
+});
+
 it('explains proposal fact mismatches without returning an unhelpful stack trace', () => {
   const error = Object.assign(new Error('Proposal confirmation facts were not verified'), { code: 'BOOKING_PROPOSAL_FACT_MISMATCH', factIssues: ['date', 'currency', 'private client text'], stack: 'Error\n    at OpenAiService.run (/workspace/dist/openai.service.js:121:27)' });
   const context = humanErrorContext(error, 'OpenAI System Two');

@@ -3,10 +3,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { RequestBodies } from './request-diagnostics.js';
 import { debugDetailsSchema, debugEventSchema, type DebugDetails, type DebugEvent } from '@booking/contracts';
 import { BookingRepository } from './repository.js';
+import { bookingProposalIssues, type BookingProposalIssue } from './booking-proposal-errors.js';
 
 export type TraceContext = { telegramChatId: string; traceId?: string };
 type ProviderError = { code?: string; param?: string; message?: string };
-type ErrorDiagnostic = { type: string; message?: string; code?: string; providerError?: ProviderError; upstreamStatus?: number; providerRequestId?: string; issues?: Array<{ code: string; path: Array<string | number> }>; factIssues?: string[]; stack?: string[]; cause?: ErrorDiagnostic };
+type ErrorDiagnostic = { type: string; message?: string; code?: string; proposalIssue?: BookingProposalIssue; providerError?: ProviderError; upstreamStatus?: number; providerRequestId?: string; issues?: Array<{ code: string; path: Array<string | number> }>; factIssues?: string[]; stack?: string[]; cause?: ErrorDiagnostic };
 const bookingFactIssueNames = new Set(['service', 'duration', 'date', 'time', 'price', 'currency', 'reference_code', 'conflicting_number', 'conflicting_currency']);
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const redact = (value: string, sensitiveValues: string[] = []): string => {
@@ -46,13 +47,14 @@ export function sanitizeOpenAiError(value: unknown, sensitiveValues: string[] = 
 
 function errorDiagnostic(error: unknown, depth = 0, sensitiveValues: string[] = []): ErrorDiagnostic {
   if (!error || typeof error !== 'object') return { type: typeof error };
-  const object = error as { name?: unknown; message?: unknown; code?: unknown; providerError?: unknown; status?: unknown; upstreamStatus?: unknown; providerRequestId?: unknown; requestId?: unknown; stack?: unknown; cause?: unknown; issues?: unknown; factIssues?: unknown };
+  const object = error as { name?: unknown; message?: unknown; code?: unknown; proposalIssue?: unknown; providerError?: unknown; status?: unknown; upstreamStatus?: unknown; providerRequestId?: unknown; requestId?: unknown; stack?: unknown; cause?: unknown; issues?: unknown; factIssues?: unknown };
   const type = typeof object.name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,59}$/.test(object.name) ? object.name : 'Error';
   const result: ErrorDiagnostic = { type };
   const providerError = sanitizeOpenAiError(object.providerError, sensitiveValues);
   if (providerError) result.providerError = providerError;
   if (typeof object.message === 'string' && type !== 'ZodError' && type !== 'SyntaxError') result.message = redact(object.message, sensitiveValues);
   if (typeof object.code === 'string' && /^[A-Z0-9_]{1,50}$/.test(object.code)) result.code = object.code;
+  if (typeof object.proposalIssue === 'string' && bookingProposalIssues.includes(object.proposalIssue as BookingProposalIssue)) result.proposalIssue = object.proposalIssue as BookingProposalIssue;
   const upstreamStatus = object.upstreamStatus ?? object.status;
   if (typeof upstreamStatus === 'number' && Number.isInteger(upstreamStatus) && upstreamStatus >= 100 && upstreamStatus <= 599) result.upstreamStatus = upstreamStatus;
   const providerRequestId = object.providerRequestId ?? object.requestId;
@@ -111,6 +113,21 @@ export function humanErrorContext(error: unknown, source: string, sensitiveValue
   const stackFallback = (message: string) => detail.stack?.length
     ? `${message}\nТехнічний стек викликів:\n${detail.stack.join('\n')}`.slice(0, 1500)
     : message.slice(0, 700);
+  if (detail.code === 'BOOKING_PROPOSAL_STATE') {
+    const labels: Record<BookingProposalIssue, string> = {
+      missing: 'активної пропозиції не знайдено',
+      wrong_action: 'тип пропозиції не відповідає створенню запису',
+      incomplete: 'у пропозиції бракує обов’язкових даних',
+      expired: 'строк дії пропозиції сплив',
+      client_mismatch: 'пропозицію не прив’язано до поточного клієнта',
+      unavailable: 'підтвердження зараз недоступне через стан обслуговування чату',
+      replaced: 'пропозицію змінено або вже використано',
+      undelivered: 'останню пропозицію не вдалося підтвердити як доставлену',
+      binding_mismatch: 'останнє повідомлення не прив’язане до цієї пропозиції',
+    };
+    const diagnosis = detail.proposalIssue ? labels[detail.proposalIssue] : 'стан пропозиції не вдалося уточнити';
+    return `Не вдалося підтвердити пропозицію запису: ${diagnosis}. Запис не створено; перевірте актуальний стан пропозиції перед повторною спробою.`;
+  }
   if (detail.code === 'BOOKING_PROPOSAL_FACT_MISMATCH') {
     const labels: Record<string, string> = { service: 'послуга', duration: 'тривалість', date: 'дата', time: 'час', price: 'ціна', currency: 'валюта', reference_code: 'код пропозиції', conflicting_number: 'зайве або суперечливе число', conflicting_currency: 'інша валюта' };
     const fields = detail.factIssues?.map((issue) => labels[issue]).filter((label): label is string => Boolean(label)) ?? [];
@@ -162,6 +179,9 @@ export function collectSensitiveStrings(value: unknown, limit = 500): string[] {
 export const safeErrorCategory = (error: unknown): string => {
   if (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name)) return 'timeout';
   const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+  const proposalIssue = error && typeof error === 'object' && 'proposalIssue' in error ? error.proposalIssue : undefined;
+  if (code === 'BOOKING_PROPOSAL_STATE' && typeof proposalIssue === 'string' && bookingProposalIssues.includes(proposalIssue as BookingProposalIssue)) return `booking proposal state: ${proposalIssue}`;
+  if (code === 'BOOKING_PROPOSAL_STATE') return 'booking proposal state';
   if (code === 'BOOKING_PROPOSAL_FACT_MISMATCH') return 'booking proposal fact mismatch';
   if (code === 'OPENAI_DECISION_TOKEN_LIMIT') return 'provider output token limit';
   if (code === 'OPENAI_DECISION_INCOMPLETE') return 'provider response incomplete';

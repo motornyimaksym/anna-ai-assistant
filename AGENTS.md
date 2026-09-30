@@ -30,6 +30,8 @@ Never implement first and document afterward.
 
 Inspect the current specification before changing API or domain behavior, Firestore schema, Telegram behavior, OpenAI tools, Google Calendar behavior, admin UI, authentication, configuration, or user flows. Persisted-data changes also require `docs/data-model.md` to be updated before code.
 
+Do not add exact-substring checks against client-facing, assistant-generated, or other free-form text unless the user explicitly approves that specific check. Prefer structured data and validated facts.
+
 ## Definition of Done
 
 A functional task is complete only when `SPEC.md`, implementation, and tests agree; and `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` pass.

@@ -11,6 +11,7 @@ import { BookingConflictError, BookingNotFoundError, lockedSlotKeys, serviceEndA
 import { FirebaseAdminService } from './firebase-admin.js';
 import type { RequestBodies } from './request-diagnostics.js';
 import { getLegacyTesterUsernames } from './bot-settings.js';
+import { bookingProposalError } from './booking-proposal-errors.js';
 
 export type CreateStoredBooking = Omit<BookingDto, 'id' | 'createdAt' | 'updatedAt'> & { lockedSlots: string[]; bufferMinutes: number };
 export type BookingOperation = { id: string; kind: 'create' | 'reschedule' | 'cancel'; targetStartAt?: string; targetEndAt?: string; leaseId?: string; leaseUntil?: number };
@@ -277,8 +278,16 @@ export class BookingRepository {
     const ref = this.db.collection('conversations').doc(chatId);
     return this.db.runTransaction(async (tx) => {
       const data = (await tx.get(ref)).data();
+      if (!data) throw bookingProposalError('missing', 'Booking proposal is no longer valid');
+      if (data.clientId !== clientId) throw bookingProposalError('client_mismatch', 'Booking proposal is no longer valid');
+      if (!data.assistantEnabled || data.activeHumanRequestId || (data.humanTakeoverUntil && data.humanTakeoverUntil > new Date().toISOString())) throw bookingProposalError('unavailable', 'Booking proposal is no longer valid');
+      if (!data.pendingAction) throw bookingProposalError('missing', 'Booking proposal is no longer valid');
       const proposal = pendingActionSchema.safeParse(data?.pendingAction);
-      if (!data || data.clientId !== clientId || !data.assistantEnabled || data.activeHumanRequestId || (data.humanTakeoverUntil && data.humanTakeoverUntil > new Date().toISOString()) || !proposal.success || proposal.data.id !== proposalId || proposal.data.name !== 'create_booking' || (!proposal.data.confirmationText && !proposal.data.confirmationFacts) || proposal.data.expiresAt <= new Date().toISOString()) throw new Error('Booking proposal is no longer valid');
+      if (!proposal.success) throw bookingProposalError('incomplete', 'Booking proposal is no longer valid');
+      if (proposal.data.id !== proposalId) throw bookingProposalError('replaced', 'Booking proposal is no longer valid');
+      if (proposal.data.name !== 'create_booking') throw bookingProposalError('wrong_action', 'Booking proposal is no longer valid');
+      if (!proposal.data.confirmationFacts) throw bookingProposalError('incomplete', 'Booking proposal is no longer valid');
+      if (proposal.data.expiresAt <= new Date().toISOString()) throw bookingProposalError('expired', 'Booking proposal is no longer valid');
       tx.update(ref, { pendingAction: FieldValue.delete(), updatedAt: new Date().toISOString() });
       return proposal.data;
     });
