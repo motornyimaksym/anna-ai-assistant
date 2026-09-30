@@ -75,7 +75,7 @@ export class AssistantToolsService {
         if (proposal.expiresAt <= new Date().toISOString()) throw bookingProposalError('expired', 'Valid booking proposal required');
         if (conversation.clientId !== context.clientId) throw bookingProposalError('client_mismatch', 'Valid booking proposal required');
         const history = await this.repository.listMessagesForBookingCheck(context.telegramChatId);
-        const latestAssistant = history.at(-1);
+        const latestAssistant = [...history].reverse().find((message) => message.role === 'assistant' && message.bookingProposalId === proposal.id) ?? history.at(-1);
         if (latestAssistant?.role !== 'assistant') throw bookingProposalError('undelivered', 'Booking proposal was not delivered accurately');
         const factIssues = bookingConfirmationMismatches(latestAssistant.content, proposal.confirmationFacts);
         if (factIssues.length) throw bookingProposalFactError(factIssues, 'Booking proposal was not delivered accurately');

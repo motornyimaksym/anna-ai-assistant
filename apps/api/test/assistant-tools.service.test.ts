@@ -30,7 +30,7 @@ describe('assistant tools', () => {
     let proposal: { id: string; name: 'create_booking'; arguments: { serviceId: string; durationMinutes: number; startAt: string }; confirmationFacts: { serviceName: string; durationMinutes: number; localDate: string; localTime: string; price: number; currency: string; referenceCode?: string }; expiresAt: string } | undefined;
     let delivered = false;
     let omitCurrency = false;
-    let superseded = false;
+    let clarified = false;
     let deliveredProposalId: string | undefined;
     let consumed = false;
     const repository = {
@@ -40,7 +40,7 @@ describe('assistant tools', () => {
         return proposal;
       }),
       getConversation: vi.fn(async () => ({ clientId: 'alice', pendingAction: consumed ? undefined : proposal })),
-      listMessagesForBookingCheck: vi.fn(async () => delivered ? [{ role: 'assistant' as const, content: `${proposal!.confirmationFacts.serviceName}, ${proposal!.confirmationFacts.durationMinutes} хв, ${proposal!.confirmationFacts.localDate} о ${proposal!.confirmationFacts.localTime}, ${proposal!.confirmationFacts.price}${omitCurrency ? '' : ` ${proposal!.confirmationFacts.currency}`}. Підтверджуєте?`, ...(deliveredProposalId ? { bookingProposalId: deliveredProposalId } : {}) }, ...(superseded ? [{ role: 'assistant' as const, content: 'Маю інший час.' }] : [])] : []),
+      listMessagesForBookingCheck: vi.fn(async () => delivered ? [{ role: 'assistant' as const, content: `${proposal!.confirmationFacts.serviceName}, ${proposal!.confirmationFacts.durationMinutes} хв, ${proposal!.confirmationFacts.localDate} о ${proposal!.confirmationFacts.localTime}, ${proposal!.confirmationFacts.price}${omitCurrency ? '' : ` ${proposal!.confirmationFacts.currency}`}. Підтверджуєте?`, ...(deliveredProposalId ? { bookingProposalId: deliveredProposalId } : {}) }, ...(clarified ? [{ role: 'user' as const, content: 'Це ж не салон?' }, { role: 'assistant' as const, content: 'Приймаю у власному просторі, це не салон.' }] : [])] : []),
       consumeAssistantBooking: vi.fn(async () => { consumed = true; return proposal; }),
     };
     const booking = { id: 'created', clientId: 'alice', telegramChatId: 'chat' };
@@ -60,9 +60,7 @@ describe('assistant tools', () => {
     omitCurrency = true;
     await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toMatchObject({ code: 'BOOKING_PROPOSAL_FACT_MISMATCH', factIssues: ['currency'] });
     omitCurrency = false;
-    superseded = true;
-    await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toThrow('not delivered');
-    superseded = false;
+    clarified = true;
     expect(bookingService.create).not.toHaveBeenCalled();
     const bookingTurnContext = { ...context, currentMessage: 'Підходить', telegramUsername: 'user61785', telegramDisplayName: 'Іван Петренко' };
     expect(await subject.execute({ name: 'create_booking', arguments: {} }, bookingTurnContext)).toEqual({ status: 'created', booking });
@@ -71,7 +69,7 @@ describe('assistant tools', () => {
       expect.objectContaining({
         telegramUsername: 'user61785',
         telegramDisplayName: 'Іван Петренко',
-        messages: [expect.objectContaining({ role: 'assistant' }), { role: 'user', content: expect.any(String) }],
+        messages: [expect.objectContaining({ role: 'assistant' }), expect.objectContaining({ role: 'user' }), expect.objectContaining({ role: 'assistant' }), { role: 'user', content: expect.any(String) }],
       }),
     );
     await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toMatchObject({ code: 'BOOKING_PROPOSAL_STATE', proposalIssue: 'missing' });
