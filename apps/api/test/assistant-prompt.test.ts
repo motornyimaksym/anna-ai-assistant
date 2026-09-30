@@ -1,11 +1,11 @@
 import { HANDOFF_PROMPT } from '../src/handoff-prompt.js';
 import { describe, expect, it } from 'vitest';
 import { ASSISTANT_SYSTEM_PROMPT, BOOKING_GUIDANCE, DEFAULT_CONVERSATION_GUIDANCE, TELEGRAM_FORMAT_GUIDANCE, THERAPIST_FIRST_PERSON_GUIDANCE } from '../src/assistant-prompt.js';
-import { BOOKING_APPROVAL_GUIDANCE, BOOKING_FACTS_GUIDANCE, CONTEXT_SECURITY_GUIDANCE, CUSTOM_SERVICE_HANDOFF_GUIDANCE, MEDIA_TOOL_GUIDANCE, boundedConversationHistory, systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from '../src/system-two-instructions.js';
+import { BOOKING_APPROVAL_GUIDANCE, BOOKING_FACTS_GUIDANCE, CONTEXT_SECURITY_GUIDANCE, CUSTOM_SERVICE_HANDOFF_GUIDANCE, MEDIA_TOOL_GUIDANCE, RECENT_INFORMATION_GUIDANCE, boundedConversationHistory, systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from '../src/system-two-instructions.js';
 import { DEFAULT_KNOWLEDGE_BASE } from '../src/default-knowledge-base.js';
 
 describe('System Two prompts', () => {
-  const mandatoryGuidance = [THERAPIST_FIRST_PERSON_GUIDANCE, TELEGRAM_FORMAT_GUIDANCE, BOOKING_FACTS_GUIDANCE, BOOKING_APPROVAL_GUIDANCE, MEDIA_TOOL_GUIDANCE, CUSTOM_SERVICE_HANDOFF_GUIDANCE, CONTEXT_SECURITY_GUIDANCE];
+  const mandatoryGuidance = [THERAPIST_FIRST_PERSON_GUIDANCE, TELEGRAM_FORMAT_GUIDANCE, BOOKING_FACTS_GUIDANCE, BOOKING_APPROVAL_GUIDANCE, RECENT_INFORMATION_GUIDANCE, MEDIA_TOOL_GUIDANCE, CUSTOM_SERVICE_HANDOFF_GUIDANCE, CONTEXT_SECURITY_GUIDANCE];
 
   it('merges conversation and booking instructions with mandatory constraints on overrides', () => {
     expect(ASSISTANT_SYSTEM_PROMPT).toContain(DEFAULT_CONVERSATION_GUIDANCE);
@@ -15,6 +15,7 @@ describe('System Two prompts', () => {
       expect(instructions).toContain(BOOKING_GUIDANCE);
       expect(instructions).toContain(BOOKING_FACTS_GUIDANCE);
       expect(instructions).toContain(BOOKING_APPROVAL_GUIDANCE);
+      expect(instructions).toContain(RECENT_INFORMATION_GUIDANCE);
       for (const section of mandatoryGuidance) expect(instructions.split(section)).toHaveLength(2);
       expect(instructions).not.toContain('plan_booking');
     }
