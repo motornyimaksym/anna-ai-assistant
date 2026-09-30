@@ -31,48 +31,25 @@ describe('Unified OpenAI conversation', () => {
     expect(tools.execute).not.toHaveBeenCalled();
     expect(repository.replacePendingAction).not.toHaveBeenCalled();
   });
-  it('recovers a poisoned conversation once without replaying historical tools', async () => {
+  it('ignores legacy provider state and sends bounded delivered history once on every turn', async () => {
     const { service, repository, tools } = setup();
-    repository.listMessages.mockResolvedValue([{ role: 'user', content: 'Earlier question' }, { role: 'assistant', content: 'Earlier reply' }]);
-    const fetch = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { param: 'input', message: 'No tool output found for function call call_broken.' } }), { status: 400 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'conv-recovered' })))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello' }] }] })));
-    vi.stubGlobal('fetch', fetch);
-    expect(await service.respond(conversation, context, 'Hi')).toEqual({ text: 'Hello', fromOpenAI: true });
-    expect(repository.replaceOpenAiConversation).toHaveBeenCalledWith('chat', 'alice', 'conv-existing', 'conv-recovered');
-    const retry = JSON.parse(fetch.mock.calls[2]![1].body);
-    expect(retry.conversation).toBe('conv-recovered');
-    expect(retry.input.slice(2)).toEqual([{ role: 'user', content: 'Earlier question' }, { role: 'assistant', content: 'Earlier reply' }, { role: 'user', content: 'Hi' }]);
-    expect(retry.input[1].content).toContain('Never replay');
+    const history = Array.from({ length: 30 }, (_, i) => ({ role: 'user', content: `message-${i}` }));
+    repository.listMessages.mockResolvedValue(history);
+    const fetcher = vi.fn().mockResolvedValue(answer('Reply'));
+    vi.stubGlobal('fetch', fetcher);
+    await service.respond(conversation, context, 'First');
+    await service.respond(conversation, context, 'Second');
+    for (const [index, call] of fetcher.mock.calls.entries()) {
+      const body = JSON.parse(call[1].body);
+      expect(body.conversation).toBeUndefined();
+      expect(body.previous_response_id).toBeUndefined();
+      expect(body.store).toBe(false);
+      expect(body.input.slice(2, -1)).toEqual(history.slice(-19));
+      expect(body.input.at(-1)).toEqual({ role: 'user', content: index ? 'Second' : 'First' });
+      expect(body.input.filter((item: { role?: string }) => item.role === 'developer')).toHaveLength(2);
+    }
+    expect(repository.ensureOpenAiConversation).not.toHaveBeenCalled();
     expect(tools.execute).not.toHaveBeenCalled();
-  });
-  it.each(['other', 'repeated', 'after-tool'])('does not reset or replay on %s errors', async (kind) => {
-    const { service, repository, tools } = setup();
-    const failure = () => new Response(JSON.stringify({ error: { param: 'input', message: kind === 'other' ? 'Invalid schema' : 'No tool output found for function call call_broken.' } }), { status: 400 });
-    const fetch = vi.fn();
-    if (kind === 'after-tool') fetch.mockResolvedValueOnce(new Response(JSON.stringify({ output: [{ type: 'function_call', call_id: 'c1', name: 'get_services', arguments: '{}' }] })));
-    fetch.mockResolvedValueOnce(failure());
-    if (kind === 'repeated') fetch.mockResolvedValueOnce(new Response(JSON.stringify({ id: 'conv-recovered' }))).mockResolvedValueOnce(failure());
-    vi.stubGlobal('fetch', fetch);
-    expect((await service.respond(conversation, context, 'Hi')).needsHuman).toBe(true);
-    expect(repository.replaceOpenAiConversation).toHaveBeenCalledTimes(kind === 'repeated' ? 1 : 0);
-    expect(tools.execute).toHaveBeenCalledTimes(kind === 'after-tool' ? 1 : 0);
-    expect(fetch).toHaveBeenCalledTimes(kind === 'repeated' ? 3 : kind === 'after-tool' ? 2 : 1);
-  });
-  it('creates a conversation for a legacy Telegram record and sends only the new message', async () => {
-    const { service, repository } = setup();
-    const fetch = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'conv-created' }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello' }] }] }) });
-    vi.stubGlobal('fetch', fetch);
-    repository.listMessages.mockResolvedValue([{ role: 'user', content: 'old private text' }]);
-    await service.respond({ ...conversation, openaiConversationId: undefined }, context, 'Hi');
-    expect(fetch.mock.calls[0]![0]).toBe('https://api.openai.com/v1/conversations');
-    expect(repository.ensureOpenAiConversation).toHaveBeenCalledWith('chat', 'alice', 'conv-created');
-    const body = JSON.parse(fetch.mock.calls[1]![1].body);
-    expect(body.conversation).toBe('conv-created');
-    expect(body.input.at(-1)).toEqual({ role: 'user', content: 'Hi' });
-    expect(body.input[0].role).toBe('developer');
-    expect(body.input[1].role).toBe('developer');
   });
   it('sends bounded recent messages with booking request, current message once', async () => {
     const { service, repository } = setup();
@@ -168,7 +145,7 @@ it('lets the model write availability and confirmation wording after reading evi
   expect(await service.respond(conversation, context, 'Є час завтра?')).toEqual({ text: 'Можу запропонувати завтра о 10:00. Вам підходить?', fromOpenAI: true });
   expect(tools.execute).toHaveBeenCalledWith({ name: 'get_booking_context', arguments: {} }, expect.objectContaining({ clientId: 'alice', telegramChatId: 'chat', currentMessage: expect.any(String) }));
   expect(repository.replacePendingAction).not.toHaveBeenCalled();
-  expect(JSON.parse(fetcher.mock.calls[1]![1].body).input[0]).toMatchObject({ type: 'function_call_output', call_id: 'call-1', output: expect.stringContaining('Tomorrow 10:00') });
+  expect(JSON.parse(fetcher.mock.calls[1]![1].body).input.at(-1)).toMatchObject({ type: 'function_call_output', call_id: 'call-1', output: expect.stringContaining('Tomorrow 10:00') });
   expect(fetcher).toHaveBeenCalledTimes(2);
 });
 
@@ -283,7 +260,7 @@ it.each([false, true])('bounds invalid catalog ID correction (repeated=%s)', asy
   const reply = await service.respond(conversation, { ...context, traceId: 'trace' }, 'Selected time');
   const first = JSON.parse(fetcher.mock.calls[0]![1].body);
   expect(first.tools.find((t: { name: string }) => t.name === 'prepare_booking').parameters.properties.serviceId.enum).toEqual(['actual-id']);
-  const correction = JSON.parse(JSON.parse(fetcher.mock.calls[1]![1].body).input[0].output);
+  const correction = JSON.parse(JSON.parse(fetcher.mock.calls[1]![1].body).input.at(-1).output);
   expect(correction).toMatchObject({ status: 'correction_required', code: 'BOOKING_SERVICE_UNAVAILABLE', services: [{ id: 'actual-id' }] });
   expect(repository.listServices).toHaveBeenCalledTimes(2);
   expect(tools.execute).toHaveBeenCalledTimes(2);
@@ -291,7 +268,7 @@ it.each([false, true])('bounds invalid catalog ID correction (repeated=%s)', asy
   expect(fetcher).toHaveBeenCalledTimes(repeated ? 2 : 3);
   if (repeated) {
     expect(reply.needsHuman).toBe(true);
-    expect(repository.detachOpenAiConversation).toHaveBeenCalledWith('chat', 'alice', 'conv-existing');
+    expect(repository.detachOpenAiConversation).not.toHaveBeenCalled();
   } else {
     expect(reply.needsHuman).not.toBe(true);
     expect(repository.detachOpenAiConversation).not.toHaveBeenCalled();
@@ -306,7 +283,7 @@ it('does not retry an uncertain booking write or generate an unsent final reply'
   expect(await service.respond(conversation, context, 'Approve')).toMatchObject({ needsHuman: true, text: '' });
   expect(fetcher).toHaveBeenCalledTimes(1);
   expect(tools.execute).toHaveBeenCalledTimes(1);
-  expect(repository.detachOpenAiConversation).toHaveBeenCalledWith('chat', 'alice', 'conv-existing');
+  expect(repository.detachOpenAiConversation).not.toHaveBeenCalled();
   expect(debug.record).toHaveBeenCalledWith(context, 'error', expect.objectContaining({ reason: 'tool_execution_failed', tool: 'create_booking' }), 'error');
 });
 
@@ -320,7 +297,7 @@ it.each(['empty', 'error'])('escalates without another model call when catalog r
   expect(await service.respond(conversation, context, 'Selected time')).toMatchObject({ needsHuman: true, text: '' });
   expect(fetcher).toHaveBeenCalledTimes(1);
   expect(tools.execute).toHaveBeenCalledTimes(1);
-  expect(repository.detachOpenAiConversation).toHaveBeenCalledWith('chat', 'alice', 'conv-existing');
+  expect(repository.detachOpenAiConversation).not.toHaveBeenCalled();
   if (kind === 'error') expect(debug.record).toHaveBeenCalledWith(context, 'error', expect.objectContaining({ reason: 'catalog_refresh_failed' }), 'error');
 });
 
@@ -332,4 +309,26 @@ it('does not offer preparation with an empty or disabled catalog', async () => {
   await service.respond(conversation, context, 'Hi');
   const body = JSON.parse(fetcher.mock.calls[0]![1].body);
   expect(body.tools.map((tool: { name: string }) => tool.name)).not.toContain('prepare_booking');
+});
+
+it('preserves every output item through multiple stateless tool rounds without duplicating context', async () => {
+  const { service, tools } = setup();
+  const reasoning = { type: 'reasoning', id: 'rs_1', summary: [], content: null, encrypted_content: 'opaque-encrypted-data' };
+  const firstCall = { type: 'function_call', name: 'get_services', call_id: 'first', arguments: '{}' };
+  const secondCall = { type: 'function_call', name: 'get_booking_context', call_id: 'second', arguments: '{}' };
+  tools.execute.mockResolvedValueOnce({ items: [] }).mockResolvedValueOnce({ schedule: { status: 'ready' } });
+  const fetcher = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ output: [reasoning, firstCall] }) })
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ output: [secondCall] }) }).mockResolvedValueOnce(answer('Reply'));
+  vi.stubGlobal('fetch', fetcher);
+  expect((await service.respond(conversation, context, 'Current message')).needsHuman).not.toBe(true);
+  const requests = fetcher.mock.calls.map(call => JSON.parse(call[1].body));
+  const initial = requests[0].input;
+  expect(requests[1].input).toEqual([...initial, reasoning, firstCall, { type: 'function_call_output', call_id: 'first', output: JSON.stringify({ items: [] }) }]);
+  expect(requests[2].input).toEqual([...requests[1].input, secondCall, { type: 'function_call_output', call_id: 'second', output: JSON.stringify({ schedule: { status: 'ready' } }) }]);
+  for (const request of requests) {
+    expect(request.store).toBe(false);
+    expect(request.conversation).toBeUndefined();
+    expect(request.input.filter((item: { role?: string }) => item.role === 'developer')).toHaveLength(2);
+  }
+  expect(tools.execute).toHaveBeenCalledTimes(2);
 });

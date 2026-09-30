@@ -145,3 +145,5 @@ Combined probability decisions use `humanRequests.reason: handoff_probability`; 
 ## Failed tool conversation isolation
 
 On terminal S2 tool failure or explicit human handoff, conditionally delete `conversations/{chatId}.openaiConversationId` only when both stored client identity and provider conversation ID match the failed turn. Preserve all other fields, local messages and pending proposals. No schema migration or new collection is needed. Tool exceptions use existing diagnostic event fields (`stage: error`, `tool`, `reason`, `errorCategory`) with stable safe codes and correction/terminal reasons; raw client/tool argument values stay out of routine diagnostic events.
+
+Telegram S2 now ignores legacy `openaiConversationId` values and uses stateless requests with bounded local delivered history. Existing fields need no migration or deletion. Pending proposals, messages and human requests retain their schemas and access rules. Provider conversation helper methods remain for backward compatibility but Telegram S2 no longer calls them.

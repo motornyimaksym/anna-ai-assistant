@@ -1,4 +1,6 @@
 export type LinearBackoffOptions = {
+  /** OpenAI structured rate-limit reset durations on HTTP 429. */
+  rateLimitResetHeaders?: boolean;
   /** Best-effort diagnostics callback, one-based attempt number. */
   onAttempt?: (attempt: number) => void;
   /** Set only when repeating the request cannot repeat its side effect. */
@@ -23,6 +25,39 @@ const requestSignal = (input: RequestInfo | URL, init: RequestInit) =>
   init.signal === undefined && input instanceof Request ? input.signal : init.signal ?? undefined;
 
 const isRetryableStatus = (status: number) => retryableStatuses.has(status) || (status >= 500 && status <= 599);
+
+const maxRetryWaitMs = 60_000;
+const finiteDelay = (value: number): number | undefined => Number.isFinite(value) && value >= 0 ? value : undefined;
+function durationMs(value: string | null): number | undefined {
+  if (!value || !/^(?:\d+(?:\.\d+)?(?:ms|s|m|h))+$/.test(value)) return undefined;
+  const units: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3600_000 };
+  return finiteDelay([...value.matchAll(/(\d+(?:\.\d+)?)(ms|s|m|h)/g)].reduce((sum, match) => sum + Number(match[1]) * units[match[2]!]!, 0));
+}
+function serverRetryDelay(response: Response, resetHeaders: boolean): number {
+  const get = (name: string) => response.headers?.get(name)?.trim() ?? null;
+  const hints: number[] = [];
+  const after = get('retry-after');
+  if (after) {
+    const parsed = /^\d+(?:\.\d+)?$/.test(after) ? Number(after) * 1000
+      : /^[A-Za-z]{3},/.test(after) ? Math.max(0, Date.parse(after) - Date.now()) : NaN;
+    const delay = finiteDelay(parsed);
+    if (delay !== undefined) hints.push(delay);
+  }
+  const milliseconds = get('retry-after-ms');
+  if (milliseconds && /^\d+(?:\.\d+)?$/.test(milliseconds)) {
+    const delay = finiteDelay(Number(milliseconds));
+    if (delay !== undefined) hints.push(delay);
+  }
+  if (resetHeaders && response.status === 429) {
+    const tokens = durationMs(get('x-ratelimit-reset-tokens'));
+    if (tokens !== undefined) hints.push(tokens);
+    if (get('x-ratelimit-remaining-requests') === '0') {
+      const requests = durationMs(get('x-ratelimit-reset-requests'));
+      if (requests !== undefined) hints.push(requests);
+    }
+  }
+  return Math.max(0, ...hints);
+}
 
 function hasPreSendFailure(error: unknown): boolean {
   const visited = new Set<unknown>();
@@ -87,7 +122,10 @@ export async function fetchWithLinearBackoff(
 
     const mayRetryResponse = replaySafe || response.status === 425 || response.status === 429;
     if (attempt >= retries || !isRetryableStatus(response.status) || !mayRetryResponse) return response;
+    const fallback = response.status === 429 ? Math.max(1000 * 2 ** attempt, baseDelayMs * (attempt + 1)) : baseDelayMs * (attempt + 1);
+    const delay = Math.max(fallback, serverRetryDelay(response, options.rateLimitResetHeaders ?? false));
+    if (delay > maxRetryWaitMs) return response;
     await response.body?.cancel().catch(() => undefined);
-    await wait(baseDelayMs * (attempt + 1), overallSignal);
+    await wait(delay, overallSignal);
   }
 }

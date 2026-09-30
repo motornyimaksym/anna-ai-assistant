@@ -29,7 +29,7 @@ export async function createOpenAiConversation(signal: AbortSignal): Promise<str
   return traceProviderRequest({ provider: 'openai', operation: 'conversation_create', endpoint: 'https://api.openai.com/v1/conversations' }, {}, async (observer) => {
     const response = await fetchWithLinearBackoff('https://api.openai.com/v1/conversations', {
       method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Idempotency-Key': randomUUID() }, signal, body: '{}',
-    }, { replaySafe: true, timeoutMs: 15_000, onAttempt: observer.attempt });
+    }, { replaySafe: true, rateLimitResetHeaders: true, timeoutMs: 15_000, onAttempt: observer.attempt });
     await observer.response(response);
     if (!response.ok) throw await openAiHttpError(response, {}, key);
     const data: unknown = await response.json();
@@ -47,7 +47,7 @@ export async function requestOpenAiResponse(body: Record<string, unknown>, signa
     const response = await fetchWithLinearBackoff('https://api.openai.com/v1/responses', {
       method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Idempotency-Key': randomUUID() }, signal,
       body: JSON.stringify(payload),
-    }, { replaySafe: true, timeoutMs: 30_000, onAttempt: observer.attempt });
+    }, { replaySafe: true, rateLimitResetHeaders: true, timeoutMs: 30_000, onAttempt: observer.attempt });
     await observer.response(response);
     if (!response.ok) throw await openAiHttpError(response, body, key);
     return response.json();

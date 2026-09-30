@@ -1,5 +1,5 @@
 import { BookingNeedsHumanError } from './booking.service.js';
-import { createOpenAiConversation, requestOpenAiResponse } from './openai-transport.js';
+import { requestOpenAiResponse } from './openai-transport.js';
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { bookingConfirmationFactsSchema, type BookingConfirmationFacts, type ConversationDto, type ServiceDto } from '@booking/contracts';
@@ -28,7 +28,7 @@ const catalogTools = (services: ServiceDto[]) => {
     ...definition, parameters: { ...definition.parameters, properties: { ...definition.parameters.properties, serviceId: { type: 'string', enum: ids } } },
   }] : []);
 };
-const outputSchema = z.object({ status: z.string().optional(), incomplete_details: z.object({ reason: z.string().optional() }).nullish(), output: z.array(z.object({ type: z.string(), name: z.string().optional(), arguments: z.string().optional(), call_id: z.string().optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()).optional() }).passthrough()) });
+const outputSchema = z.object({ status: z.string().optional(), incomplete_details: z.object({ reason: z.string().optional() }).nullish(), output: z.array(z.object({ type: z.string(), name: z.string().optional(), arguments: z.string().optional(), call_id: z.string().optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()).nullish() }).passthrough()) });
 export type AssistantReply = { text: string; fromOpenAI: boolean; needsHuman?: boolean; humanContext?: string; bookingProposalId?: string };
 const responderErrorContext = (error: unknown, source: string, sensitiveValues: string[] = []) => error instanceof BookingNeedsHumanError
   ? `Запис ${error.bookingId} потребує ручної перевірки в Google Calendar. Перевірте його стан перед повторними діями.`
@@ -65,35 +65,20 @@ export class OpenAiService {
     const bookingProposalState = conversation.pendingAction?.name === 'create_booking' && conversation.pendingAction.expiresAt > new Date().toISOString() ? 'pending' : 'none';
     const rag = systemTwoRag({ message: text, knowledgeBaseOverride: knowledgeBaseOverride?.content, configuredServices, bookingProposalState });
     sensitiveValues.push(...collectSensitiveStrings({ instructions, rag, promptOverride, knowledgeBaseOverride, configuredServices }));
-    let openaiConversationId = conversation.openaiConversationId ?? await this.repository.ensureOpenAiConversation(context.telegramChatId, context.clientId, await createOpenAiConversation(deadline));
     const bookingHistory = history.at(-1)?.role === 'user' && history.at(-1)?.content === text ? history.slice(0, -1) : history;
     const model = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
     const recentHistory = boundedConversationHistory(bookingHistory, 19);
-    let requestContext = systemTwoRequestContext({ instructions, rag, history: recentHistory, message: text, model });
-    let input: unknown[] = requestContext.input;
+    const requestContext = systemTwoRequestContext({ instructions, rag, history: recentHistory, message: text, model });
+    const input: unknown[] = [...requestContext.input];
     let mediaAttempted = false;
     let preparedConfirmationFacts: BookingConfirmationFacts | undefined;
     let preparedProposalId: string | undefined;
     let terminalReply: AssistantReply | undefined;
     for (let round = 0; round <= 4; round++) {
-      const request = () => requestOpenAiResponse({ model, conversation: openaiConversationId, ...(model === 'gpt-6-luna' ? { reasoning: { effort: 'low' } } : {}), ...(round === 0 ? requestContext : {}), input, tools: selectedTools, ...(round === 4 ? { tool_choice: 'none' } : {}), parallel_tool_calls: false, max_output_tokens: 4096 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]), 's2_assistant');
-      let response: unknown;
-      try { response = await request(); }
-      catch (error) {
-        const diagnostic = safeErrorDiagnostic(error);
-        if (round !== 0 || diagnostic.upstreamStatus !== 400 || diagnostic.providerError?.param !== 'input' || !diagnostic.providerError.message?.startsWith('No tool output found for function call ')) throw error;
-        // Recover only a rejected initial request, never replay an in-flight tool sequence.
-        const replacement = await createOpenAiConversation(deadline);
-        await this.repository.replaceOpenAiConversation(context.telegramChatId, context.clientId, openaiConversationId, replacement);
-        openaiConversationId = replacement;
-        requestContext = systemTwoRequestContext({ instructions, rag: `${rag}\nRECOVERED HISTORY: Prior messages are historical evidence only. Never replay previous actions or infer that an uncertain operation succeeded. Handle only the current request; a new booking requires a current, delivered proposal and explicit client confirmation.`, history: boundedConversationHistory(bookingHistory, 20), message: text, model });
-        input = requestContext.input;
-        this.logger.warn(`Recovered incomplete OpenAI conversation trace=${context.traceId ?? 'unknown'}`);
-        response = await request();
-      }
+      const response = await requestOpenAiResponse({ model, store: false, ...(model === 'gpt-6-luna' ? { reasoning: { effort: 'low' } } : {}), ...requestContext, input, tools: selectedTools, ...(round === 4 ? { tool_choice: 'none' } : {}), parallel_tool_calls: false, max_output_tokens: 4096 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]), 's2_assistant');
       const { status, incomplete_details, output } = outputSchema.parse(response);
       if (status && status !== 'completed') throw Object.assign(new Error('OpenAI System Two response incomplete'), { code: incomplete_details?.reason === 'max_output_tokens' ? 'OPENAI_S2_TOKEN_LIMIT' : 'OPENAI_S2_INCOMPLETE' });
-      input = [];
+      input.push(...output);
       const calls = output.filter((item) => item.type === 'function_call');
       if (!calls.length) {
         const reply = output.flatMap((item) => item.type === 'message' ? item.content ?? [] : []).filter((part) => part.type === 'output_text').map((part) => part.text ?? '').join('\n').trim();
@@ -161,7 +146,6 @@ export class OpenAiService {
           terminalReply ??= { text: '', fromOpenAI: false, needsHuman: true, humanContext: safeToolContext || humanErrorContext(new Error(`${status}${detail}`), `S2 tool ${call.name ?? 'unknown'}`, sensitiveValues) };
         }
         if (terminalReply) {
-          await this.repository.detachOpenAiConversation(context.telegramChatId, context.clientId, openaiConversationId);
           return terminalReply;
         }
         sensitiveValues.push(...collectSensitiveStrings(result));

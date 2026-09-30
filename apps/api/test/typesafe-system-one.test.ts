@@ -31,7 +31,10 @@ describe('TypeSafe System One', () => {
     fetcher.mockClear();
     const json = vi.fn(async () => ({ error: 'private provider details' }));
     fetcher.mockResolvedValue({ ok: false, status: 429, json });
-    await expect(call(method)).rejects.toThrow('TypeSafe HTTP 429');
+    vi.useFakeTimers();
+    const rejected = expect(call(method)).rejects.toThrow('TypeSafe HTTP 429');
+    await vi.advanceTimersByTimeAsync(7000);
+    await rejected;
     expect(fetcher).toHaveBeenCalledTimes(4);
     expect(json).not.toHaveBeenCalled();
     expect(safeErrorCategory(new Error('TypeSafe HTTP 429'))).toBe('TypeSafe HTTP 429');

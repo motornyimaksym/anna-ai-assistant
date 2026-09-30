@@ -76,6 +76,8 @@ Legacy environment refresh-token configuration remains supported until the owner
 
 Private debug access defaults to the sole UID in `ADMIN_UIDS`. When multiple owners exist, set nonsecret `DEBUG_OWNER_UID` to one of those UIDs; no debug access is granted until exactly one owner is selected. Diagnostic events begin after the code is deployed; this page does not expose historical Cloud Logging or provider payloads. Booking prompt changes in the admin panel take effect without redeployment.
 
-### Repeated missing-tool-output handoffs
+### Telegram context and rate limits
 
-An OpenAI HTTP 400 `No tool output found for function call` can indicate an incomplete saved provider conversation. The Telegram backend recovers this exact error once on the first model request by replacing only the provider conversation ID and seeding bounded recent chat context. It never replays an in-flight tool sequence or resets booking operation state. Existing open human cases remain paused: review uncertain bookings/delivery, then explicitly release the case through the admin flow. A later eligible message can recover the provider conversation automatically. The recovery warning contains only the trace ID, not chat content.
+Telegram S2 uses stateless Responses requests with bounded delivered local history. Legacy `openaiConversationId` values are ignored without migration; new turns cannot inherit an unfinished provider tool call or repeatedly accumulated prompts/history. Within a turn, all model output and tool-result items are carried forward once. Existing human cases remain paused until a responder explicitly answers or releases them.
+
+HTTP retry logic honors `Retry-After` / `retry-after-ms` and OpenAI structured rate-limit reset headers. The existing request and turn deadlines include backoff waits; exhausting the deadline or retry budget still routes to human assistance. No retry can promise success under sustained provider load. Changes require the normal explicitly authorized code deployment.
