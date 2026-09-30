@@ -25,39 +25,21 @@ const setup = (start = initial) => {
   getFirestore.mockReturnValue(db);
   return { repository: new BookingRepository({} as FirebaseAdminService), read: () => value };
 };
-describe('pending proposal compare and consume', () => {
-  it('allows only one consumption and preserves unrelated fields', async () => {
-    const { repository, read } = setup();
-    const results = await Promise.all([1, 2].map(() => repository.replacePendingAction('chat', 'client', pending, undefined, { requireUnexpired: true })));
-    expect(results.sort()).toEqual([false, true]);
-    expect(read().pendingAction).toBeUndefined();
-    expect(read().assistantEnabled).toBe(true);
-  });
-  it('rejects a replaced proposal and does not discard it', async () => {
-    const { repository, read } = setup({ ...initial, pendingAction: { ...pending, id: 'bea51662-f7c6-4836-a2a3-0e3ec22341d1' } });
-    expect(await repository.replacePendingAction('chat', 'client', pending, undefined)).toBe(false);
-    expect(read().pendingAction).toBeDefined();
-  });
-  it.each([
-    { clientId: 'other' }, { assistantEnabled: false }, { activeHumanRequestId: 'human' },
-    { humanTakeoverUntil: '2099-01-01T00:00:00.000Z' },
-  ])('refuses execution after identity/pause change %j', async (patch) => {
-    const { repository, read } = setup({ ...initial, ...patch });
-    expect(await repository.replacePendingAction('chat', 'client', pending, undefined, { requireUnexpired: true })).toBe(false);
-    expect(read().pendingAction).toBeDefined();
-  });
-  it('rechecks expiry inside the transaction, while allowing expired proposal discard', async () => {
-    const expired = { ...pending, expiresAt: '2000-01-01T00:00:00.000Z' };
-    const { repository } = setup({ ...initial, pendingAction: expired });
-    expect(await repository.replacePendingAction('chat', 'client', expired, undefined, { requireUnexpired: true })).toBe(false);
-    expect(await repository.replacePendingAction('chat', 'client', expired, undefined)).toBe(true);
-  });
-  it('does not resurrect consumed proposals through stale Telegram activity', async () => {
-    const { repository, read } = setup();
-    await repository.replacePendingAction('chat', 'client', pending, undefined, { requireUnexpired: true });
-    await repository.touchConversation(initial);
-    expect(read().pendingAction).toBeUndefined();
-  });
+it('updates activity without copying stale workflow or automation state', async () => {
+  const { repository, read } = setup({ ...initial, pendingAction: undefined, assistantEnabled: false });
+  await repository.touchConversation(initial);
+  expect(read().pendingAction).toBeUndefined();
+  expect(read().assistantEnabled).toBe(false);
+});
+
+it('refreshes or clears Telegram username without overwriting conversation state', async () => {
+  const { repository, read } = setup({ ...initial, telegramUsername: 'oldname' });
+  await repository.touchConversation({ ...initial, telegramUsername: 'newname', updatedAt: '2026-09-29T10:00:00.000Z' });
+  expect(read().telegramUsername).toBe('newname');
+  expect(read().pendingAction).toEqual(pending);
+  await repository.touchConversation({ ...initial, telegramUsername: null, updatedAt: '2026-09-29T10:01:00.000Z' });
+  expect(read().telegramUsername).toBeNull();
+  expect(read().pendingAction).toEqual(pending);
 });
 
 describe('poisoned provider conversation replacement', () => {
@@ -74,4 +56,17 @@ describe('poisoned provider conversation replacement', () => {
     await expect(repository.replaceOpenAiConversation('chat', 'client', 'old', 'new')).rejects.toThrow();
     expect(read().openaiConversationId).toBe('old');
   });
+});
+
+it('detaches only the failed provider conversation and preserves workflow state', async () => {
+  const { repository, read } = setup({ ...initial, openaiConversationId: 'failed', activeHumanRequestId: 'human', assistantEnabled: false });
+  await repository.detachOpenAiConversation('chat', 'wrong-client', 'failed');
+  expect(read().openaiConversationId).toBe('failed');
+  await repository.detachOpenAiConversation('chat', 'client', 'older');
+  expect(read().openaiConversationId).toBe('failed');
+  await repository.detachOpenAiConversation('chat', 'client', 'failed');
+  expect(read().openaiConversationId).toBeUndefined();
+  expect(read().pendingAction).toEqual(pending);
+  expect(read().activeHumanRequestId).toBe('human');
+  expect(read().assistantEnabled).toBe(false);
 });

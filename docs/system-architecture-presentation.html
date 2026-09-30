@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>AiMassage — технічна архітектура</title>
+  <style>
+    :root { --bg:#0b1020; --panel:#141c30; --line:#34415d; --ink:#f3f6fc; --muted:#acbad1; --cyan:#62d7e7; --mint:#8de0b5; --amber:#ffc978; --rose:#ff9aac; --violet:#b9a8ff; --unit:clamp(14px,1.5vw,22px); font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--ink); background:var(--bg); }
+    * { box-sizing:border-box; } body { margin:0; } button { font:inherit; } a { color:var(--cyan); }
+    .deck { min-height:100vh; background:radial-gradient(circle at 82% 9%,#1e3851 0,transparent 33%),radial-gradient(circle at 8% 80%,#232046 0,transparent 38%),var(--bg); }
+    .slide { display:none; min-height:100vh; padding:clamp(38px,5vh,70px) clamp(30px,6vw,110px) 90px; max-width:1700px; margin:auto; }
+    .slide.active { display:flex; flex-direction:column; } .slide h1 { font-size:clamp(54px,6vw,100px); line-height:1.02; max-width:1050px; margin:7vh 0 24px; letter-spacing:-.055em; }
+    .slide h2 { font-size:clamp(38px,4vw,65px); line-height:1.08; margin:0 0 20px; letter-spacing:-.045em; }
+    .slide h3 { font-size:clamp(21px,2.1vw,33px); margin:0 0 14px; line-height:1.17; }
+    .eyebrow { color:var(--cyan); font-size:.8rem; font-weight:800; letter-spacing:.15em; text-transform:uppercase; margin:0 0 14px; }
+    .lead { color:var(--muted); font-size:clamp(22px,2.4vw,35px); line-height:1.35; max-width:1110px; margin:0 0 38px; }
+    .sub { color:var(--muted); font-size:clamp(17px,1.45vw,23px); line-height:1.42; max-width:1200px; margin:0 0 28px; }
+    .slide-body { flex:1; display:flex; flex-direction:column; justify-content:center; min-height:0; }
+    .flow { display:flex; align-items:stretch; gap:12px; width:100%; } .flow .node { flex:1; } .arrow { align-self:center; color:var(--cyan); font-size:32px; flex:0 0 auto; }
+    .node { border:1px solid var(--line); border-top:4px solid var(--cyan); border-radius:15px; background:rgba(20,28,48,.88); padding:20px 22px; min-width:0; }
+    .node.mint { border-top-color:var(--mint); } .node.amber { border-top-color:var(--amber); } .node.rose { border-top-color:var(--rose); } .node.violet { border-top-color:var(--violet); }
+    .node strong { display:block; font-size:clamp(18px,1.6vw,26px); line-height:1.2; margin-bottom:9px; }
+    .node span,.node p { display:block; color:var(--muted); font-size:clamp(15px,1.13vw,19px); line-height:1.37; margin:0; }
+    .cols { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:30px; } .cols.three { grid-template-columns:repeat(3,minmax(0,1fr)); }
+    .stack { display:grid; gap:13px; } .lane { display:grid; grid-template-columns:230px 1fr; gap:22px; align-items:center; border-top:1px solid var(--line); padding:17px 0; }
+    .lane:first-child { border-top:0; } .lane-label { color:var(--cyan); font-size:clamp(18px,1.6vw,25px); font-weight:750; }
+    .lane-detail { font-size:clamp(17px,1.3vw,21px); color:var(--ink); line-height:1.35; }
+    .steps { counter-reset:step; display:grid; gap:12px; } .step { counter-increment:step; display:grid; grid-template-columns:46px 1fr; align-items:start; gap:15px; font-size:clamp(17px,1.35vw,22px); line-height:1.33; }
+    .step:before { content:counter(step,decimal-leading-zero); color:var(--cyan); font-weight:800; } .step small { color:var(--muted); font-size:.82em; }
+    .rule { background:rgba(98,215,231,.09); border-left:4px solid var(--cyan); padding:15px 20px; font-size:clamp(16px,1.25vw,21px); line-height:1.38; margin-top:24px; }
+    .rule.warn { background:rgba(255,201,120,.09); border-color:var(--amber); }
+    .rule.danger { background:rgba(255,154,172,.09); border-color:var(--rose); }
+    .pill { display:inline-block; color:var(--cyan); font-size:.75em; font-weight:750; letter-spacing:.04em; padding:5px 9px; border:1px solid currentColor; border-radius:999px; margin:0 6px 8px 0; }
+    .diagram { border:1px solid var(--line); border-radius:18px; padding:30px; background:rgba(8,14,27,.47); } .diagram-title { color:var(--muted); font-size:.8rem; letter-spacing:.1em; text-transform:uppercase; margin:0 0 21px; }
+    .two-row { display:grid; gap:25px; } .branch { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:22px; }
+    .branch .node { min-height:112px; } .branch-label { color:var(--amber); font-size:.78rem; text-transform:uppercase; letter-spacing:.09em; margin:0 0 8px; }
+    .metric { color:var(--cyan); font-weight:850; font-size:clamp(34px,3.6vw,60px); line-height:1; margin-bottom:10px; }
+    .foot { color:#8191ab; font-size:clamp(12px,.85vw,15px); margin-top:25px; line-height:1.3; }
+    .source { color:#8b9ab1; font-size:clamp(12px,.82vw,15px); margin-top:18px; line-height:1.35; }
+    .source code,.slide code { color:#ccf4fa; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.92em; }
+    .nav { position:fixed; bottom:0; left:0; right:0; height:65px; display:flex; align-items:center; gap:15px; padding:0 28px; background:rgba(7,12,24,.94); border-top:1px solid var(--line); z-index:10; }
+    .nav button { background:transparent; color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:6px 14px; cursor:pointer; } .nav button:hover,.nav button:focus-visible { border-color:var(--cyan); outline:none; }
+    .nav button:disabled { opacity:.35; cursor:default; } .nav .count { color:var(--muted); min-width:62px; font-size:14px; text-align:center; } .nav .hint { color:#8c9cb5; font-size:13px; margin-left:auto; }
+    .progress { position:fixed; left:0; bottom:65px; height:3px; background:var(--cyan); transition:width .2s; z-index:11; }
+    ul { margin:0; padding-left:1.25em; } li { margin:.38em 0; color:var(--ink); } li::marker { color:var(--cyan); } .muted { color:var(--muted); }
+    .mini { font-size:clamp(15px,1.08vw,18px); } .tight { gap:8px; } .tight .node { padding:14px 18px; }
+    @media(max-width:900px) { .slide { padding:28px 20px 85px; min-height:100svh; } .slide.active { overflow:auto; } .slide-body { justify-content:flex-start; } .flow { flex-wrap:wrap; } .flow .node { flex:1 1 40%; } .arrow { display:none; } .cols,.cols.three,.branch { grid-template-columns:1fr; gap:14px; } .lane { grid-template-columns:1fr; gap:5px; } .diagram { padding:18px; } .nav .hint { display:none; } }
+    @page { size:16in 9in; margin:0; }
+    @media print { :root { color-scheme:light; } body { background:white; color:#12213a; } .nav,.progress { display:none; } .deck { background:white; } .slide,.slide.active { display:flex; width:16in; min-height:0; height:9in; page-break-after:always; break-after:page; color:#12213a; background:white; padding:.55in .7in; } .node,.diagram { background:white; color:#12213a; border-color:#8794a7; } .node span,.node p,.sub,.lead,.muted,.foot,.source { color:#48566b; } .pill { color:#006c7e; } .arrow,.step:before,.lane-label,.eyebrow,.metric { color:#006c7e; } .rule { background:#e7f8fa; } }
+  </style>
+</head>
+<body>
+<main class="deck" aria-label="Технічна презентація AiMassage">
+  <section class="slide active" aria-label="Титул">
+    <p class="eyebrow">Технічна архітектура · вересень 2026</p>
+    <h1>Як працює AiMassage</h1>
+    <p class="lead">Telegram → NestJS → S2 → S1 → Google Calendar. Межі даних, алгоритм запису, передача людині та окремий AI workspace.</p>
+    <div class="flow" style="max-width:1050px"><div class="node"><strong>Призначення</strong><span>Технічний огляд чинної системи</span></div><div class="node mint"><strong>Джерело істини</strong><span>SPEC.md §61–63 + реалізація</span></div></div>
+    <p class="foot">Стрілки вправо / вліво — навігація. Кнопка «Друк» зберігає PDF.</p>
+  </section>
+
+  <section class="slide" aria-label="Карта системи">
+    <p class="eyebrow">01 · Контекст</p><h2>Карта системи</h2>
+    <p class="sub">NestJS API — центральна межа. Клієнти не пишуть у Firestore чи Calendar напряму.</p>
+    <div class="slide-body"><div class="diagram"><div class="diagram-title">Основний контур</div>
+      <div class="flow"><div class="node"><strong>Telegram</strong><span>Клієнт, Business-повідомлення, відповіді</span></div><div class="arrow">→</div><div class="node"><strong>API / Firebase Function</strong><span>Webhook, авторизація, оркестрація</span></div><div class="arrow">↔</div><div class="node violet"><strong>OpenAI + TypeSafe</strong><span>S2 — діалог; S1 — оцінка відповіді</span></div></div>
+      <div class="branch"><div class="node mint"><strong>Google Calendar</strong><span>Єдине живе сховище записів і конфліктів часу</span></div><div class="node amber"><strong>Firestore + Storage</strong><span>Чати, налаштування, каталог, медіа, діагностика</span></div></div>
+    </div><p class="source">SPEC.md §61–62; docs/architecture.md; apps/api/src/app.module.ts</p></div>
+  </section>
+
+  <section class="slide" aria-label="Розгортання">
+    <p class="eyebrow">02 · Runtime</p><h2>Межі розгортання</h2>
+    <div class="slide-body"><div class="cols"><div class="stack">
+      <div class="node"><strong>Firebase Hosting</strong><span>React/Vite адмінпанель, маршрути SPA. <code>/api/**</code> → функція.</span></div>
+      <div class="node"><strong>Cloud Function v2 · europe-west1</strong><span>NestJS API, Swagger <code>/docs/</code>, Telegram webhook, бізнес-правила.</span></div>
+      <div class="node"><strong>Прямий webhook</strong><span>Telegram викликає URL функції; довге очікування не проходить крізь 60-секундний ліміт Hosting rewrite.</span></div>
+    </div><div class="diagram"><div class="diagram-title">Шляхи запитів</div>
+      <div class="steps"><div class="step">Браузер → Hosting → <code>/api/**</code> → NestJS</div><div class="step">Telegram Bot API → <code>/telegram/webhook</code> функції</div><div class="step">NestJS → Firestore / Storage / Calendar / OpenAI / TypeSafe</div></div>
+      <div class="rule">Swagger UI: <code>/api/docs/</code> на Hosting; OpenAPI JSON: <code>/api/docs/openapi.json</code>.</div>
+    </div></div><p class="source">firebase/firebase.json; docs/deployment.md; SPEC.md §63</p></div>
+  </section>
+
+  <section class="slide" aria-label="Вхідне повідомлення">
+    <p class="eyebrow">03 · Послідовність</p><h2>Вхідне повідомлення Telegram</h2>
+    <div class="slide-body"><div class="diagram"><div class="diagram-title">Порядок обробки одного update</div><div class="steps">
+      <div class="step">Перевірка <code>X-Telegram-Bot-Api-Secret-Token</code> і форми update.</div>
+      <div class="step">Спроба оновити джерело розкладу; збій імпорту не блокує чат.</div>
+      <div class="step">Responder-команди обробляються окремо; клієнт проходить фільтр sender, приватного чату й тексту.</div>
+      <div class="step">Firestore claim за <code>update_id</code> відсікає дубль; перевірка client identity, automation та active human case.</div>
+      <div class="step">S2 формує відповідь або викликає дозволені tools; S1 оцінює точний чернетковий текст.</div>
+      <div class="step">Telegram <code>sendMessage</code> має підтвердити <code>ok: true</code>; лише тоді відповідь записується в історію.</div>
+    </div></div><p class="source">apps/api/src/telegram.service.ts; apps/api/src/controllers.ts</p></div>
+  </section>
+
+  <section class="slide" aria-label="Алгоритм S2">
+    <p class="eyebrow">04 · Алгоритм</p><h2>S2: єдиний діалоговий контур</h2>
+    <div class="slide-body"><div class="cols"><div class="diagram"><div class="diagram-title">Вхід</div><div class="stack tight">
+      <div class="node"><strong>Статичні інструкції</strong><span>Editable <code>assistant</code> prompt + правила безпеки й форматування.</span></div>
+      <div class="node"><strong>Факти</strong><span>Повна knowledge base, активний каталог, ціна, тривалість, buffer.</span></div>
+      <div class="node"><strong>Контекст</strong><span>Час, timezone, bounded історія чату; дані клієнта вважаються недовіреними.</span></div>
+    </div></div><div class="diagram"><div class="diagram-title">Вихід і дозволені tools</div>
+      <p class="mini"><span class="pill">get_services</span><span class="pill">get_media</span><span class="pill">send_media</span><span class="pill">get_bookings</span><span class="pill">get_booking_context</span><span class="pill">prepare_booking</span><span class="pill">create_booking</span></p>
+      <div class="rule">S2 пише клієнтський текст. Код перевіряє аргументи tools, доступ до даних і результат запису.</div>
+      <div class="rule warn">Питання «ти бот?» → жарт + повернення до запису. Поза knowledge base → м’яке повернення до теми масажу.</div>
+    </div></div><p class="source">SPEC.md §62; apps/api/src/openai.service.ts; apps/api/src/assistant-tools.service.ts</p></div>
+  </section>
+
+  <section class="slide" aria-label="Джерела доступності">
+    <p class="eyebrow">05 · Час</p><h2>Звідки береться доступність</h2>
+    <div class="slide-body"><div class="flow"><div class="node"><strong>Telegram user account</strong><span>Вибраний чат або topic: до 5 останніх текстів розкладу.</span></div><div class="arrow">+</div><div class="node mint"><strong>Google Calendar</strong><span>Живі busy-інтервали вибраних conflict calendars.</span></div><div class="arrow">→</div><div class="node amber"><strong>get_booking_context</strong><span>Стан джерел, timestamps, часовий горизонт; без назв приватних подій.</span></div></div>
+      <div class="branch"><div class="diagram"><h3>Оновлення розкладу</h3><p class="sub">Вхідний update запускає імпорт, але Firestore claim обмежує читання раз на 5 хвилин. Адмін може запускати refresh з контрольованими retries.</p></div><div class="diagram"><h3>Рішення щодо часу</h3><p class="sub">Повідомлення про розклад описують окремі початки, а не безперервні вікна. Весь сеанс + buffer має не перетинати busy-інтервали.</p></div></div>
+      <div class="rule danger">Stale / недоступне джерело не означає вільний час. Перед фактичним створенням BookingService знову читає Calendar.</div><p class="source">SPEC.md §62; apps/api/src/booking-context.service.ts; apps/api/src/telegram-schedule-import.service.ts</p></div>
+  </section>
+
+  <section class="slide" aria-label="Алгоритм запису">
+    <p class="eyebrow">06 · State machine</p><h2>Створення запису</h2>
+    <div class="slide-body"><div class="diagram"><div class="diagram-title">Тільки новий запис · дві різні репліки клієнта</div><div class="flow">
+      <div class="node"><strong>1. Вибір</strong><span>Послуга + тривалість + час із чату.</span></div><div class="arrow">→</div>
+      <div class="node"><strong>2. prepare_booking</strong><span>Каталог, час, schedule, Calendar, buffer → незмінні факти proposal із TTL.</span></div><div class="arrow">→</div>
+      <div class="node amber"><strong>3. Доставка proposal</strong><span>Природне формулювання; сервер перевіряє послугу, тривалість, дату/час, ціну, валюту й код.</span></div><div class="arrow">→</div>
+      <div class="node mint"><strong>4. Наступне «так»</strong><span>Явне підтвердження → create_booking без model-selected деталей.</span></div>
+    </div></div>
+    <div class="branch"><div class="node mint"><strong>Сервер перевіряє</strong><span>Той самий client/chat; дійсний proposal; остання доставлена відповідь містить точні факти без суперечливих чисел/валют; atomic consume; свіжий conflict check; перевірений Calendar event.</span></div><div class="node rose"><strong>Стоп-умови</strong><span>Неявна згода, прострочення, змінений proposal, конфлікт часу або невідомий результат Calendar → без фальшивого підтвердження, передача людині.</span></div></div>
+    <p class="source">SPEC.md §61–62; apps/api/src/assistant-tools.service.ts; apps/api/src/booking.service.ts</p></div>
+  </section>
+
+  <section class="slide" aria-label="Calendar">
+    <p class="eyebrow">07 · Джерело істини</p><h2>Google Calendar як сховище записів</h2>
+    <div class="slide-body"><div class="cols"><div class="diagram"><h3>Що зберігає подія</h3><div class="steps">
+      <div class="step">Стабільний app event ID.</div><div class="step">Private extended properties: booking/client/chat IDs, service, duration, price, buffer.</div><div class="step">Людинозрозумілий опис для власника календаря.</div>
+    </div></div><div class="diagram"><h3>Алгоритм конфлікту</h3><div class="steps">
+      <div class="step">Зчитати вибрані conflict calendars.</div><div class="step">Порівняти інтервал <code>[start, end + buffer)</code> з busy.</div><div class="step">Створити event; перевірити запис і повторно перевірити конфлікти.</div>
+    </div></div></div>
+    <div class="rule warn">Calendar не має атомарного «перевірити й вставити» для довільного інтервалу. Рідкісні паралельні накладки можливі; виявлені випадки передаються людині.</div>
+    <div class="foot">Firestore <code>bookings</code> і <code>bookingSlots</code> — архів міграції, не live state. Скасування й перенесення — людські дії в поточному S2 flow.</div><p class="source">SPEC.md §61–62; apps/api/src/calendar.ts; apps/api/src/booking.service.ts</p></div>
+  </section>
+
+  <section class="slide" aria-label="Алгоритм S1">
+    <p class="eyebrow">08 · Алгоритм</p><h2>S1: чи звучить відповідь як бот?</h2>
+    <div class="slide-body"><div class="flow"><div class="node"><strong>Вхід</strong><span>Останні 20 повідомлень + точний недоставлений draft.</span></div><div class="arrow">→</div><div class="node violet"><strong>estimateProbability</strong><span>Одна умова, число <code>p ∈ [0,1]</code>. Копіпаста сама по собі не ознака бота.</span></div><div class="arrow">→</div><div class="node amber"><strong>Поріг</strong><span>Налаштування <code>thresholdPercent</code>; суворе <code>p×100 &gt; threshold</code>.</span></div></div>
+      <div class="branch"><div class="node mint"><strong>Допустити</strong><span><code>p &lt; 1</code> і <code>p×100 ≤ threshold</code> → Telegram send.</span></div><div class="node rose"><strong>Передати людині</strong><span>Вищий score, рівно <code>1</code> за будь-якого порогу, помилка або oversized input → draft приховано.</span></div></div>
+      <div class="rule">Provider: OpenAI за замовчуванням або TypeSafe → fallback OpenAI. Строгий формат результату; timeout і output-budget recovery.</div><p class="source">SPEC.md §62; apps/api/src/human-assistance.service.ts; apps/api/src/configurable-system-one.ts</p></div>
+  </section>
+
+  <section class="slide" aria-label="Передача людині">
+    <p class="eyebrow">09 · Recovery</p><h2>Передача людині</h2>
+    <div class="slide-body"><div class="cols three"><div class="node rose"><div class="metric">01</div><strong>Помилка операції</strong><span>S2/tool/Calendar або невизначена доставка. Автоматизація зупиняється.</span></div><div class="node amber"><div class="metric">02</div><strong>Високий score S1</strong><span>Чернетка не надсилається. Case містить контекст для відповідача.</span></div><div class="node violet"><div class="metric">03</div><strong>S1 недоступна</strong><span>Некоректний або відсутній score також блокує автоматичну відповідь.</span></div></div>
+      <div class="diagram" style="margin-top:22px"><div class="flow"><div class="node"><strong>Firestore case + pause</strong><span>Наступні повідомлення стають у чергу.</span></div><div class="arrow">→</div><div class="node"><strong>Responder DM</strong><span>Підключення через <code>/start</code>, відповідь <code>/answer</code>.</span></div><div class="arrow">↔</div><div class="node mint"><strong>Admin Conversations</strong><span>Перегляд, людська відповідь або release.</span></div></div></div>
+      <p class="foot">Людські відповіді обходять S1; невизначені Calendar/Telegram записи перевіряють перед повторною дією.</p><p class="source">SPEC.md §44, §62; apps/api/src/human-assistance.service.ts</p></div>
+  </section>
+
+  <section class="slide" aria-label="Адмінпанель">
+    <p class="eyebrow">10 · Control plane</p><h2>Адмінпанель і конфігурація</h2>
+    <div class="slide-body"><div class="cols"><div class="diagram"><div class="steps">
+      <div class="step">Firebase Sign-in → ID token → <code>AdminGuard</code> API.</div>
+      <div class="step">Firestore: каталог, knowledge base, S2/S1 prompts, provider, handoff threshold, conversations.</div>
+      <div class="step">Calendar OAuth: окреме підключення, вибір destination та conflict calendars.</div>
+    </div></div><div class="diagram"><div class="steps">
+      <div class="step">Schedule: джерело Telegram-розкладу, стан імпорту, busy preview.</div>
+      <div class="step">Media Store: метадані Firestore, об’єкти Storage, cooldown і Telegram delivery.</div>
+      <div class="step">Debug: лише designated owner; metadata у Firestore, повні sanitized payloads у private Storage.</div>
+    </div></div></div><div class="rule">UI доступ не замінює серверну авторизацію. Власник керує окремими чутливими налаштуваннями; debug має ще вужчий доступ.</div><p class="source">SPEC.md §60–63; apps/api/src/auth.ts; apps/api/src/controllers.ts; docs/data-model.md</p></div>
+  </section>
+
+  <section class="slide" aria-label="Окремий AI workspace">
+    <p class="eyebrow">11 · Ізоляція</p><h2>Окремий AI workspace</h2>
+    <p class="sub"><code>/ai-chat</code> — приватний асистент адміністратора, відокремлений від клієнтського booking bot.</p>
+    <div class="slide-body"><div class="flow"><div class="node"><strong>Admin browser</strong><span>Firebase auth; per-UID threads.</span></div><div class="arrow">→</div><div class="node violet"><strong>AiChatService</strong><span>Окремі OpenAI instructions та підтвердження дій.</span></div><div class="arrow">→</div><div class="node"><strong>TelegramMcpService</strong><span>Session lease + IAM ID token.</span></div><div class="arrow">→</div><div class="node mint"><strong>Private Cloud Run bridge</strong><span>Telegram user account; 4 read tools, 2 write tools.</span></div></div>
+      <div class="branch"><div class="node"><strong>Читання</strong><span>Пошук чатів/повідомлень через приватний bridge. Вміст чату — недовірені дані.</span></div><div class="node amber"><strong>Надсилання</strong><span>Модель лише пропонує; UI показує адресата й точний текст. Окремий Confirm send споживає дію до зовнішнього виклику.</span></div></div>
+      <p class="source">docs/architecture.md; apps/api/src/ai-chat.service.ts; apps/api/src/telegram-mcp.service.ts</p></div>
+  </section>
+
+  <section class="slide" aria-label="Дані й безпека">
+    <p class="eyebrow">12 · Trust boundaries</p><h2>Дані й межі довіри</h2>
+    <div class="slide-body"><div class="stack"><div class="lane"><div class="lane-label">Calendar</div><div class="lane-detail">Живі appointments, busy intervals, private ownership metadata. Жодного нового live booking у Firestore.</div></div>
+      <div class="lane"><div class="lane-label">Firestore</div><div class="lane-detail">Чати, pending proposal, claims, catalog, prompts, settings, human cases, diagnostic metadata.</div></div>
+      <div class="lane"><div class="lane-label">Cloud Storage</div><div class="lane-detail">Медіа та приватні повні sanitized debug request/response bodies.</div></div>
+      <div class="lane"><div class="lane-label">Secrets / tokens</div><div class="lane-detail">Secret Manager для provider/bot keys; шифровані Calendar і Telegram sessions; API перевіряє auth і webhook secret.</div></div>
+      <div class="lane"><div class="lane-label">Модель</div><div class="lane-detail">Отримує лише дозволений контекст; tool allowlist і перевірки прав виконуються в коді.</div></div></div><p class="source">SPEC.md §60–62; docs/data-model.md; docs/architecture.md</p></div>
+  </section>
+
+  <section class="slide" aria-label="Надійність і діагностика">
+    <p class="eyebrow">13 · Операційна модель</p><h2>Збої, повтори, спостереження</h2>
+    <div class="slide-body"><div class="cols three"><div class="node"><strong>HTTP retries</strong><span>Лінійні 250/500/750 мс для читань і replay-safe запитів. Не повторювати неоднозначний Calendar/Telegram write.</span></div><div class="node amber"><strong>Невизначений результат</strong><span>Не оголошувати успіх. Case для людини; перевірити зовнішній стан перед новою дією.</span></div><div class="node violet"><strong>Trace</strong><span>Correlation ID; до 200 metadata events. Повні sanitized provider payloads — лише designated debug owner.</span></div></div>
+      <div class="diagram" style="margin-top:22px"><div class="diagram-title">Що можна перевірити</div><div class="flow"><div class="node"><strong>Health</strong><span><code>GET /api/health</code></span></div><div class="node"><strong>API contract</strong><span><code>/api/docs/openapi.json</code></span></div><div class="node"><strong>System log</strong><span>Owner-only admin debug; без секретів і hidden reasoning.</span></div></div></div>
+      <p class="source">docs/architecture.md; SPEC.md §60, §63; apps/api/src/openapi.ts</p></div>
+  </section>
+
+  <section class="slide" aria-label="Підсумкова діаграма">
+    <p class="eyebrow">14 · End-to-end</p><h2>Один клієнтський turn</h2>
+    <div class="slide-body"><div class="diagram"><div class="flow"><div class="node"><strong>Telegram</strong><span>Webhook update</span></div><div class="arrow">→</div><div class="node"><strong>API guards</strong><span>Secret · sender · claim · pause</span></div><div class="arrow">→</div><div class="node violet"><strong>S2</strong><span>Факти · tools · текст</span></div><div class="arrow">→</div><div class="node amber"><strong>S1</strong><span>20 повідомлень · draft · p</span></div><div class="arrow">→</div><div class="node mint"><strong>Delivery</strong><span>Telegram ok → історія</span></div></div></div>
+      <div class="branch"><div class="node mint"><strong>Якщо клієнт підтвердив запис</strong><span>Доставлений exact proposal → нове явне підтвердження → create_booking → live Calendar check → event verify.</span></div><div class="node rose"><strong>Якщо будь-який критичний крок невизначений</strong><span>Автоматичний текст/дія зупиняється → human case → responder або адміністратор розбирається зі станом.</span></div></div>
+      <p class="foot">Повний контракт поведінки: <code>SPEC.md</code>. API schema: <code>/api/docs/</code>.</p></div>
+  </section>
+</main>
+<div class="progress" id="progress" aria-hidden="true"></div>
+<nav class="nav" aria-label="Навігація презентацією"><button id="prev" type="button" aria-label="Попередній слайд">←</button><span class="count" id="count"></span><button id="next" type="button" aria-label="Наступний слайд">→</button><button id="print" type="button">Друк / PDF</button><span class="hint">← → · Home · End · P</span></nav>
+<script>
+  const slides = [...document.querySelectorAll('.slide')];
+  const count = document.getElementById('count');
+  const progress = document.getElementById('progress');
+  const prev = document.getElementById('prev');
+  const next = document.getElementById('next');
+  let index = Math.min(slides.length - 1, Math.max(0, Number(location.hash.slice(1)) - 1 || 0));
+  function show(n) {
+    index = Math.min(slides.length - 1, Math.max(0, n));
+    slides.forEach((slide, i) => { slide.classList.toggle('active', i === index); slide.setAttribute('aria-hidden', String(i !== index)); });
+    count.textContent = `${index + 1} / ${slides.length}`;
+    progress.style.width = `${(index + 1) / slides.length * 100}%`;
+    prev.disabled = index === 0; next.disabled = index === slides.length - 1;
+    history.replaceState(null, '', `#${index + 1}`);
+    window.scrollTo(0, 0);
+  }
+  prev.addEventListener('click', () => show(index - 1));
+  next.addEventListener('click', () => show(index + 1));
+  document.getElementById('print').addEventListener('click', () => window.print());
+  addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowRight' || event.key === 'PageDown' || event.key === ' ') { event.preventDefault(); show(index + 1); }
+    if (event.key === 'ArrowLeft' || event.key === 'PageUp') { event.preventDefault(); show(index - 1); }
+    if (event.key === 'Home') show(0);
+    if (event.key === 'End') show(slides.length - 1);
+    if (event.key.toLowerCase() === 'p' && !event.metaKey && !event.ctrlKey) window.print();
+  });
+  addEventListener('hashchange', () => show(Number(location.hash.slice(1)) - 1 || 0));
+  show(index);
+</script>
+</body>
+</html>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { safeErrorCategory, safeErrorDiagnostic } from '../src/debug-log.service.js';
+import { humanErrorContext, safeErrorCategory, safeErrorDiagnostic } from '../src/debug-log.service.js';
 
 describe('safeErrorDiagnostic', () => {
   it('keeps underlying cause and stack while redacting credential-bearing URLs', () => {
@@ -63,12 +63,83 @@ describe('safeErrorDiagnostic', () => {
   });
 });
 
+it('keeps responder error details bounded without leaking credentials, client text or stack', () => {
+  const clientText = 'Private client request';
+  const error = Object.assign(new Error(`OpenAI rejected ${clientText}; token=hidden`), { upstreamStatus: 429, code: 'RATE_LIMITED', providerRequestId: 'req_123' });
+  const context = humanErrorContext(error, 'OpenAI System Two', [clientText]);
+  expect(context).toContain('Не вдалося сформувати відповідь асистента');
+  expect(context).toContain('HTTP 429');
+  expect(context).toContain('Код помилки: RATE_LIMITED');
+  expect(context).toContain('ID запиту: req_123');
+  expect(context).not.toContain(clientText);
+  expect(context).not.toContain('hidden');
+  expect(context).not.toContain('OpenAI System Two');
+  expect(context).not.toContain(' at ');
+  expect(context.length).toBeLessThanOrEqual(700);
+});
+
+it('explains booking date-time validation failures in Ukrainian without Zod internals', () => {
+  const error = Object.assign(new Error('Invalid datetime'), {
+    name: 'ZodError',
+    issues: [{ code: 'invalid_string', path: ['arguments', 'startAt'], message: 'Invalid datetime', validation: 'datetime' }],
+  });
+  const context = humanErrorContext(error, 'S2 tool prepare_booking');
+  expect(context).toContain('Не вдалося перевірити дату й час');
+  expect(context).toContain('Формат дати або часу не прийнято');
+  expect(context).toContain('пропозицію та запис до календаря не створено');
+  expect(context).not.toContain('ZodError');
+  expect(context).not.toContain('invalid_string');
+  expect(context).not.toContain('Invalid datetime');
+});
+
+it('shows a sanitized stack trace when no localized diagnosis is available', () => {
+  const clientText = 'Private appointment details';
+  const error = Object.assign(new Error('Internal failure'), {
+    stack: `Error: ${clientText}\n    at handler (/app/api/handler.ts:12:3)\n    at next (/app/api/next.ts:8:1)`,
+  });
+  const context = humanErrorContext(error, 'Unknown operation', [clientText]);
+  expect(context).toContain('Людське пояснення причини недоступне.');
+  expect(context).toContain('Технічний стек викликів:');
+  expect(context).toContain('at handler (/app/api/handler.ts:12:3)');
+  expect(context).not.toContain(clientText);
+  expect(context).not.toContain('Unknown operation');
+  expect(context.length).toBeLessThanOrEqual(1500);
+});
+
 
 it.each([
   ['OPENAI_DECISION_TOKEN_LIMIT', 'provider output token limit'],
   ['OPENAI_DECISION_INCOMPLETE', 'provider response incomplete'],
-])('categorizes safe System One failure %s', (code, category) => {
+  ['BOOKING_PROPOSAL_FACT_MISMATCH', 'booking proposal fact mismatch'],
+])('categorizes safe failure %s', (code, category) => {
   const error = Object.assign(new Error('System One decision failed'), { code });
   expect(safeErrorCategory(error)).toBe(category);
   expect(safeErrorDiagnostic(error).code).toBe(code);
+});
+
+it('reports a safe booking proposal state without exposing IDs, values or stack', () => {
+  const error = Object.assign(new Error('Booking proposal is no longer valid: internal payload'), {
+    code: 'BOOKING_PROPOSAL_STATE',
+    proposalIssue: 'expired',
+    stack: 'Error\n    at private (/workspace/apps/api/src/assistant-tools.service.ts:83:27)',
+  });
+  const context = humanErrorContext(error, 'S2 tool create_booking');
+  expect(context).toContain('строк дії пропозиції сплив');
+  expect(context).toContain('Запис не створено');
+  expect(context).not.toContain('internal payload');
+  expect(context).not.toContain('assistant-tools.service.ts');
+  expect(safeErrorCategory(error)).toBe('booking proposal state: expired');
+  expect(safeErrorDiagnostic(error).proposalIssue).toBe('expired');
+  expect(safeErrorDiagnostic(Object.assign(new Error('x'), { code: 'BOOKING_PROPOSAL_STATE', proposalIssue: 'private-client-id' })).proposalIssue).toBeUndefined();
+});
+
+it('explains proposal fact mismatches without returning an unhelpful stack trace', () => {
+  const error = Object.assign(new Error('Proposal confirmation facts were not verified'), { code: 'BOOKING_PROPOSAL_FACT_MISMATCH', factIssues: ['date', 'currency', 'private client text'], stack: 'Error\n    at OpenAiService.run (/workspace/dist/openai.service.js:121:27)' });
+  const context = humanErrorContext(error, 'OpenAI System Two');
+  expect(context).toContain('Не вдалося перевірити факти пропозиції запису');
+  expect(context).toContain('Перевірка не пройдена: дата, валюта.');
+  expect(context).not.toContain('private client text');
+  expect(context).not.toContain('Технічний стек викликів');
+  expect(context).not.toContain('openai.service.js');
+  expect(safeErrorDiagnostic(error).factIssues).toEqual(['date', 'currency']);
 });

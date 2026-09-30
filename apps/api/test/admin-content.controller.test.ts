@@ -1,13 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AdminController } from '../src/controllers.js';
 import { ASSISTANT_SYSTEM_PROMPT } from '../src/assistant-prompt.js';
-import { BOOKING_CONVERSATION_PROMPT } from '../src/booking-conversation-prompt.js';
 import { DEFAULT_KNOWLEDGE_BASE } from '../src/default-knowledge-base.js';
 import type { AvailabilityService } from '../src/availability.service.js';
 import type { BookingService } from '../src/booking.service.js';
 import type { BookingRepository } from '../src/repository.js';
 import type { SpecService } from '../src/spec.service.js';
 import type { ServicePhotoService } from '../src/service-photo.service.js';
+
+afterEach(() => vi.unstubAllEnvs());
 
 const setup = () => {
   const repository = {
@@ -16,13 +17,8 @@ const setup = () => {
     getAdminAccessOverride: vi.fn(async () => ({ emails: ['partner@example.com'], updatedAt: '2026-09-24T10:00:00.000Z' })),
     saveAdminAccessOverride: vi.fn(async (emails: string[]) => ({ emails, updatedAt: '2026-09-24T10:00:00.000Z' })),
     getBotSettingsOverride: vi.fn(async () => undefined),
-    saveBotSettingsOverride: vi.fn(async (settings: { maxReadDelayMs: number; typingDelayPerSymbolMs: number }) => ({ ...settings, updatedAt: '2026-09-24T10:00:00.000Z' })),
-    getAssistantPromptOverride: vi.fn(async () => undefined),
-    saveAssistantPromptOverride: vi.fn(async (prompt: string) => ({ prompt, updatedAt: '2026-09-24T10:00:00.000Z' })),
-    deleteAssistantPromptOverride: vi.fn(async () => undefined),
+    saveBotSettingsOverride: vi.fn(async (settings: { maxReadDelayMs: number; typingDelayPerSymbolMs: number; testerUsernames: string[] }) => ({ ...settings, updatedAt: '2026-09-24T10:00:00.000Z' })),
     getPromptOverride: vi.fn(async () => undefined as { prompt: string; updatedAt: string } | undefined),
-    getRoutingPromptOverride: vi.fn(async () => undefined as { instructions: string; general?: string; booking?: string; updatedAt: string } | undefined),
-    saveRoutingPromptOverride: vi.fn(async (value: { instructions: string; general: string; booking: string }) => ({ ...value, updatedAt: '2026-09-24T10:00:00.000Z' })),
     savePromptOverride: vi.fn(async (_id: string, prompt: string) => ({ prompt, updatedAt: '2026-09-24T10:00:00.000Z' })),
     deletePromptOverride: vi.fn(async () => undefined),
     getKnowledgeBaseOverride: vi.fn(async () => undefined),
@@ -48,10 +44,9 @@ describe('admin content endpoints', () => {
   it('serves code-owned instructions grouped by system', () => {
     const { controller } = setup();
     const catalog = controller.promptCatalog();
-    expect(catalog.systemOne.map(({ id }) => id)).toEqual(['routing', 'approval', 'probability']);
-    expect(catalog.systemTwo.map(({ id }) => id)).toEqual(['general', 'booking-conversation', 'booking-planner']);
-    expect(catalog.systemOne[0]?.content).toContain('Select the System Two workflow');
-    expect(catalog.systemTwo[1]?.content).toBe(BOOKING_CONVERSATION_PROMPT);
+    expect(catalog.systemOne.map(({ id }) => id)).toEqual(['handoff']);
+    expect(catalog.systemTwo.map(({ id }) => id)).toEqual(['assistant']);
+    expect(catalog.systemOne[0]?.content).toContain('look like a bot response');
   });
   it('serves the packaged spec', async () => {
     const { controller, specService } = setup();
@@ -60,7 +55,7 @@ describe('admin content endpoints', () => {
   });
   it('saves and resets each newly editable prompt independently', async () => {
     const { controller, repository } = setup();
-    for (const id of ['approval', 'probability', 'booking-conversation'] as const) {
+    for (const id of ['handoff', 'assistant'] as const) {
       const initial = await controller.promptById(id);
       expect(initial.isCustom).toBe(false);
       expect(initial.prompt.length).toBeGreaterThan(0);
@@ -69,29 +64,9 @@ describe('admin content endpoints', () => {
       expect(await controller.resetPromptById(id)).toEqual(initial);
       expect(repository.deletePromptOverride).toHaveBeenLastCalledWith(id);
     }
-    const routing = await controller.promptById('routing');
-    expect(routing).toMatchObject({ isCustom: false, general: expect.any(String), booking: expect.any(String) });
-    const updated = { instructions: 'Choose workflow', general: 'Facts', booking: 'Appointments' };
-    expect(await controller.updatePromptById('routing', updated)).toMatchObject({ ...updated, isCustom: true });
-    expect(repository.saveRoutingPromptOverride).toHaveBeenCalledWith(updated);
-    expect(await controller.resetPromptById('routing')).toEqual(routing);
-    await expect(controller.updatePromptById('routing', { ...updated, general: ' ' })).rejects.toThrow();
-    await expect(controller.promptById('unknown')).rejects.toThrow();
-  });
-
-  it('returns the code default, saves an override, and resets to the default', async () => {
-    const { controller, repository } = setup();
-    expect(await controller.assistantPrompt()).toEqual({ prompt: ASSISTANT_SYSTEM_PROMPT, isCustom: false });
-    expect(await controller.updateAssistantPrompt({ prompt: 'Keep replies brief.' })).toEqual({ prompt: 'Keep replies brief.', isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z' });
-    expect(repository.saveAssistantPromptOverride).toHaveBeenCalledWith('Keep replies brief.');
-    expect(await controller.resetAssistantPrompt()).toEqual({ prompt: ASSISTANT_SYSTEM_PROMPT, isCustom: false });
-    expect(repository.deleteAssistantPromptOverride).toHaveBeenCalledOnce();
-  });
-
-  it('rejects blank prompt saves', async () => {
-    const { controller, repository } = setup();
-    await expect(controller.updateAssistantPrompt({ prompt: '  ' })).rejects.toThrow();
-    expect(repository.saveAssistantPromptOverride).not.toHaveBeenCalled();
+    for (const id of ['routing', 'approval', 'probability', 'general', 'booking-conversation', 'booking-planner']) await expect(controller.promptById(id)).rejects.toThrow();
+    await expect(controller.updatePromptById('assistant', { prompt: ' ' })).rejects.toThrow();
+    expect((await controller.promptById('assistant')).prompt).toBe(ASSISTANT_SYSTEM_PROMPT);
   });
 
   it('serves an editable knowledge base with live service facts and resets it independently', async () => {
@@ -111,18 +86,20 @@ describe('admin content endpoints', () => {
   });
 
   it('returns default bot settings and saves valid overrides', async () => {
+    vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', undefined);
     const { controller, repository } = setup();
-    expect(await controller.botSettings()).toEqual({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, isCustom: false });
-    expect(await controller.updateBotSettings({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400 })).toEqual({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z' });
-    expect(repository.saveBotSettingsOverride).toHaveBeenCalledWith({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400 });
-    await controller.updateBotSettings({ maxReadDelayMs: 3_540_000, typingDelayPerSymbolMs: 400 });
-    expect(repository.saveBotSettingsOverride).toHaveBeenLastCalledWith({ maxReadDelayMs: 3_540_000, typingDelayPerSymbolMs: 400 });
+    expect(await controller.botSettings()).toMatchObject({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [], isCustom: false });
+    expect(await controller.updateBotSettings({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, testerUsernames: [' @Tester1 ', 'Tester_2'] })).toEqual({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, testerUsernames: ['tester1', 'tester_2'], isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z' });
+    expect(repository.saveBotSettingsOverride).toHaveBeenCalledWith({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, testerUsernames: ['tester1', 'tester_2'] });
+    await controller.updateBotSettings({ maxReadDelayMs: 3_540_000, typingDelayPerSymbolMs: 400, testerUsernames: [] });
+    expect(repository.saveBotSettingsOverride).toHaveBeenLastCalledWith({ maxReadDelayMs: 3_540_000, typingDelayPerSymbolMs: 400, testerUsernames: [] });
   });
 
   it('rejects bot settings outside documented limits', async () => {
     const { controller, repository } = setup();
-    await expect(controller.updateBotSettings({ maxReadDelayMs: 3_540_001, typingDelayPerSymbolMs: 600 })).rejects.toThrow();
-    await expect(controller.updateBotSettings({ maxReadDelayMs: 1000, typingDelayPerSymbolMs: 800.5 })).rejects.toThrow();
+    await expect(controller.updateBotSettings({ maxReadDelayMs: 3_540_001, typingDelayPerSymbolMs: 600, testerUsernames: [] })).rejects.toThrow();
+    await expect(controller.updateBotSettings({ maxReadDelayMs: 1000, typingDelayPerSymbolMs: 800.5, testerUsernames: [] })).rejects.toThrow();
+    await expect(controller.updateBotSettings({ maxReadDelayMs: 1000, typingDelayPerSymbolMs: 600, testerUsernames: ['bad-name'] })).rejects.toThrow();
     expect(repository.saveBotSettingsOverride).not.toHaveBeenCalled();
   });
 

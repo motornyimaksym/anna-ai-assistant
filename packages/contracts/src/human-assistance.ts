@@ -16,7 +16,7 @@ export const humanRequestSchema = z.object({
   id: z.string(), conversationId: z.string(), telegramChatId: z.string(), businessConnectionId: z.string().optional(),
   telegramUpdateId: z.number().int(),
   status: z.enum(['open', 'sending', 'uncertain', 'answered', 'released']),
-  reason: z.enum(['knowledge_gap', 'jev_unavailable', 'operation_error', 'uncertain', 'bot_detectability', 'probability_unavailable']), probability: z.number().min(0).max(1).optional(),
+  reason: z.enum(['knowledge_gap', 'jev_unavailable', 'operation_error', 'uncertain', 'bot_detectability', 'probability_unavailable', 'handoff_probability']), probability: z.number().min(0).max(1).optional(),
   thresholdPercent: z.number().int().min(0).max(100), question: z.string(), queuedMessages: z.array(z.string()),
   notifications: z.record(z.enum(['pending', 'sending', 'sent', 'failed', 'uncertain'])),
   acknowledgement: z.enum(['pending', 'sending', 'sent', 'failed', 'uncertain']).optional(),

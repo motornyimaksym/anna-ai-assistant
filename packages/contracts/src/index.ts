@@ -55,23 +55,32 @@ export const updateBookingRequestSchema = z.object({ status: bookingStatusSchema
 export const rescheduleBookingRequestSchema = z.object({ startAt: z.string().datetime() });
 export const availableSlotsRequestSchema = z.object({ durationMinutes: serviceDurationOptionSchema.shape.durationMinutes.optional(), serviceId: z.string().min(1), date: z.string().date(), after: timeSchema.optional(), before: timeSchema.optional() });
 export const availableSlotsResponseSchema = z.object({ slots: z.array(z.string().datetime()) });
-export const pendingActionSchema = z.object({ id: z.string().uuid().optional(), confirmationText: z.string().min(1).max(4000).optional(), name: z.enum(['create_booking', 'cancel_booking', 'reschedule_booking']), arguments: z.record(z.union([z.string(), z.number().finite()])), expiresAt: z.string().datetime() });
-export const conversationSchema = z.object({ telegramChatId: z.string().min(1), clientId: z.string().optional(), businessConnectionId: z.string().optional(), openaiConversationId: z.string().min(1).optional(), assistantEnabled: z.boolean(), state: z.string().default('active'), summary: z.string().default(''), pendingAction: pendingActionSchema.optional(), humanTakeoverUntil: z.string().datetime().optional(), activeHumanRequestId: z.string().optional(), createdAt: z.string().datetime(), updatedAt: z.string().datetime() });
+export const bookingConfirmationFactsSchema = z.object({
+  serviceName: z.string().min(1).max(120),
+  durationMinutes: z.number().int().min(15).max(480),
+  localDate: z.string().min(1).max(100),
+  localTime: z.string().min(1).max(32),
+  price: z.number().finite().nonnegative(),
+  currency: z.string().length(3),
+  referenceCode: z.string().regex(/^[a-f0-9]{8}$/i).optional(),
+}).strict();
+export type BookingConfirmationFacts = z.infer<typeof bookingConfirmationFactsSchema>;
+export const pendingActionSchema = z.object({ id: z.string().uuid().optional(), confirmationText: z.string().min(1).max(4000).optional(), confirmationFacts: bookingConfirmationFactsSchema.optional(), name: z.enum(['create_booking', 'cancel_booking', 'reschedule_booking']), arguments: z.record(z.union([z.string(), z.number().finite()])), expiresAt: z.string().datetime() });
+export const conversationSchema = z.object({ telegramChatId: z.string().min(1), telegramUsername: z.string().regex(/^[a-z0-9_]{5,32}$/).nullable().optional(), clientId: z.string().optional(), businessConnectionId: z.string().optional(), openaiConversationId: z.string().min(1).optional(), assistantEnabled: z.boolean(), state: z.string().default('active'), summary: z.string().default(''), pendingAction: pendingActionSchema.optional(), humanTakeoverUntil: z.string().datetime().optional(), activeHumanRequestId: z.string().optional(), createdAt: z.string().datetime(), updatedAt: z.string().datetime() });
 export const clearConversationContextResponseSchema = z.object({ clearedMessages: z.number().int().min(0) }).strict();
 export const patchConversationSchema = z.object({ assistantEnabled: z.boolean().optional(), humanTakeoverUntil: z.string().datetime().nullable().optional() }).refine((value) => Object.keys(value).length > 0, 'At least one field is required');
 export const assistantPromptResponseSchema = z.object({ prompt: z.string(), isCustom: z.boolean(), updatedAt: z.string().datetime().optional() });
-const routingFieldSchema = z.string().min(1).max(20_000).refine((value) => value.trim().length > 0, 'Field must not be blank');
-export const updateRoutingPromptSchema = z.object({ instructions: routingFieldSchema, general: routingFieldSchema, booking: routingFieldSchema }).strict();
-export const routingPromptResponseSchema = updateRoutingPromptSchema.extend({ isCustom: z.boolean(), updatedAt: z.string().datetime().optional() });
-export type RoutingPromptResponse = z.infer<typeof routingPromptResponseSchema>;
-export type UpdateRoutingPromptRequest = z.infer<typeof updateRoutingPromptSchema>;
-export const assistantPromptIdSchema = z.enum(['routing', 'approval', 'probability', 'general', 'booking-conversation', 'booking-planner']);
+export const assistantPromptIdSchema = z.enum(['handoff', 'assistant']);
 export type AssistantPromptId = z.infer<typeof assistantPromptIdSchema>;
 export const promptCatalogEntrySchema = z.object({ id: z.string(), label: z.string(), description: z.string(), content: z.string() });
 export const promptCatalogResponseSchema = z.object({ systemOne: z.array(promptCatalogEntrySchema), systemTwo: z.array(promptCatalogEntrySchema) });
 export type PromptCatalogResponse = z.infer<typeof promptCatalogResponseSchema>;
 export const updateAssistantPromptSchema = z.object({ prompt: z.string().min(1).max(20_000).refine((prompt) => prompt.trim().length > 0, 'Prompt must not be blank') });
-export const botSettingsSchema = z.object({ maxReadDelayMs: z.number().int().min(0).max(3_540_000), typingDelayPerSymbolMs: z.number().int().min(0).max(800) });
+const testerUsernameSchema = z.string().trim().transform((value) => value.replace(/^@/, '').toLowerCase()).pipe(z.string().regex(/^[a-z0-9_]{5,32}$/, 'Enter a Telegram username (5–32 letters, digits, or underscores)'));
+const testerUsernamesSchema = z.array(testerUsernameSchema).max(20).superRefine((usernames, ctx) => {
+  if (new Set(usernames).size !== usernames.length) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Telegram usernames must be unique' });
+});
+export const botSettingsSchema = z.object({ maxReadDelayMs: z.number().int().min(0).max(3_540_000), typingDelayPerSymbolMs: z.number().int().min(0).max(800), testerUsernames: testerUsernamesSchema });
 export const botSettingsResponseSchema = botSettingsSchema.extend({ isCustom: z.boolean(), updatedAt: z.string().datetime().optional() });
 export const updateBotSettingsSchema = botSettingsSchema;
 const adminAccessEmailSchema = z.string().trim().email().max(254).transform((email) => email.toLowerCase());
@@ -104,7 +113,6 @@ export * from './telegram-schedule-import.js';
 export * from './ai-chat.js';
 
 export * from './google-calendar.js';
-export * from './booking-plan.js';
 export * from './debug.js';
 export * from './prompt-test.js';
 

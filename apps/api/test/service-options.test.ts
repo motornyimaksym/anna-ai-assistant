@@ -15,9 +15,14 @@ describe('Calendar-only service options', () => {
   const input = { clientId: 'client', telegramChatId: 'chat', serviceId: 'massage', startAt: '2099-01-01T09:00:00.000Z', durationMinutes: 90 };
   it('snapshots chosen duration and price in Calendar without Firestore booking writes', async () => {
     const { booking, repository, calendar } = setup();
-    const created = await booking.create(input);
+    const eventContext = { telegramUsername: 'user61785', telegramDisplayName: 'Іван Петренко', messages: [{ role: 'user' as const, content: 'Підходить' }] };
+    const created = await booking.create(input, eventContext);
     expect(created).toMatchObject({ durationMinutes: 90, price: 2000, currency: 'UAH' });
-    expect(calendar.createBookingEvent).toHaveBeenCalledWith(expect.objectContaining({ durationMinutes: 90, price: 2000, endAt: '2099-01-01T10:30:00Z' }), 'Massage', 15);
+    expect(calendar.createBookingEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ durationMinutes: 90, price: 2000, endAt: '2099-01-01T10:30:00Z' }),
+      'Massage', 15,
+      expect.objectContaining({ telegramUsername: expect.any(String), telegramDisplayName: expect.any(String), messages: [{ role: 'user', content: expect.any(String) }] }),
+    );
     expect(repository.createBooking).not.toHaveBeenCalled(); expect(repository.listLockedIntervals).not.toHaveBeenCalled();
   });
   it('blocks Calendar conflicts through service buffer and unknown Calendar reads', async () => {

@@ -27,10 +27,10 @@ export function HumanAssistanceSettings() {
   };
   return <Stack spacing={2}>
     <Typography variant="h6">Human assistance</Typography>
-    <Typography variant="body2">Before each automatic reply, System One Probability checks the latest 20 messages and proposed reply. A score above threshold withholds the reply and asks a person to answer. Failed checks also request help.</Typography>
+    <Typography variant="body2">Before each automatic reply, System One checks whether the draft sounds like a bot using the latest 20 messages and the proposed reply. Copied text alone does not imply automation. Scores above threshold or failed checks request human help.</Typography>
     <Typography id="human-threshold-label">Human assistance threshold: {thresholdPercent}%</Typography>
     <Slider aria-labelledby="human-threshold-label" value={thresholdPercent} min={0} max={100} step={1} valueLabelDisplay="auto" onChange={(_event, value) => { setThresholdPercent(value as number); setSaved(false); }} />
-    <Typography variant="body2">Example: bot recognition 60%, threshold 60% → send; 61% → human assistance.</Typography>
+    <Typography variant="body2">Example: score 60%, threshold 60% → send; 61% → human assistance. Score 100% always hands off, even at threshold 100%.</Typography>
     <Typography variant="subtitle1">Telegram responders</Typography>
     <Typography variant="body2">Each responder must send /start to this bot before private notifications can arrive.</Typography>
     {usernames.length === 0 && <Alert severity="warning">No responders configured. Requests needing human help remain in Conversations.</Alert>}

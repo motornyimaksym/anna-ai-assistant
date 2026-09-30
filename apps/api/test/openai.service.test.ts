@@ -1,36 +1,25 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { SystemOneInput } from '../src/system-one.js';
-import { SYSTEM_TWO_PROMPTS, type SystemTwoPromptId } from '../src/system-two.js';
-import { OpenAiService } from '../src/openai.service.js';
+import { OpenAiService, assistantToolDefinitions } from '../src/openai.service.js';
 import { TELEGRAM_FORMAT_GUIDANCE, THERAPIST_FIRST_PERSON_GUIDANCE } from '../src/assistant-prompt.js';
-import type { AssistantToolsService } from '../src/assistant-tools.service.js';
-import type { BookingRepository } from '../src/repository.js';
-import type { BookingPlannerService } from '../src/booking-planner.service.js';
-import type { DebugLogService } from '../src/debug-log.service.js';
-import type { ServiceDto } from '@booking/contracts';
 const conversation = { telegramChatId: 'chat', clientId: 'alice', openaiConversationId: 'conv-existing', assistantEnabled: true, state: 'active', summary: '', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
 const context = { clientId: 'alice', telegramChatId: 'chat' };
-const setup = (promptId: SystemTwoPromptId = 'general') => {
+const setup = () => {
   vi.stubEnv('OPENAI_API_KEY', 'test-key');
-  const repository = { getService: vi.fn(async () => ({ id: 'massage', name: 'Massage', durationMinutes: 60, price: 1500, durationOptions: [{ durationMinutes: 90, price: 2000 }], currency: 'UAH', enabled: true })), listMessages: vi.fn(async () => []), getAssistantPromptOverride: vi.fn(async () => undefined), getPromptOverride: vi.fn(async () => undefined as { prompt: string; updatedAt: string } | undefined), getKnowledgeBaseOverride: vi.fn(async () => undefined), listServices: vi.fn(async () => [] as ServiceDto[]), replacePendingAction: vi.fn(async () => true), replaceOpenAiConversation: vi.fn(async () => {}), ensureOpenAiConversation: vi.fn(async () => 'conv-created'), saveConversation: vi.fn(async (value: typeof conversation & { pendingAction?: unknown }) => value), appendMessage: vi.fn() };
-  const tools = { execute: vi.fn(async (): Promise<unknown> => ({ id: 'booking-1', startAt: '2099-01-01T10:00:00.000Z', status: 'confirmed', calendarSyncStatus: 'synced' })) };
-  const plan = vi.fn(async (..._args: unknown[]) => ({ status: 'ready', serviceId: 'massage', startAt: '2099-01-01T10:00:00.000Z', durationMinutes: 90, candidateStarts: [], question: null }));
-  const evidence = { timezone: 'Europe/Kyiv', sourceSyncedAt: '2098-12-31T12:00:00.000Z', scheduleMessages: [{ text: 'Вт: 16:00', createdAt: '2098-12-31T12:00:00.000Z' }], calendar: { status: 'ready', checkedAt: '2098-12-31T12:00:00.000Z', rangeStart: '2098-12-31T12:00:00.000Z', rangeEnd: '2099-01-30T12:00:00.000Z', busy: [] } };
-  const planner = { plan, planWithContext: vi.fn(async (...args: unknown[]) => ({ plan: await plan(...args), evidence })) };
+  const repository = { listMessages: vi.fn(async () => []), getPromptOverride: vi.fn(async () => undefined), getKnowledgeBaseOverride: vi.fn(async () => undefined), listServices: vi.fn(async () => [{ id: 'massage', name: 'Massage', enabled: true, durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH' }]), detachOpenAiConversation: vi.fn(), replacePendingAction: vi.fn(), replaceOpenAiConversation: vi.fn(), ensureOpenAiConversation: vi.fn(async () => 'conv-created'), appendMessage: vi.fn() };
+  const tools = { execute: vi.fn(async (): Promise<unknown> => []) };
   const debug = { record: vi.fn(async () => {}) };
-  const selector = { answerBoolean: vi.fn(async () => false), estimateProbability: vi.fn(async () => 0.5), select: vi.fn(async (_input: SystemOneInput, _signal: AbortSignal) => promptId) };
-  const service = new OpenAiService(repository as unknown as BookingRepository, tools as unknown as AssistantToolsService, planner as unknown as BookingPlannerService, debug as unknown as DebugLogService, selector);
-  return { repository, tools, planner, debug, selector, service };
+  return { repository, tools, debug, service: new OpenAiService(repository as never, tools as never, debug as never) };
 };
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
-describe('OpenAI conversation', () => {
+const answer = (text: string) => ({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text }] }] }) });
+describe('Unified OpenAI conversation', () => {
   it('accepts a completed response with null incomplete details', async () => {
-    const { service } = setup('booking');
+    const { service } = setup();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: 'completed', incomplete_details: null, output: [{ type: 'message', content: [{ type: 'output_text', text: 'Яку послугу бажаєте?' }] }] }) }));
     expect(await service.respond(conversation, context, 'Хочу записатися')).toEqual({ text: 'Яку послугу бажаєте?', fromOpenAI: true });
   });
   it('reserves reasoning headroom and safely rejects incomplete Booking output', async () => {
-    const { service, tools, repository } = setup('booking');
+    const { service, tools, repository } = setup();
     vi.stubEnv('OPENAI_MODEL', 'gpt-6-luna');
     const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output: [{ type: 'reasoning' }] }) });
     vi.stubGlobal('fetch', fetch);
@@ -42,66 +31,28 @@ describe('OpenAI conversation', () => {
     expect(tools.execute).not.toHaveBeenCalled();
     expect(repository.replacePendingAction).not.toHaveBeenCalled();
   });
-  it('recovers a poisoned conversation once without replaying historical tools', async () => {
+  it('ignores legacy provider state and sends bounded delivered history once on every turn', async () => {
     const { service, repository, tools } = setup();
-    repository.listMessages.mockResolvedValue([{ role: 'user', content: 'Earlier question' }, { role: 'assistant', content: 'Earlier reply' }]);
-    const fetch = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { param: 'input', message: 'No tool output found for function call call_broken.' } }), { status: 400 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'conv-recovered' })))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello' }] }] })));
-    vi.stubGlobal('fetch', fetch);
-    expect(await service.respond(conversation, context, 'Hi')).toEqual({ text: 'Hello', fromOpenAI: true });
-    expect(repository.replaceOpenAiConversation).toHaveBeenCalledWith('chat', 'alice', 'conv-existing', 'conv-recovered');
-    const retry = JSON.parse(fetch.mock.calls[2]![1].body);
-    expect(retry.conversation).toBe('conv-recovered');
-    expect(retry.input.slice(2)).toEqual([{ role: 'user', content: 'Earlier question' }, { role: 'assistant', content: 'Earlier reply' }, { role: 'user', content: 'Hi' }]);
-    expect(retry.input[1].content).toContain('Never replay');
+    const history = Array.from({ length: 30 }, (_, i) => ({ role: 'user', content: `message-${i}` }));
+    repository.listMessages.mockResolvedValue(history);
+    const fetcher = vi.fn().mockResolvedValue(answer('Reply'));
+    vi.stubGlobal('fetch', fetcher);
+    await service.respond(conversation, context, 'First');
+    await service.respond(conversation, context, 'Second');
+    for (const [index, call] of fetcher.mock.calls.entries()) {
+      const body = JSON.parse(call[1].body);
+      expect(body.conversation).toBeUndefined();
+      expect(body.previous_response_id).toBeUndefined();
+      expect(body.store).toBe(false);
+      expect(body.input.slice(2, -1)).toEqual(history.slice(-19));
+      expect(body.input.at(-1)).toEqual({ role: 'user', content: index ? 'Second' : 'First' });
+      expect(body.input.filter((item: { role?: string }) => item.role === 'developer')).toHaveLength(2);
+    }
+    expect(repository.ensureOpenAiConversation).not.toHaveBeenCalled();
     expect(tools.execute).not.toHaveBeenCalled();
   });
-  it.each(['other', 'repeated', 'after-tool'])('does not reset or replay on %s errors', async (kind) => {
-    const { service, repository, tools } = setup();
-    const failure = () => new Response(JSON.stringify({ error: { param: 'input', message: kind === 'other' ? 'Invalid schema' : 'No tool output found for function call call_broken.' } }), { status: 400 });
-    const fetch = vi.fn();
-    if (kind === 'after-tool') fetch.mockResolvedValueOnce(new Response(JSON.stringify({ output: [{ type: 'function_call', call_id: 'c1', name: 'get_services', arguments: '{}' }] })));
-    fetch.mockResolvedValueOnce(failure());
-    if (kind === 'repeated') fetch.mockResolvedValueOnce(new Response(JSON.stringify({ id: 'conv-recovered' }))).mockResolvedValueOnce(failure());
-    vi.stubGlobal('fetch', fetch);
-    expect((await service.respond(conversation, context, 'Hi')).needsHuman).toBe(true);
-    expect(repository.replaceOpenAiConversation).toHaveBeenCalledTimes(kind === 'repeated' ? 1 : 0);
-    expect(tools.execute).toHaveBeenCalledTimes(kind === 'after-tool' ? 1 : 0);
-    expect(fetch).toHaveBeenCalledTimes(kind === 'repeated' ? 3 : kind === 'after-tool' ? 2 : 1);
-  });
-  it.each([false, true])('closes fourth-round calls, including local replies: %s', async (local) => {
-    const { service, tools } = setup('booking');
-    tools.execute.mockResolvedValue([]);
-    const fetch = vi.fn();
-    for (let round = 0; round < 4; round++) fetch.mockResolvedValueOnce(new Response(JSON.stringify({ output: [{ type: 'function_call', call_id: `c${round}`, name: local && round === 3 ? 'plan_booking' : 'get_services', arguments: local && round === 3 ? JSON.stringify({ intent: 'create', bookingId: null }) : '{}' }] })));
-    fetch.mockResolvedValueOnce(new Response(JSON.stringify({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Done reading' }] }] })));
-    vi.stubGlobal('fetch', fetch);
-    const reply = await service.respond(conversation, context, 'Hi');
-    expect(reply.needsHuman).toBeUndefined();
-    expect(reply.text).toContain(local ? 'Новий запис' : 'Done reading');
-    const closeout = JSON.parse(fetch.mock.calls[4]![1].body);
-    expect(closeout.tool_choice).toBe('none');
-    expect(closeout.input[0]).toMatchObject({ type: 'function_call_output', call_id: 'c3' });
-    expect(tools.execute).toHaveBeenCalledTimes(local ? 3 : 4);
-  });
-  it('creates a conversation for a legacy Telegram record and sends only the new message', async () => {
-    const { service, repository } = setup();
-    const fetch = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'conv-created' }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello' }] }] }) });
-    vi.stubGlobal('fetch', fetch);
-    repository.listMessages.mockResolvedValue([{ role: 'user', content: 'old private text' }]);
-    await service.respond({ ...conversation, openaiConversationId: undefined }, context, 'Hi');
-    expect(fetch.mock.calls[0]![0]).toBe('https://api.openai.com/v1/conversations');
-    expect(repository.ensureOpenAiConversation).toHaveBeenCalledWith('chat', 'alice', 'conv-created');
-    const body = JSON.parse(fetch.mock.calls[1]![1].body);
-    expect(body.conversation).toBe('conv-created');
-    expect(body.input.at(-1)).toEqual({ role: 'user', content: 'Hi' });
-    expect(body.input[0].role).toBe('developer');
-    expect(body.input[1].role).toBe('developer');
-  });
   it('sends bounded recent messages with booking request, current message once', async () => {
-    const { service, repository } = setup('booking');
+    const { service, repository } = setup();
     repository.listMessages.mockResolvedValue([
       ...Array.from({ length: 24 }, (_, index) => ({ role: index % 2 ? 'assistant' : 'user', content: `old-${index}` })),
       { role: 'user', content: 'Move my booking' },
@@ -138,8 +89,33 @@ describe('OpenAI conversation', () => {
     const fetch = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'get_services', arguments: '{}' }] }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Вітаю!' }] }] }) });
     vi.stubGlobal('fetch', fetch);
     expect(await service.respond(conversation, context, 'Привіт')).toEqual({ text: 'Вітаю!', fromOpenAI: true });
-    expect(tools.execute).toHaveBeenCalledWith({ name: 'get_services', arguments: {} }, context);
+    expect(tools.execute).toHaveBeenCalledWith({ name: 'get_services', arguments: {} }, expect.objectContaining({ clientId: 'alice', telegramChatId: 'chat', currentMessage: expect.any(String) }));
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+  it('allows natural booking wording when all proposal facts are preserved', async () => {
+    const { service, tools } = setup();
+    const facts = { serviceName: 'Massage', durationMinutes: 60, localDate: '30 вер. 2026 р.', localTime: '20:00', price: 1500, currency: 'UAH' };
+    tools.execute.mockResolvedValueOnce({ status: 'prepared', proposalId: '2a1c75d0-d891-4e04-8b54-341cba762ae6', confirmationFacts: facts, expiresAt: '2099-01-01T00:00:00.000Z' });
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'prepare_booking', arguments: '{"serviceId":"massage","durationMinutes":60,"startAt":"2026-09-30T17:00:00.000Z"}', call_id: 'prepare-1' }] }) })
+      .mockResolvedValueOnce(answer('Запишу вас на Massage: 60 хвилин, 30 вер. 2026 року о 20:00, вартість 1500 UAH. Підійде?'));
+    vi.stubGlobal('fetch', fetch);
+    const reply = await service.respond(conversation, context, 'Запиши мене');
+    expect(reply).toEqual({ text: 'Запишу вас на Massage: 60 хвилин, 30 вер. 2026 року о 20:00, вартість 1500 UAH. Підійде?', fromOpenAI: true, bookingProposalId: '2a1c75d0-d891-4e04-8b54-341cba762ae6' });
+    const followup = JSON.parse(fetch.mock.calls[1]![1]!.body as string);
+    expect(JSON.stringify(followup.input)).not.toContain('2a1c75d0-d891-4e04-8b54-341cba762ae6');
+  });
+  it('withholds a booking proposal draft that omits or changes required facts', async () => {
+    const { service, tools } = setup();
+    const facts = { serviceName: 'Massage', durationMinutes: 60, localDate: '30 вер. 2026 р.', localTime: '20:00', price: 1500, currency: 'UAH' };
+    tools.execute.mockResolvedValueOnce({ status: 'prepared', proposalId: '2a1c75d0-d891-4e04-8b54-341cba762ae6', confirmationFacts: facts, expiresAt: '2099-01-01T00:00:00.000Z' });
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'prepare_booking', arguments: '{"serviceId":"massage","durationMinutes":60,"startAt":"2026-09-30T17:00:00.000Z"}', call_id: 'prepare-1' }] }) })
+      .mockResolvedValueOnce(answer('Запишу вас на Massage на годину, 30 вересня о 20:00 за 1400 гривень.')));
+    const reply = await service.respond(conversation, context, 'Запиши мене');
+    expect(reply).toMatchObject({ text: '', needsHuman: true, humanContext: expect.stringContaining('Не вдалося перевірити факти пропозиції запису') });
+    expect(reply.humanContext).toContain('Перевірка не пройдена: тривалість, ціна, зайве або суперечливе число.');
+    expect(reply.humanContext).not.toContain('Технічний стек викликів');
   });
   it('returns catalog facts without automatic Telegram card delivery', async () => {
     const { service, tools } = setup();
@@ -148,31 +124,6 @@ describe('OpenAI conversation', () => {
     const fetch = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'get_services', arguments: '{}' }] }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Here are the services.' }] }] }) });
     vi.stubGlobal('fetch', fetch);
     expect(await service.respond(conversation, context, 'What services do you have?')).toEqual({ text: 'Here are the services.', fromOpenAI: true });
-  });
-  it('uses the current stored prompt override for the next assistant request', async () => {
-    const { service, repository } = setup();
-    repository.getAssistantPromptOverride.mockResolvedValue({ prompt: 'Speak only in short sentences.', updatedAt: '2026-09-24T10:00:00.000Z' });
-    const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello.' }] }] }) }));
-    vi.stubGlobal('fetch', fetch);
-    await service.respond(conversation, context, 'Hi');
-    const instructions = JSON.parse(fetch.mock.calls[0]![1]!.body as string).input[0].content as string;
-    expect(instructions).toContain('Speak only in short sentences.');
-    expect(instructions).toContain(THERAPIST_FIRST_PERSON_GUIDANCE);
-    expect(instructions).toContain('TELEGRAM FORMATTING');
-    expect(instructions).toContain(TELEGRAM_FORMAT_GUIDANCE);
-  });
-  it('uses the Booking conversation override with mandatory guidance', async () => {
-    const { service, repository } = setup('booking');
-    repository.getPromptOverride.mockResolvedValue({ prompt: 'CUSTOM BOOKING CONVERSATION', updatedAt: new Date().toISOString() });
-    const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Which booking?' }] }] }) }));
-    vi.stubGlobal('fetch', fetch);
-    await service.respond(conversation, context, 'Move my booking');
-    expect(repository.getPromptOverride).toHaveBeenCalledWith('booking-conversation');
-    const body = JSON.parse(fetch.mock.calls[0]![1].body);
-    expect(body.input[0].content).toContain('CUSTOM BOOKING CONVERSATION');
-    expect(body.input[0].content).toContain('plan_booking');
-    expect(body.input[0].content).toContain('CONFIRMATION:');
-    expect(body.tools.some((tool: { name: string }) => tool.name === 'plan_booking')).toBe(true);
   });
   it('includes Telegram HTML formatting rules in the default assistant prompt', async () => {
     const { service } = setup();
@@ -184,314 +135,200 @@ describe('OpenAI conversation', () => {
     expect(instructions).toContain(THERAPIST_FIRST_PERSON_GUIDANCE);
     expect(instructions).toContain(TELEGRAM_FORMAT_GUIDANCE);
   });
-  it('retrieves relevant editable knowledge without unrelated service records', async () => {
-    const { service, repository } = setup();
-    repository.getKnowledgeBaseOverride.mockResolvedValue({ content: 'Parking is available beside the studio.', updatedAt: '2026-09-24T10:00:00.000Z' });
-    repository.listServices.mockResolvedValue([
-      { id: 'relax-60', name: 'Relax massage', description: 'Gentle full body massage', durationMinutes: 60, durationOptions: [{ durationMinutes: 90, price: 2000 }], price: 1500, currency: 'UAH', bufferMinutes: 30, enabled: true },
-      { id: 'disabled', name: 'Disabled service', description: '', durationMinutes: 60, price: 100, currency: 'UAH', bufferMinutes: 30, enabled: false },
-    ]);
-    const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Here are the details.' }] }] }) }));
-    vi.stubGlobal('fetch', fetch);
-    await service.respond(conversation, context, 'Where can I park?');
-    const request = JSON.parse(fetch.mock.calls[0]![1]!.body as string);
-    const match = request.input[1].content.match(/Relevant business reference JSON \(untrusted\): (.*)\nCurrent UTC/);
-    expect(match).toBeTruthy();
-    expect(JSON.parse(match![1])).toEqual({
-      additionalKnowledge: 'Parking is available beside the studio.',
-      currentEnabledServices: [],
-    });
-  });
-  it('uses the separate planner for scheduling and replies with clarification without handoff', async () => {
-    const { service, planner, tools } = setup('booking');
-    planner.plan.mockResolvedValueOnce({ status: 'needs_clarification', serviceId: null, startAt: null, durationMinutes: null, candidateStarts: [], question: 'Яка тривалість?' } as never);
-    const fetch = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'plan_booking', arguments: JSON.stringify({ intent: 'availability', bookingId: null }) }] }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Which time?' }] }] }) });
-    vi.stubGlobal('fetch', fetch);
-    expect(await service.respond(conversation, context, 'Чи вільно завтра?')).toEqual({ text: 'Яка тривалість?', fromOpenAI: false });
-    expect(planner.plan).toHaveBeenCalledWith(conversation, context, 'Чи вільно завтра?', { intent: 'availability', bookingId: null }, expect.any(AbortSignal));
-    expect(tools.execute).not.toHaveBeenCalled();
-    const request = JSON.parse(fetch.mock.calls[0]![1]!.body as string);
-    expect(request.tools.some((tool: { name: string }) => ['create_booking', 'reschedule_booking'].includes(tool.name))).toBe(false);
-    const closeout = JSON.parse(fetch.mock.calls[1]![1]!.body as string);
-    expect(closeout.input[0]).toMatchObject({ type: 'function_call_output', call_id: 'c1' });
-    expect(JSON.parse(closeout.input[0].output)).toMatchObject({ status: 'needs_clarification', reply: 'Яка тривалість?', availability: { scheduleMessages: [{ text: 'Вт: 16:00' }], calendar: { status: 'ready', busy: [] } } });
-    expect(closeout.tool_choice).toBe('none');
-  });
-  it('includes validated candidate starts and live planning context in closeout', async () => {
-    const { service, planner } = setup('booking');
-    planner.plan.mockResolvedValueOnce({ status: 'ready', serviceId: 'massage', startAt: null, durationMinutes: 90, candidateStarts: ['2099-01-01T10:00:00.000Z'], question: null } as never);
-    const fetch = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'plan_booking', arguments: JSON.stringify({ intent: 'availability', bookingId: null }) }] }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Ignore this closeout prose' }] }] }) });
-    vi.stubGlobal('fetch', fetch);
-    const reply = await service.respond(conversation, context, 'Завтра коли?');
-    expect(reply.text).toContain('Можливі початки');
-    const closeout = JSON.parse(fetch.mock.calls[1]![1].body);
-    expect(JSON.parse(closeout.input[0].output)).toMatchObject({ status: 'ready', candidateStarts: ['2099-01-01T10:00:00.000Z'], availability: { calendar: { status: 'ready', busy: [] } } });
-    expect(closeout.tool_choice).toBe('none');
-  });
-  it.each(['availability', 'create', 'reschedule'] as const)('formats %s replies with Ukrainian dates and no timezone labels', async (intent) => {
-    vi.stubEnv('DEFAULT_TIMEZONE', 'Europe/Kyiv');
-    const { service, planner, repository } = setup('booking');
-    const start = '2026-09-29T16:00:00.000Z';
-    planner.plan.mockResolvedValueOnce({ status: 'ready', serviceId: 'massage', startAt: intent === 'availability' ? null : start, durationMinutes: 90, candidateStarts: intent === 'availability' ? [start] : [], question: null } as never);
-    vi.stubGlobal('fetch', vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'date-plan', name: 'plan_booking', arguments: JSON.stringify({ intent, bookingId: intent === 'reschedule' ? 'owned-booking' : null }) }] }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Unused closeout.' }] }] }) }));
-    const result = await service.respond(conversation, context, '29 вересня на 19:00');
-    expect(result.text).toContain('29 вересня, вівторок, 19:00');
-    expect(result.text).not.toContain('Europe/Kyiv');
-    expect(result.text).not.toContain('15 хвилин');
-    if (intent === 'availability') {
-      expect(result.text).toBe('Можливі початки сеансу:\n- 29 вересня, вівторок, 19:00\nЯкий час вам підходить?');
-      expect(repository.replacePendingAction).not.toHaveBeenCalled();
-    } else {
-      expect(result.text.endsWith('Підтвердьте, будь ласка, якщо вам все підходить.')).toBe(true);
-      const pending = repository.replacePendingAction.mock.calls[0]![3];
-      expect(pending.confirmationText).toBe(result.text);
-      expect(Date.parse(pending.expiresAt) - Date.now()).toBeGreaterThan(14 * 60_000);
-      expect(Date.parse(pending.expiresAt) - Date.now()).toBeLessThanOrEqual(15 * 60_000);
-    }
-  });
-  it('formats cancellation proposals with the same date and short invitation', async () => {
-    vi.stubEnv('DEFAULT_TIMEZONE', 'Europe/Kyiv');
-    const { service, tools } = setup('booking');
-    tools.execute.mockResolvedValueOnce([{ id: 'owned-booking', clientId: 'alice', telegramChatId: 'chat', serviceId: 'massage', status: 'confirmed', startAt: '2026-09-29T16:00:00.000Z' }]);
-    vi.stubGlobal('fetch', vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'cancel', name: 'cancel_booking', arguments: '{"bookingId":"owned-booking"}' }] }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Unused closeout.' }] }] }) }));
-    const result = await service.respond(conversation, context, 'Скасувати запис');
-    expect(result.text).toBe('Скасувати запис: Massage\nЧас: 29 вересня, вівторок, 19:00.\nПідтвердьте, будь ласка, якщо вам все підходить.');
-    expect(tools.execute).toHaveBeenCalledOnce();
-    expect(tools.execute).toHaveBeenCalledWith({ name: 'get_bookings', arguments: {} }, context);
-  });
-  it('retrieves relevant default policy without sending the whole knowledge base', async () => {
-    const { service } = setup();
-    const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello.' }] }] }) }));
-    vi.stubGlobal('fetch', fetch);
-    await service.respond(conversation, context, 'Чи є доплата після 21:00?');
-    const request = JSON.parse(fetch.mock.calls[0]![1]!.body as string);
-    const match = request.input[1].content.match(/Relevant business reference JSON \(untrusted\): (.*)\nCurrent UTC/);
-    const knowledge = JSON.parse(match![1]).additionalKnowledge as string;
-    expect(knowledge).toContain('Для мене «вихідний» — календарний день, який я позначила вихідним у робочому графіку.');
-    expect(knowledge).toContain('Субота чи неділя самі по собі не є вихідними.');
-    expect(knowledge).toContain('якщо в мене є вільний час і я готова його прийняти');
-    expect(knowledge).not.toContain('МЕЖІ ДОТИКІВ');
-  });
-
-  it('stages mutation without executing and consumes it only on explicit confirmation', async () => {
-    const { service, tools, repository, selector } = setup('booking');
-    selector.answerBoolean.mockResolvedValueOnce(true);
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'plan_booking', arguments: JSON.stringify({ intent: 'create', bookingId: null }) }] }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Proposal ready.' }] }] }) }));
-    expect((await service.respond(conversation, context, 'Запиши мене')).text).toContain('Підтвердьте, будь ласка, якщо вам все підходить.');
-    expect(tools.execute).not.toHaveBeenCalled();
-    const saved = { ...conversation, pendingAction: repository.replacePendingAction.mock.calls[0]![3] };
-    expect(saved.pendingAction).toMatchObject({ arguments: { durationMinutes: 90 } });
-    repository.listMessages.mockResolvedValue([{ role: 'assistant', content: saved.pendingAction.confirmationText }]);
-    expect((await service.respond(saved, context, 'Так, підтверджую')).text).toContain('booking-1');
-    expect(tools.execute).toHaveBeenCalledOnce();
-    expect(repository.replacePendingAction.mock.calls[1]![3]).toBeUndefined();
-  });
-  it('does not execute expired pending actions', async () => {
-    const { service, tools } = setup();
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Which appointment?' }] }] }) }));
-    await service.respond({ ...conversation, pendingAction: { name: 'cancel_booking', arguments: { bookingId: 'b' }, expiresAt: '2020-01-01T00:00:00.000Z' } }, context, '/confirm');
-    expect(tools.execute).not.toHaveBeenCalled();
-  });
-  it('rejects direct booking tools that bypass the planner', async () => {
-    const { service, repository } = setup();
-    const fetch = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'create_booking', arguments: JSON.stringify({ serviceId: 'massage', startAt: '2099-01-01T10:00:00.000Z' }) }] }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: '60 чи 90 хвилин?' }] }] }) });
-    vi.stubGlobal('fetch', fetch);
-    expect((await service.respond(conversation, context, 'Запиши мене')).needsHuman).toBe(true);
-    expect(repository.saveConversation).not.toHaveBeenCalled();
-    const request = JSON.parse(fetch.mock.calls[0]![1].body);
-    expect(request.tools.find((tool: { name: string }) => tool.name === 'create_booking')).toBeUndefined();
-  });
-  it('returns a safe fallback when the provider fails', async () => {
-    const { service } = setup();
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 429 })));
-    expect((await service.respond(conversation, context, 'Привіт')).needsHuman).toBe(true);
-  });
 });
 
-it.each(['general', 'booking'] as const)('does not offer human handoff to %s and returns supported service facts', async (route) => {
-  const { service, tools } = setup(route);
-  tools.execute.mockResolvedValueOnce([{ id: 'lingam', name: 'Авторський чуттєвий масаж', description: 'Містить елементи лінгам-масажу', enabled: true }]);
-  const fetch = vi.fn()
-    .mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'get_services', arguments: '{}' }] }) })
-    .mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Авторський чуттєвий масаж містить елементи лінгам-масажу.' }] }] }) });
-  vi.stubGlobal('fetch', fetch);
-  expect(await service.respond(conversation, context, 'Який із цих масажів лінгам?')).toEqual({ text: 'Авторський чуттєвий масаж містить елементи лінгам-масажу.', fromOpenAI: true });
-  for (const call of fetch.mock.calls) {
-    const request = JSON.parse(call[1].body);
-    expect(request.tools.map((item: { name: string }) => item.name)).not.toContain('request_human_assistance');
+it('lets the model write availability and confirmation wording after reading evidence', async () => {
+  const { service, tools, repository } = setup();
+  tools.execute.mockResolvedValue({ schedule: { status: 'ready', messages: [{ text: 'Tomorrow 10:00' }] }, calendar: { status: 'ready', busy: [] } });
+  const fetcher = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'get_booking_context', arguments: '{}', call_id: 'call-1' }] }) }).mockResolvedValueOnce(answer('Можу запропонувати завтра о 10:00. Вам підходить?'));
+  vi.stubGlobal('fetch', fetcher);
+  expect(await service.respond(conversation, context, 'Є час завтра?')).toEqual({ text: 'Можу запропонувати завтра о 10:00. Вам підходить?', fromOpenAI: true });
+  expect(tools.execute).toHaveBeenCalledWith({ name: 'get_booking_context', arguments: {} }, expect.objectContaining({ clientId: 'alice', telegramChatId: 'chat', currentMessage: expect.any(String) }));
+  expect(repository.replacePendingAction).not.toHaveBeenCalled();
+  expect(JSON.parse(fetcher.mock.calls[1]![1].body).input.at(-1)).toMatchObject({ type: 'function_call_output', call_id: 'call-1', output: expect.stringContaining('Tomorrow 10:00') });
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
+it('uses the model create_booking call as semantic approval without a phrase whitelist', async () => {
+  const { service, tools } = setup();
+  tools.execute.mockResolvedValueOnce({ status: 'created', booking: { id: 'booking-1' } });
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'create_booking', arguments: '{}', call_id: 'create-1' }] }) })
+    .mockResolvedValueOnce(answer('Запис підтверджено.')));
+  expect(await service.respond(conversation, context, 'Цей час мені чудово підходить, можете мене записати')).toEqual({ text: 'Запис підтверджено.', fromOpenAI: true });
+  expect(tools.execute).toHaveBeenCalledWith({ name: 'create_booking', arguments: {} }, expect.objectContaining({ clientId: 'alice', telegramChatId: 'chat', currentMessage: expect.any(String) }));
+});
+
+it('does not create a booking when the model replies without calling create_booking', async () => {
+  const { service, tools } = setup();
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(answer('Звісно, уточню ціну перед записом.')));
+  expect(await service.respond(conversation, context, 'Так, але спершу хочу уточнити ціну')).toEqual({ text: 'Звісно, уточню ціну перед записом.', fromOpenAI: true });
+  expect(tools.execute).not.toHaveBeenCalled();
+});
+
+it('ignores legacy pending actions even on explicit approval', async () => {
+  const { service, tools, repository } = setup();
+  const fetcher = vi.fn().mockResolvedValue(answer('Дякую.'));
+  vi.stubGlobal('fetch', fetcher);
+  const pendingAction = { id: 'old', name: 'create_booking' as const, arguments: { serviceId: 'massage' }, confirmationText: 'Approve?', expiresAt: '2099-01-01T00:00:00.000Z' };
+  expect(await service.respond({ ...conversation, pendingAction }, context, 'Так, підтверджую')).toEqual({ text: 'Дякую.', fromOpenAI: true });
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(tools.execute).not.toHaveBeenCalled();
+  expect(repository.replacePendingAction).not.toHaveBeenCalled();
+});
+
+it.each(['cancel_booking', 'reschedule_booking', 'plan_booking'])('rejects removed tool %s without executing it', async (name) => {
+  const { service, tools } = setup();
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name, arguments: '{}', call_id: 'bad' }] }) }));
+  expect(await service.respond(conversation, context, 'Запиши мене')).toMatchObject({ needsHuman: true, text: '' });
+  expect(tools.execute).not.toHaveBeenCalled();
+  expect(assistantToolDefinitions.map(({ name }) => name)).toEqual(['get_media', 'send_media', 'get_services', 'get_bookings', 'get_booking_context', 'prepare_booking', 'create_booking', 'request_human_assistance']);
+});
+
+it('hands an unlisted custom-service request to a person without an automatic reply', async () => {
+  const { service, tools } = setup();
+  tools.execute.mockResolvedValue({ status: 'human_requested' });
+  const fetcher = vi.fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'request_human_assistance', arguments: '{}', call_id: 'human-1' }] }) })
+    .mockResolvedValueOnce(answer('This draft must not be delivered'));
+  vi.stubGlobal('fetch', fetcher);
+  const reply = await service.respond(conversation, context, 'Do you offer custom hot stone massage?');
+  expect(reply).toMatchObject({ text: '', needsHuman: true, humanContext: expect.stringContaining('requires human assistance') });
+  expect(tools.execute).toHaveBeenCalledWith({ name: 'request_human_assistance', arguments: {} }, expect.objectContaining({ clientId: 'alice', telegramChatId: 'chat', currentMessage: expect.any(String) }));
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it('includes safe tool API failure details in the human handoff', async () => {
+  const { service, tools } = setup();
+  tools.execute.mockRejectedValue(Object.assign(new Error('Calendar HTTP 503 token=hidden'), { upstreamStatus: 503, code: 'UNAVAILABLE' }));
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'get_booking_context', arguments: '{}', call_id: 'context-1' }] }) })
+    .mockResolvedValueOnce(answer('Do not send')));
+  const reply = await service.respond(conversation, context, 'Is 10:00 free?');
+  expect(reply).toMatchObject({ text: '', needsHuman: true });
+  expect(reply.humanContext).toContain('Не вдалося прочитати розклад і календар');
+  expect(reply.humanContext).toContain('HTTP 503');
+  expect(reply.humanContext).toContain('Код помилки: UNAVAILABLE');
+  expect(reply.humanContext).not.toContain('hidden');
+});
+
+it('preserves a failed media API result for the human case', async () => {
+  const { service, tools } = setup();
+  tools.execute.mockResolvedValue({ status: 'failed', errorContext: 'Не вдалося надіслати медіа клієнту. Зовнішній сервіс повернув статус HTTP 503. ID запиту: req_123. Перевірте стан операції перед повторною спробою.' });
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'send_media', arguments: '{"mediaId":"media-1"}', call_id: 'media-1' }] }) })
+    .mockResolvedValueOnce(answer('Do not send')));
+  const reply = await service.respond(conversation, context, 'Send me a photo');
+  expect(reply).toMatchObject({ text: '', needsHuman: true });
+  expect(reply.humanContext).toContain('HTTP 503');
+  expect(reply.humanContext).toContain('ID запиту: req_123');
+});
+
+it.each(['', 'x'.repeat(4001)])('fails closed on empty/oversized output without local messages', async (text) => {
+  const { service } = setup();
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(answer(text)));
+  expect(await service.respond(conversation, context, 'Hi')).toMatchObject({ needsHuman: true, text: '' });
+});
+
+it('uses the unified override for every turn and keeps full knowledge and catalog', async () => {
+  const { service, repository } = setup();
+  repository.getPromptOverride.mockResolvedValue({ prompt: 'Unified custom style' } as never);
+  repository.getKnowledgeBaseOverride.mockResolvedValue({ content: 'Unrelated policy still retained. Eligibility matters.' } as never);
+  repository.listServices.mockResolvedValue([{ id: 'massage', name: 'Massage', enabled: true, durationMinutes: 60, bufferMinutes: 30, price: 1500, currency: 'UAH' }] as never);
+  const fetcher = vi.fn().mockResolvedValue(answer('Вітаю.'));
+  vi.stubGlobal('fetch', fetcher);
+  await service.respond(conversation, context, 'Hi');
+  expect(repository.getPromptOverride).toHaveBeenCalledWith('assistant');
+  const body = JSON.parse(fetcher.mock.calls[0]![1].body);
+  expect(JSON.stringify(body.input[0])).toContain('Unified custom style');
+  expect(JSON.stringify(body.input[0])).toContain('create_booking');
+  expect(body.input[1].content).toContain('Unrelated policy still retained');
+  expect(body.input[1].content).toContain('bufferMinutes');
+});
+
+it.each([false, true])('bounds invalid catalog ID correction (repeated=%s)', async (repeated) => {
+  const { service, tools, repository, debug } = setup();
+  const catalog = [{ id: 'actual-id', name: 'Massage', enabled: true, durationMinutes: 90, price: 4000, currency: 'UAH', bufferMinutes: 15 }];
+  repository.listServices.mockResolvedValue(catalog as never);
+  const failure = Object.assign(new Error('Service unavailable'), { code: 'BOOKING_SERVICE_UNAVAILABLE' });
+  tools.execute.mockRejectedValueOnce(failure);
+  if (repeated) tools.execute.mockRejectedValueOnce(failure);
+  else tools.execute.mockResolvedValueOnce({ status: 'prepared', proposalId: '2a1c75d0-d891-4e04-8b54-341cba762ae6', confirmationFacts: { serviceName: 'Massage', durationMinutes: 90, localDate: '2 жовт. 2026 р.', localTime: '18:30', price: 4000, currency: 'UAH' }, expiresAt: '2099-01-01T00:00:00.000Z' });
+  const call = (id: string) => ({ ok: true, json: async () => ({ output: [{ type: 'function_call', name: 'prepare_booking', call_id: id, arguments: JSON.stringify({ serviceId: id, durationMinutes: 90, startAt: '2099-01-01T10:00:00Z' }) }] }) });
+  const fetcher = vi.fn().mockResolvedValueOnce(call('invented-id')).mockResolvedValueOnce(call('actual-id')).mockResolvedValueOnce(answer('Massage, 90 хв, 2 жовт. 2026 р. о 18:30, 4000 UAH. Підтверджуєте?'));
+  vi.stubGlobal('fetch', fetcher);
+  const reply = await service.respond(conversation, { ...context, traceId: 'trace' }, 'Selected time');
+  const first = JSON.parse(fetcher.mock.calls[0]![1].body);
+  expect(first.tools.find((t: { name: string }) => t.name === 'prepare_booking').parameters.properties.serviceId.enum).toEqual(['actual-id']);
+  const correction = JSON.parse(JSON.parse(fetcher.mock.calls[1]![1].body).input.at(-1).output);
+  expect(correction).toMatchObject({ status: 'correction_required', code: 'BOOKING_SERVICE_UNAVAILABLE', services: [{ id: 'actual-id' }] });
+  expect(repository.listServices).toHaveBeenCalledTimes(2);
+  expect(tools.execute).toHaveBeenCalledTimes(2);
+  expect(debug.record).toHaveBeenCalledWith(expect.objectContaining({ traceId: 'trace' }), 'error', expect.objectContaining({ tool: 'prepare_booking', errorCategory: 'BOOKING_SERVICE_UNAVAILABLE', reason: 'catalog_correction_offered' }), 'warn');
+  expect(fetcher).toHaveBeenCalledTimes(repeated ? 2 : 3);
+  if (repeated) {
+    expect(reply.needsHuman).toBe(true);
+    expect(repository.detachOpenAiConversation).not.toHaveBeenCalled();
+  } else {
+    expect(reply.needsHuman).not.toBe(true);
+    expect(repository.detachOpenAiConversation).not.toHaveBeenCalled();
   }
-  expect(tools.execute).toHaveBeenCalledWith({ name: 'get_services', arguments: {} }, context);
 });
 
-
-describe('System One dispatch', () => {
-  it('selects before General and supplies bounded context without business facts', async () => {
-    const { service, selector, repository } = setup();
-    repository.listMessages.mockResolvedValue(Array.from({ length: 25 }, () => ({ role: 'user', content: 'x'.repeat(5000) })) as never);
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello' }] }] }) }));
-    await service.respond({ ...conversation, summary: 's'.repeat(5000) }, context, 'Hi');
-    expect(selector.select).toHaveBeenCalledOnce();
-    const input = selector.select.mock.calls[0]![0];
-    expect(input).toMatchObject({ message: 'Hi', hasPendingProposal: false });
-    expect(input.summary).toHaveLength(4000);
-    expect(input.history).toHaveLength(20);
-    expect(input.history[0].content).toHaveLength(4000);
-    expect(Object.keys(input).sort()).toEqual(['hasPendingProposal', 'history', 'message', 'summary']);
-    expect(selector.select.mock.invocationCallOrder[0]).toBeLessThan(repository.getAssistantPromptOverride.mock.invocationCallOrder[0]!);
-  });
-  it('isolates Booking from the General override while retaining media tools', async () => {
-    const { service, repository, selector } = setup('booking');
-    repository.getAssistantPromptOverride.mockResolvedValue({ prompt: 'GENERAL CUSTOM SECRET', updatedAt: '2026-01-01T00:00:00.000Z' });
-    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Which booking?' }] }] }) });
-    vi.stubGlobal('fetch', fetch);
-    await service.respond(conversation, context, 'Move my booking');
-    expect(selector.select).toHaveBeenCalledOnce();
-    expect(repository.getAssistantPromptOverride).not.toHaveBeenCalled();
-    const body = JSON.parse(fetch.mock.calls[0]![1].body);
-    expect(body.input[0].content).toContain(SYSTEM_TWO_PROMPTS.booking.guidance);
-    expect(body.input[0].content).not.toContain('GENERAL CUSTOM SECRET');
-    expect(body.tools.map((tool: { name: string }) => tool.name)).toContain('plan_booking');
-    expect(body.tools.map((tool: { name: string }) => tool.name)).toContain('send_media');
-  });
-  it('rejects Booking tools on the General route without executing the planner', async () => {
-    const { service, planner } = setup();
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'function_call', name: 'plan_booking', arguments: '{"intent":"create","bookingId":null}' }] }) }));
-    expect((await service.respond(conversation, context, 'Hi')).needsHuman).toBe(true);
-    expect(planner.plan).not.toHaveBeenCalled();
-  });
-  it.each(['failure', 'invalid'] as const)('does not start System Two after selection %s', async (kind) => {
-    const { service, selector, repository } = setup();
-    if (kind === 'failure') selector.select.mockRejectedValue(new Error('private provider details'));
-    else selector.select.mockResolvedValue('unknown' as never);
-    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
-    expect((await service.respond(conversation, context, 'Hi')).needsHuman).toBe(true);
-    expect(fetch).not.toHaveBeenCalled();
-    expect(repository.getAssistantPromptOverride).not.toHaveBeenCalled();
-  });
-  it('checks every eligible message, and rejects oversized text before selection', async () => {
-    const { service, selector } = setup();
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'How can I help?' }] }] }) }));
-    await service.respond(conversation, context, '/confirm');
-    await service.respond(conversation, context, '/cancel');
-    expect(selector.select).toHaveBeenCalledTimes(2);
-    selector.select.mockClear();
-    await service.respond(conversation, context, 'x'.repeat(4001));
-    expect(selector.select).not.toHaveBeenCalled();
-  });
+it('does not retry an uncertain booking write or generate an unsent final reply', async () => {
+  const { service, tools, repository, debug } = setup();
+  tools.execute.mockRejectedValue(Object.assign(new Error('Private client value'), { code: 'CALENDAR_UNCERTAIN' }));
+  const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'function_call', name: 'create_booking', arguments: '{}', call_id: 'write' }] }) });
+  vi.stubGlobal('fetch', fetcher);
+  expect(await service.respond(conversation, context, 'Approve')).toMatchObject({ needsHuman: true, text: '' });
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(tools.execute).toHaveBeenCalledTimes(1);
+  expect(repository.detachOpenAiConversation).not.toHaveBeenCalled();
+  expect(debug.record).toHaveBeenCalledWith(context, 'error', expect.objectContaining({ reason: 'tool_execution_failed', tool: 'create_booking' }), 'error');
 });
 
-
-it('selects anew on each turn and exposes active proposal presence without its arguments', async () => {
-  const { service, selector } = setup('booking');
-  const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Reply' }] }] }) });
-  vi.stubGlobal('fetch', fetch);
-  const pendingAction = { name: 'cancel_booking' as const, arguments: { bookingId: 'private-booking' }, expiresAt: '2099-01-01T00:00:00.000Z' };
-  await service.respond({ ...conversation, pendingAction }, context, 'yes');
-  expect(selector.select.mock.calls[0]![0].hasPendingProposal).toBe(true);
-  expect(JSON.stringify(selector.select.mock.calls[0]![0])).not.toContain('private-booking');
-  selector.select.mockResolvedValue('general');
-  await service.respond({ ...conversation, pendingAction: { ...pendingAction, expiresAt: '2000-01-01T00:00:00.000Z' } }, context, 'Where are you located?');
-  expect(selector.select).toHaveBeenCalledTimes(2);
-  expect(selector.select.mock.calls[1]![0].hasPendingProposal).toBe(false);
-  expect(JSON.parse(fetch.mock.calls[0]![1].body).input[0].content).toContain(SYSTEM_TWO_PROMPTS.booking.guidance);
-  expect(JSON.parse(fetch.mock.calls[1]![1].body).input[0].content).toContain('SYSTEM TWO: GENERAL');
+it.each(['empty', 'error'])('escalates without another model call when catalog recovery is %s', async (kind) => {
+  const { service, tools, repository, debug } = setup();
+  if (kind === 'empty') repository.listServices.mockResolvedValueOnce([{ id: 'massage', name: 'Massage', enabled: true, durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH' }]).mockResolvedValueOnce([]);
+  else repository.listServices.mockResolvedValueOnce([{ id: 'massage', name: 'Massage', enabled: true, durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH' }]).mockRejectedValueOnce(new Error('Catalog unavailable'));
+  tools.execute.mockRejectedValue(Object.assign(new Error('Service unavailable'), { code: 'BOOKING_SERVICE_UNAVAILABLE' }));
+  const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'function_call', name: 'prepare_booking', call_id: 'c1', arguments: JSON.stringify({ serviceId: 'missing', durationMinutes: 90, startAt: '2099-01-01T10:00:00Z' }) }] }) });
+  vi.stubGlobal('fetch', fetcher);
+  expect(await service.respond(conversation, context, 'Selected time')).toMatchObject({ needsHuman: true, text: '' });
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(tools.execute).toHaveBeenCalledTimes(1);
+  expect(repository.detachOpenAiConversation).not.toHaveBeenCalled();
+  if (kind === 'error') expect(debug.record).toHaveBeenCalledWith(context, 'error', expect.objectContaining({ reason: 'catalog_refresh_failed' }), 'error');
 });
 
+it('does not offer preparation with an empty or disabled catalog', async () => {
+  const { service, repository } = setup();
+  repository.listServices.mockResolvedValue([{ id: 'disabled', name: 'Massage', enabled: false, durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH' }]);
+  const fetcher = vi.fn().mockResolvedValue(answer('Reply'));
+  vi.stubGlobal('fetch', fetcher);
+  await service.respond(conversation, context, 'Hi');
+  const body = JSON.parse(fetcher.mock.calls[0]![1].body);
+  expect(body.tools.map((tool: { name: string }) => tool.name)).not.toContain('prepare_booking');
+});
 
-const naturalProposal = { id: '2a1c75d0-d891-4e04-8b54-341cba762ae6', name: 'cancel_booking' as const, arguments: { bookingId: 'booking-1' }, expiresAt: '2099-01-01T00:00:00.000Z', confirmationText: 'Cancel appointment tomorrow at 10:00?' };
-describe('natural confirmation', () => {
-  it('executes only after true approval and atomic consumption, without routing or probability', async () => {
-    vi.stubEnv('DEFAULT_TIMEZONE', 'Europe/Kyiv');
-    const { service, selector, tools, repository } = setup();
-    repository.listMessages.mockResolvedValue([{ role: 'assistant', content: naturalProposal.confirmationText }]);
-    selector.answerBoolean.mockResolvedValueOnce(true);
-    tools.execute.mockResolvedValueOnce({ id: 'booking-1', status: 'cancelled', startAt: '2026-09-29T16:00:00.000Z', calendarSyncStatus: 'synced' });
-    const reply = await service.respond({ ...conversation, pendingAction: naturalProposal }, context, 'Так, підтверджую');
-    expect(reply.text).toBe('Готово. Запис booking-1: cancelled. Час: 29 вересня, вівторок, 19:00.');
-    expect(repository.replacePendingAction).toHaveBeenCalledWith('chat', 'alice', naturalProposal, undefined, { requireUnexpired: true });
-    expect(repository.replacePendingAction.mock.invocationCallOrder[0]).toBeLessThan(tools.execute.mock.invocationCallOrder[0]!);
-    expect(tools.execute).toHaveBeenCalledWith(naturalProposal, context);
-    expect(selector.select).not.toHaveBeenCalled();
-    expect(selector.estimateProbability).not.toHaveBeenCalled();
-  });
-  it.each(['Ні, дякую', 'А скільки це коштує?', 'Так, але можна пізніше?'])('discards then handles the client message normally: %s', async (message) => {
-    const { service, selector, tools, repository } = setup();
-    repository.listMessages.mockResolvedValue([{ role: 'assistant', content: naturalProposal.confirmationText }, { role: 'user', content: message }]);
-    selector.answerBoolean.mockResolvedValueOnce(false);
-    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'A reply to the current question.' }] }] }) });
-    vi.stubGlobal('fetch', fetch);
-    expect((await service.respond({ ...conversation, pendingAction: naturalProposal }, context, message)).text).toBe('A reply to the current question.');
-    expect(selector.answerBoolean).toHaveBeenCalledOnce();
-    expect(repository.replacePendingAction).toHaveBeenCalledWith('chat', 'alice', naturalProposal, undefined);
-    expect(tools.execute).not.toHaveBeenCalled();
-    expect(selector.select).toHaveBeenCalledOnce();
-    expect(selector.select.mock.calls[0]![0]).toMatchObject({ message, hasPendingProposal: false });
-    expect(repository.replacePendingAction.mock.invocationCallOrder[0]).toBeLessThan(selector.select.mock.invocationCallOrder[0]!);
-    const input = JSON.parse(fetch.mock.calls[0]![1].body).input;
-    expect(input[0].content).not.toContain('Previous proposal was discarded');
-    expect(input[1].content).toContain('Previous proposal was discarded without execution');
-    expect(input.filter((item: { role: string; content: string }) => item.role === 'user' && item.content === message)).toHaveLength(1);
-    expect(input.at(-1)).toEqual({ role: 'user', content: message });
-  });
-  it('can stage a replacement after changed details without approving it in the same turn', async () => {
-    const { service, selector, tools, repository, planner } = setup('booking');
-    repository.listMessages.mockResolvedValue([{ role: 'assistant', content: naturalProposal.confirmationText }]);
-    vi.stubGlobal('fetch', vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'new-plan', name: 'plan_booking', arguments: '{"intent":"create","bookingId":null}' }] }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Proposal prepared.' }] }] }) }));
-    const result = await service.respond({ ...conversation, pendingAction: naturalProposal }, context, 'Краще зробимо новий запис на інший час');
-    expect(result.text).toContain('Підтвердьте, будь ласка, якщо вам все підходить.');
-    expect(selector.answerBoolean).toHaveBeenCalledOnce();
-    expect(selector.select).toHaveBeenCalledOnce();
-    expect(planner.plan.mock.calls[0]![0]).toMatchObject({ pendingAction: undefined });
-    expect(repository.replacePendingAction).toHaveBeenCalledTimes(2);
-    expect(repository.replacePendingAction.mock.calls[1]![2]).toBeUndefined();
-    expect(repository.replacePendingAction.mock.calls[1]![3]).toMatchObject({ name: 'create_booking', confirmationText: result.text });
-    expect(repository.replacePendingAction.mock.calls[1]![3].id).not.toBe(naturalProposal.id);
-    expect(tools.execute).not.toHaveBeenCalled();
-  });
-  it.each(['stale', 'failed'] as const)('does not route or execute after a %s discard', async (kind) => {
-    const { service, selector, tools, repository } = setup();
-    repository.listMessages.mockResolvedValue([{ role: 'assistant', content: naturalProposal.confirmationText }]);
-    if (kind === 'stale') repository.replacePendingAction.mockResolvedValueOnce(false);
-    else repository.replacePendingAction.mockRejectedValueOnce(new Error('Discard failed'));
-    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
-    const result = await service.respond({ ...conversation, pendingAction: naturalProposal }, context, 'Можна інший час?');
-    expect(selector.select).not.toHaveBeenCalled();
-    expect(tools.execute).not.toHaveBeenCalled();
-    expect(fetch).not.toHaveBeenCalled();
-    expect(result.needsHuman === true).toBe(kind === 'failed');
-  });
-  it.each(['error', 'invalid', 'stale'] as const)('never executes on %s confirmation', async (kind) => {
-    const { service, selector, tools, repository } = setup();
-    repository.listMessages.mockResolvedValue([{ role: 'assistant', content: naturalProposal.confirmationText }]);
-    if (kind === 'error') selector.answerBoolean.mockRejectedValueOnce(new DOMException('timeout', 'TimeoutError'));
-    else selector.answerBoolean.mockResolvedValueOnce(kind === 'invalid' ? 'true' as never : true);
-    if (kind === 'stale') repository.replacePendingAction.mockResolvedValueOnce(false);
-    const result = await service.respond({ ...conversation, pendingAction: naturalProposal }, context, 'yes');
-    expect(tools.execute).not.toHaveBeenCalled();
-    if (kind !== 'stale') { expect(result.needsHuman).toBe(true); expect(repository.replacePendingAction).not.toHaveBeenCalled(); }
-  });
-  it('skips boolean checks for missing, expired and legacy proposals', async () => {
-    const { service, selector, tools } = setup();
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Which appointment?' }] }] }) }));
-    await service.respond(conversation, context, 'yes');
-    await service.respond({ ...conversation, pendingAction: { ...naturalProposal, expiresAt: '2000-01-01T00:00:00.000Z' } }, context, 'yes');
-    await service.respond({ ...conversation, pendingAction: { ...naturalProposal, confirmationText: undefined } }, context, 'yes');
-    expect(selector.answerBoolean).not.toHaveBeenCalled();
-    expect(tools.execute).not.toHaveBeenCalled();
-  });
-  it('keeps a consumed action consumed when execution fails', async () => {
-    const { service, selector, tools, repository } = setup();
-    repository.listMessages.mockResolvedValue([{ role: 'assistant', content: naturalProposal.confirmationText }]);
-    selector.answerBoolean.mockResolvedValueOnce(true);
-    tools.execute.mockRejectedValueOnce(new Error('uncertain'));
-    expect((await service.respond({ ...conversation, pendingAction: naturalProposal }, context, 'yes')).needsHuman).toBe(true);
-    expect(repository.replacePendingAction).toHaveBeenCalledOnce();
-    expect(repository.replacePendingAction.mock.calls[0]![3]).toBeUndefined();
-  });
+it('preserves every output item through multiple stateless tool rounds without duplicating context', async () => {
+  const { service, tools } = setup();
+  const reasoning = { type: 'reasoning', id: 'rs_1', summary: [], content: null, encrypted_content: 'opaque-encrypted-data' };
+  const firstCall = { type: 'function_call', name: 'get_services', call_id: 'first', arguments: '{}' };
+  const secondCall = { type: 'function_call', name: 'get_booking_context', call_id: 'second', arguments: '{}' };
+  tools.execute.mockResolvedValueOnce({ items: [] }).mockResolvedValueOnce({ schedule: { status: 'ready' } });
+  const fetcher = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ output: [reasoning, firstCall] }) })
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ output: [secondCall] }) }).mockResolvedValueOnce(answer('Reply'));
+  vi.stubGlobal('fetch', fetcher);
+  expect((await service.respond(conversation, context, 'Current message')).needsHuman).not.toBe(true);
+  const requests = fetcher.mock.calls.map(call => JSON.parse(call[1].body));
+  const initial = requests[0].input;
+  expect(requests[1].input).toEqual([...initial, reasoning, firstCall, { type: 'function_call_output', call_id: 'first', output: JSON.stringify({ items: [] }) }]);
+  expect(requests[2].input).toEqual([...requests[1].input, secondCall, { type: 'function_call_output', call_id: 'second', output: JSON.stringify({ schedule: { status: 'ready' } }) }]);
+  for (const request of requests) {
+    expect(request.store).toBe(false);
+    expect(request.conversation).toBeUndefined();
+    expect(request.input.filter((item: { role?: string }) => item.role === 'developer')).toHaveLength(2);
+  }
+  expect(tools.execute).toHaveBeenCalledTimes(2);
 });

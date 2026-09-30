@@ -16,11 +16,11 @@ export function SystemOneSettings() {
   const provider = draft ?? query.data.provider;
   return <Stack spacing={2}>
     <Typography variant="h6">System One</Typography>
-    <Typography variant="body2" color="text.secondary">Choose the provider for routing, approval and probability decisions. OpenAI is the default.</Typography>
+    <Typography variant="body2" color="text.secondary">Choose the provider for human handoff probability. OpenAI is the default.</Typography>
     <TextField select label="System One provider" value={provider} disabled={save.isPending} slotProps={{ select: { native: true }, htmlInput: { 'aria-label': 'System One provider' } }} onChange={(event) => { setDraft(event.target.value as Settings['provider']); setSaved(false); save.reset(); }} sx={{ maxWidth: 440 }}>
       <option value="openai">OpenAI</option><option value="typesafe">TypeSafe AI</option>
     </TextField>
-    <Typography variant="body2" color="text.secondary">{provider === 'typesafe' ? 'TypeSafe AI falls back to OpenAI on provider errors. A negative approval decision does not trigger fallback.' : 'OpenAI handles these decisions directly using the configured OpenAI model.'}</Typography>
+    <Typography variant="body2" color="text.secondary">{provider === 'typesafe' ? 'TypeSafe AI falls back to OpenAI on provider errors. A valid probability never triggers fallback.' : 'OpenAI assesses handoff directly using the configured OpenAI model.'}</Typography>
     <Typography variant="caption" color="text.secondary">Changing providers does not restore discarded proposals or retry bookings.</Typography>
     {saved && <Alert severity="success">Saved. The next System One decision will use this provider.</Alert>}
     {save.isError && <Alert severity="error">Could not save provider. Please try again.</Alert>}

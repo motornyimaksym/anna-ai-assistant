@@ -3,7 +3,7 @@ import { ConflictException, Injectable } from '@nestjs/common';
 import type { BookingDto, CreateBookingRequest, RescheduleBookingRequest } from '@booking/contracts';
 import { ServiceNotFoundError, serviceEndAt } from '@booking/domain';
 import { selectServiceOption } from './service-options.js';
-import { CalendarService } from './calendar.js';
+import { CalendarService, type BookingEventContext } from './calendar.js';
 import { BookingRepository } from './repository.js';
 
 export class BookingNeedsHumanError extends ConflictException {
@@ -23,7 +23,7 @@ export class BookingService {
   async list() { return this.calendar.listBookings(); }
   async get(id: string) { return this.calendar.getBooking(id); }
   async timing(id: string) { return this.calendar.getBookingTiming(id); }
-  async create(input: CreateBookingRequest): Promise<BookingDto> {
+  async create(input: CreateBookingRequest, eventContext: BookingEventContext = {}): Promise<BookingDto> {
     const service = await this.repository.getService(input.serviceId);
     if (!service?.enabled) throw new ServiceNotFoundError();
     const option = selectServiceOption(service, input.durationMinutes);
@@ -31,7 +31,7 @@ export class BookingService {
     const id = randomUUID(); const now = new Date().toISOString();
     const booking: BookingDto = { ...input, id, durationMinutes: option.durationMinutes, price: option.price, currency: service.currency, endAt: serviceEndAt(input.startAt, option), status: 'confirmed', googleCalendarId: await this.calendar.destination(), calendarSyncStatus: 'synced', createdAt: now, updatedAt: now };
     try {
-      const { eventId, calendarId } = await this.calendar.createBookingEvent(booking, service.name, service.bufferMinutes);
+      const { eventId, calendarId } = await this.calendar.createBookingEvent(booking, service.name, service.bufferMinutes, eventContext);
       const created = { ...booking, googleCalendarEventId: eventId, googleCalendarId: calendarId };
       if (!await this.calendar.verifyBookingEvent(created)) throw new Error('Calendar event could not be verified');
       await this.assertNoConflict(created.startAt, option.durationMinutes, service.bufferMinutes, created);

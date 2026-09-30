@@ -1,19 +1,18 @@
 import { withRequestDiagnostics } from './request-diagnostics.js';
 import { randomUUID } from 'node:crypto';
-import { DebugLogService, safeErrorCategory, safeErrorDiagnostic } from './debug-log.service.js';
+import { DebugLogService, humanErrorContext, safeErrorCategory, safeErrorDiagnostic } from './debug-log.service.js';
 import { waitForRandomReadDelay, waitForResponsePacing } from './response-pacing.js';
 import { OpenAiService } from './openai.service.js';
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { z } from 'zod';
 import { type ConversationDto } from '@booking/contracts';
-import { loadBackendRuntimeEnv } from '@booking/config';
 import { BookingRepository } from './repository.js';
-import { DEFAULT_BOT_SETTINGS } from './bot-settings.js';
+import { getDefaultBotSettings, getLegacyTesterUsernames } from './bot-settings.js';
 import { HumanAssistanceService } from './human-assistance.service.js';
 import { TelegramScheduleImportService } from './telegram-schedule-import.service.js';
 import { fetchWithLinearBackoff } from '@booking/http';
 import { TextUtils } from './text-utils.js';
-const messageSchema = z.object({ message_id: z.number().int(), chat: z.object({ id: z.union([z.string(), z.number()]), type: z.string().optional() }), from: z.object({ id: z.union([z.string(), z.number()]), username: z.string().optional(), is_bot: z.boolean().optional() }).optional(), text: z.string().optional(), business_connection_id: z.string().optional() });
+const messageSchema = z.object({ message_id: z.number().int(), chat: z.object({ id: z.union([z.string(), z.number()]), type: z.string().optional() }), from: z.object({ id: z.union([z.string(), z.number()]), username: z.string().optional(), first_name: z.string().optional(), last_name: z.string().optional(), is_bot: z.boolean().optional() }).optional(), text: z.string().optional(), business_connection_id: z.string().optional() });
 const updateSchema = z.object({ update_id: z.number().int(), business_message: messageSchema.optional(), message: messageSchema.optional(), deleted_business_messages: z.object({ business_connection_id: z.string().min(1), chat: z.object({ id: z.union([z.string(), z.number()]) }), message_ids: z.array(z.number().int()).min(1) }).optional() });
 const escapeHtml = (value: string) => value.replace(/&(?!(?:amp|lt|gt|quot|#39|#\d+|#x[\da-f]+);)/gi, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 export const formatTelegramHtml = (value: string): string => {
@@ -35,7 +34,6 @@ export const formatTelegramHtml = (value: string): string => {
 @Injectable()
 export class TelegramService {
   private readonly logger = new Logger(TelegramService.name);
-  private readonly allowedUsername = loadBackendRuntimeEnv(process.env).TELEGRAM_ALLOWED_USERNAME?.toLowerCase();
   constructor(private readonly repository: BookingRepository, private readonly assistant: OpenAiService, private readonly human: HumanAssistanceService, private readonly scheduleImport: TelegramScheduleImportService, private readonly debug: DebugLogService) {}
   async handle(secret: string | undefined, body: unknown): Promise<void> {
     if (!process.env.TELEGRAM_WEBHOOK_SECRET || secret !== process.env.TELEGRAM_WEBHOOK_SECRET) throw new UnauthorizedException('Invalid webhook secret');
@@ -59,7 +57,9 @@ export class TelegramService {
     const message = update.business_message ?? (update.message?.chat.type === 'private' ? update.message : undefined);
     const responder = update.message?.chat.type === 'private' ? update.message : undefined;
     const responderCommand = responder?.text?.trim();
-    if (responder?.from?.username && !responder.from.is_bot && responderCommand && (responderCommand === '/start' || responderCommand.startsWith('/answer '))) {
+    const isAnswerCommand = Boolean(responderCommand && /^\/answer(?:@[a-zA-Z0-9_]+)?(?:\s|$)/i.test(responderCommand));
+    const isResumeCommand = Boolean(responderCommand && /^\/resume(?:@[a-zA-Z0-9_]+)?(?:\s|$)/i.test(responderCommand));
+    if (responder?.from?.username && !responder.from.is_bot && responderCommand && (responderCommand === '/start' || isAnswerCommand || isResumeCommand)) {
       const userId = String(responder.from.id);
       const chatId = String(responder.chat.id);
       const username = responder.from.username.toLowerCase();
@@ -70,7 +70,19 @@ export class TelegramService {
       }
       if (await this.human.authorizedResponder(userId, chatId, username)) {
         if (!await this.repository.claimTelegramUpdate(update.update_id)) return;
-        const match = /^\/answer\s+(\S+)\s+([\s\S]+)$/i.exec(responderCommand);
+        if (isResumeCommand) {
+          const match = /^\/resume(?:@[a-zA-Z0-9_]+)?\s+(\S+)$/i.exec(responderCommand);
+          if (!match?.[1]) { await this.human.send(chatId, undefined, 'Формат: /resume <номер запиту>'); return; }
+          try {
+            await this.human.release(match[1], `telegram:${userId}`);
+          } catch {
+            await this.human.send(chatId, undefined, 'Не вдалося відновити обробку: запит уже закрито або потребує перевірки в адмінпанелі.');
+            return;
+          }
+          await this.human.send(chatId, undefined, 'Автоматичну обробку відновлено. Нові повідомлення знову надходитимуть боту.');
+          return;
+        }
+        const match = /^\/answer(?:@[a-zA-Z0-9_]+)?\s+(\S+)(?:\s+([\s\S]+))?$/i.exec(responderCommand);
         if (!match || !match[1] || !match[2]?.trim()) { await this.human.send(chatId, undefined, 'Формат: /answer <номер запиту> <текст>'); return; }
         try {
           await this.human.reply(match[1], match[2].trim(), `telegram:${userId}`);
@@ -79,16 +91,19 @@ export class TelegramService {
         return;
       }
     }
-    if (responderCommand?.startsWith('/answer ')) return;
-    if (message?.from?.is_bot || (message?.chat.type && message.chat.type !== 'private') || !this.allowedUsername || message?.from?.username?.toLowerCase() !== this.allowedUsername || !message.text) { await this.debug.record(trace, 'ignored', { reason: 'sender_or_message_not_eligible' }); return; }
+    if (isAnswerCommand || isResumeCommand) return;
+    if (message?.from?.is_bot || (message?.chat.type && message.chat.type !== 'private') || !message?.from?.username || !message.text) { await this.debug.record(trace, 'ignored', { reason: 'sender_or_message_not_eligible' }); return; }
+    const settings = await this.repository.getBotSettingsOverride() ?? getDefaultBotSettings();
+    const testerUsernames = settings.testerUsernames ?? getLegacyTesterUsernames();
+    if (!testerUsernames.includes(message.from.username.toLowerCase())) { await this.debug.record(trace, 'ignored', { reason: 'sender_or_message_not_eligible' }); return; }
     if (!await this.repository.claimTelegramUpdate(update.update_id)) { await this.debug.record(trace, 'ignored', { reason: 'duplicate_update' }); return; }
     await this.debug.record(trace, 'received');
     const chatId = String(message.chat.id); const now = new Date().toISOString();
-    const current = await this.repository.getConversation(chatId); const clientId = message.from ? String(message.from.id) : undefined; const conversation: ConversationDto = current && current.clientId === clientId ? current : { telegramChatId: chatId, clientId, businessConnectionId: message.business_connection_id, assistantEnabled: true, state: 'active', summary: '', createdAt: now, updatedAt: now };
+    const current = await this.repository.getConversation(chatId); const clientId = message.from ? String(message.from.id) : undefined; const baseConversation: ConversationDto = current && current.clientId === clientId ? current : { telegramChatId: chatId, clientId, businessConnectionId: message.business_connection_id, assistantEnabled: true, state: 'active', summary: '', createdAt: now, updatedAt: now };
+    const conversation: ConversationDto = { ...baseConversation, telegramUsername: message.from?.username?.toLowerCase() ?? null };
     if (current && current.clientId !== clientId) await this.repository.resetTelegramConversationIdentity(conversation);
     if (!conversation.assistantEnabled || (conversation.humanTakeoverUntil && conversation.humanTakeoverUntil > now)) { await this.debug.record(trace, 'ignored', { reason: conversation.assistantEnabled ? 'manual_takeover' : 'assistant_disabled' }); await this.repository.touchConversation({ ...conversation, updatedAt: now }); return; }
     await this.repository.touchConversation({ ...conversation, updatedAt: now });
-    const settings = await this.repository.getBotSettingsOverride() ?? DEFAULT_BOT_SETTINGS;
     if (update.business_message?.business_connection_id) {
       await waitForRandomReadDelay(settings.maxReadDelayMs);
       await this.markBusinessMessageRead(update.business_message.business_connection_id, message.chat.id, message.message_id);
@@ -103,23 +118,28 @@ export class TelegramService {
     const stopTyping = await this.startTyping(chatId, message.business_connection_id);
     let reply: string;
     let parseMode: 'HTML' | undefined;
+    let bookingProposalId: string | undefined;
     try {
-      const answer = await this.assistant.respond(conversation, { clientId: String(message.from!.id), telegramChatId: chatId, businessConnectionId: message.business_connection_id, traceId: trace.traceId }, message.text);
+      const answer = await this.assistant.respond(conversation, {
+        clientId: String(message.from!.id), telegramChatId: chatId, businessConnectionId: message.business_connection_id, traceId: trace.traceId,
+        ...(message.from?.username ? { telegramUsername: message.from.username } : {}),
+        telegramDisplayName: [message.from?.first_name, message.from?.last_name].filter(Boolean).join(' '),
+      }, message.text);
       if (answer.needsHuman) {
         await this.debug.record(trace, 'handoff', { reason: 'assistant_requested_human' }, 'warn');
         await this.repository.appendMessage(chatId, 'user', message.text.slice(0, 4000));
-        const action = conversation.pendingAction ? `Requested ${conversation.pendingAction.name}: ${JSON.stringify(conversation.pendingAction.arguments)}` : undefined;
-        await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, [answer.humanContext, action].filter(Boolean).join('\n'));
+        await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, answer.humanContext);
         return;
       }
       const outgoingText = TextUtils.replaceLongDashes(answer.text);
+      bookingProposalId = answer.bookingProposalId;
       if (answer.fromOpenAI) await waitForResponsePacing(outgoingText, settings.typingDelayPerSymbolMs);
       reply = answer.fromOpenAI ? formatTelegramHtml(outgoingText) : outgoingText;
       if (answer.fromOpenAI) parseMode = 'HTML';
     } catch (error) {
       await this.debug.record(trace, 'error', { reason: 'assistant_operation_failed', errorCategory: safeErrorCategory(error) }, 'error');
       this.logger.error(`Assistant operation failed update=${update.update_id} trace=${trace.traceId}: ${JSON.stringify(safeErrorDiagnostic(error, [message.text]))}`);
-      await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text);
+      await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, humanErrorContext(error, 'assistant turn', [message.text]));
       return;
     } finally {
       stopTyping();
@@ -128,12 +148,12 @@ export class TelegramService {
     try {
       if (!await this.human.approveOutgoing(chatId, message.business_connection_id, update.update_id, message.text, reply)) return;
       await this.reply(chatId, message.business_connection_id, reply, parseMode);
-      await this.repository.appendMessage(chatId, 'assistant', reply);
+      await this.repository.appendMessage(chatId, 'assistant', reply, bookingProposalId);
       await this.debug.record(trace, 'reply_sent');
     } catch (error) {
       await this.debug.record(trace, 'reply_failed', { reason: 'delivery_or_persistence_uncertain', errorCategory: safeErrorCategory(error) }, 'error');
       this.logger.error(`Telegram reply failed or is uncertain update=${update.update_id} trace=${trace.traceId}: ${JSON.stringify(safeErrorDiagnostic(error, [message.text, reply]))}`);
-      await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, 'Client reply delivery or persistence is uncertain. Check before resending.');
+      await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, `Client reply delivery or persistence is uncertain. Check before resending. ${humanErrorContext(error, 'Telegram delivery', [message.text, reply])}`);
     }
   }
   private async startTyping(chatId: string, businessConnectionId: string | undefined): Promise<() => void> {

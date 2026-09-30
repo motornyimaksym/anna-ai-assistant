@@ -28,7 +28,11 @@ Never implement first and document afterward.
 
 ## Change discipline
 
+Always aim for the smallest set of changes that fully achieves the requested goal. Avoid unrelated refactoring, formatting, and new abstractions; preserve correctness and required specification, documentation, and test updates.
+
 Inspect the current specification before changing API or domain behavior, Firestore schema, Telegram behavior, OpenAI tools, Google Calendar behavior, admin UI, authentication, configuration, or user flows. Persisted-data changes also require `docs/data-model.md` to be updated before code.
+
+Do not add exact-substring checks against client-facing, assistant-generated, or other free-form text unless the user explicitly approves that specific check. Prefer structured data and validated facts.
 
 ## Definition of Done
 

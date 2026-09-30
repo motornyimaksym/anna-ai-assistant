@@ -1,12 +1,15 @@
+import { isPreparationErrorCode, preparationErrors } from './booking-preparation-errors.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import type { RequestBodies } from './request-diagnostics.js';
 import { debugDetailsSchema, debugEventSchema, type DebugDetails, type DebugEvent } from '@booking/contracts';
 import { BookingRepository } from './repository.js';
+import { bookingProposalIssues, type BookingProposalIssue } from './booking-proposal-errors.js';
 
 export type TraceContext = { telegramChatId: string; traceId?: string };
 type ProviderError = { code?: string; param?: string; message?: string };
-type ErrorDiagnostic = { type: string; message?: string; code?: string; providerError?: ProviderError; upstreamStatus?: number; providerRequestId?: string; issues?: Array<{ code: string; path: Array<string | number> }>; stack?: string[]; cause?: ErrorDiagnostic };
+type ErrorDiagnostic = { type: string; message?: string; code?: string; proposalIssue?: BookingProposalIssue; providerError?: ProviderError; upstreamStatus?: number; providerRequestId?: string; issues?: Array<{ code: string; path: Array<string | number> }>; factIssues?: string[]; stack?: string[]; cause?: ErrorDiagnostic };
+const bookingFactIssueNames = new Set(['service', 'duration', 'date', 'time', 'price', 'currency', 'reference_code', 'conflicting_number', 'conflicting_currency']);
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const redact = (value: string, sensitiveValues: string[] = []): string => {
   let result = value
@@ -45,13 +48,14 @@ export function sanitizeOpenAiError(value: unknown, sensitiveValues: string[] = 
 
 function errorDiagnostic(error: unknown, depth = 0, sensitiveValues: string[] = []): ErrorDiagnostic {
   if (!error || typeof error !== 'object') return { type: typeof error };
-  const object = error as { name?: unknown; message?: unknown; code?: unknown; providerError?: unknown; status?: unknown; upstreamStatus?: unknown; providerRequestId?: unknown; requestId?: unknown; stack?: unknown; cause?: unknown; issues?: unknown };
+  const object = error as { name?: unknown; message?: unknown; code?: unknown; proposalIssue?: unknown; providerError?: unknown; status?: unknown; upstreamStatus?: unknown; providerRequestId?: unknown; requestId?: unknown; stack?: unknown; cause?: unknown; issues?: unknown; factIssues?: unknown };
   const type = typeof object.name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,59}$/.test(object.name) ? object.name : 'Error';
   const result: ErrorDiagnostic = { type };
   const providerError = sanitizeOpenAiError(object.providerError, sensitiveValues);
   if (providerError) result.providerError = providerError;
   if (typeof object.message === 'string' && type !== 'ZodError' && type !== 'SyntaxError') result.message = redact(object.message, sensitiveValues);
   if (typeof object.code === 'string' && /^[A-Z0-9_]{1,50}$/.test(object.code)) result.code = object.code;
+  if (typeof object.proposalIssue === 'string' && bookingProposalIssues.includes(object.proposalIssue as BookingProposalIssue)) result.proposalIssue = object.proposalIssue as BookingProposalIssue;
   const upstreamStatus = object.upstreamStatus ?? object.status;
   if (typeof upstreamStatus === 'number' && Number.isInteger(upstreamStatus) && upstreamStatus >= 100 && upstreamStatus <= 599) result.upstreamStatus = upstreamStatus;
   const providerRequestId = object.providerRequestId ?? object.requestId;
@@ -65,6 +69,7 @@ function errorDiagnostic(error: unknown, depth = 0, sensitiveValues: string[] = 
       return [{ code: entry.code.slice(0, 50), path }];
     });
   }
+  if (Array.isArray(object.factIssues)) result.factIssues = [...new Set(object.factIssues.filter((item): item is string => typeof item === 'string' && bookingFactIssueNames.has(item)))].slice(0, 9);
   if (typeof object.stack === 'string') {
     result.stack = object.stack.split('\n').slice(1).filter((line) => /^\s+at /.test(line)).slice(0, 20).map((line) => redact(line, sensitiveValues));
   }
@@ -72,6 +77,88 @@ function errorDiagnostic(error: unknown, depth = 0, sensitiveValues: string[] = 
   return result;
 }
 export const safeErrorDiagnostic = (error: unknown, sensitiveValues: string[] = []): ErrorDiagnostic => errorDiagnostic(error, 0, sensitiveValues);
+const responderOperations: Array<[string, string]> = [
+  ['S2 tool get_media', 'переглянути матеріали'],
+  ['S2 tool send_media', 'надіслати медіа клієнту'],
+  ['S2 tool get_services', 'прочитати каталог послуг'],
+  ['S2 tool get_bookings', 'переглянути записи клієнта'],
+  ['S2 tool prepare_booking', 'підготувати пропозицію запису'],
+  ['S2 tool create_booking', 'перевірити підтвердження та створити запис'],
+  ['S2 tool get_booking_context', 'прочитати розклад і календар'],
+  ['S2 tool request_human_assistance', 'передати запит людині'],
+  ['System One handoff', 'перевірити відповідь перед надсиланням'],
+  ['OpenAI System Two', 'сформувати відповідь асистента'],
+  ['assistant turn', 'обробити повідомлення клієнта'],
+  ['Telegram delivery', 'надіслати відповідь клієнту'],
+  ['Telegram media', 'надіслати медіа клієнту'],
+];
+const bookingFieldLabels: Record<string, string> = {
+  serviceId: 'послугу',
+  durationMinutes: 'тривалість сеансу',
+  startAt: 'дату й час',
+};
+function bookingValidationMessage(detail: ErrorDiagnostic, source: string): string | undefined {
+  const issuePaths = detail.issues?.flatMap(({ path }) => path.map(String)) ?? [];
+  const fields = [...new Set(issuePaths.flatMap((path) => bookingFieldLabels[path] ? [bookingFieldLabels[path]!] : []))];
+  if (source === 'S2 tool prepare_booking') {
+    if (fields.includes('дату й час')) return 'Не вдалося перевірити дату й час для пропозиції запису. Формат дати або часу не прийнято; пропозицію та запис до календаря не створено. Перевірте обраний час і сформуйте пропозицію повторно.';
+    const fieldText = fields.length ? fields.join(', ') : 'дані пропозиції';
+    return `Не вдалося перевірити ${fieldText} для пропозиції запису. Пропозицію та запис до календаря не створено. Перевірте дані й сформуйте пропозицію повторно.`;
+  }
+  if (source === 'S2 tool create_booking') return 'Дані підтвердження запису не пройшли перевірку. Результат створення не підтверджено; перевірте запис і Google Calendar перед повторною спробою.';
+  return undefined;
+}
+/** Plain Ukrainian responder summary; use a bounded sanitized stack only when no useful diagnosis is available. */
+export function humanErrorContext(error: unknown, source: string, sensitiveValues: string[] = []): string {
+  const detail = safeErrorDiagnostic(error, sensitiveValues);
+  if (isPreparationErrorCode(detail.code)) return `${preparationErrors[detail.code]} Пропозицію та запис до календаря не створено.`;
+  const stackFallback = (message: string) => detail.stack?.length
+    ? `${message}\nТехнічний стек викликів:\n${detail.stack.join('\n')}`.slice(0, 1500)
+    : message.slice(0, 700);
+  if (detail.code === 'BOOKING_PROPOSAL_STATE') {
+    const labels: Record<BookingProposalIssue, string> = {
+      missing: 'активної пропозиції не знайдено',
+      wrong_action: 'тип пропозиції не відповідає створенню запису',
+      incomplete: 'у пропозиції бракує обов’язкових даних',
+      expired: 'строк дії пропозиції сплив',
+      client_mismatch: 'пропозицію не прив’язано до поточного клієнта',
+      unavailable: 'підтвердження зараз недоступне через стан обслуговування чату',
+      replaced: 'пропозицію змінено або вже використано',
+      undelivered: 'останню пропозицію не вдалося підтвердити як доставлену',
+      binding_mismatch: 'останнє повідомлення не прив’язане до цієї пропозиції',
+    };
+    const diagnosis = detail.proposalIssue ? labels[detail.proposalIssue] : 'стан пропозиції не вдалося уточнити';
+    return `Не вдалося підтвердити пропозицію запису: ${diagnosis}. Запис не створено; перевірте актуальний стан пропозиції перед повторною спробою.`;
+  }
+  if (detail.code === 'BOOKING_PROPOSAL_FACT_MISMATCH') {
+    const labels: Record<string, string> = { service: 'послуга', duration: 'тривалість', date: 'дата', time: 'час', price: 'ціна', currency: 'валюта', reference_code: 'код пропозиції', conflicting_number: 'зайве або суперечливе число', conflicting_currency: 'інша валюта' };
+    const fields = detail.factIssues?.map((issue) => labels[issue]).filter((label): label is string => Boolean(label)) ?? [];
+    const diagnosis = fields.length ? ` Перевірка не пройдена: ${fields.join(', ')}.` : '';
+    return `Не вдалося перевірити факти пропозиції запису.${diagnosis} Повідомлення клієнту не надіслано; звірте пропозицію перед ручною відповіддю.`;
+  }
+  if (detail.type === 'ZodError') {
+    const bookingMessage = bookingValidationMessage(detail, source);
+    if (bookingMessage) return bookingMessage.slice(0, 700);
+    return detail.stack?.length
+      ? stackFallback('Не вдалося локалізувати помилку перевірки даних.')
+      : 'Не вдалося визначити причину помилки перевірки даних. Перевірте запит вручну.';
+  }
+  const operation = responderOperations.find(([name]) => name === source)?.[1] ?? 'виконати операцію асистента';
+  const fields = [`Не вдалося ${operation}.`];
+  if (detail.type === 'TimeoutError' || detail.type === 'AbortError') fields.push('Вичерпано час очікування відповіді.');
+  if (detail.upstreamStatus) fields.push(`Зовнішній сервіс повернув статус HTTP ${detail.upstreamStatus}.`);
+  if (detail.code) fields.push(`Код помилки: ${detail.code}.`);
+  if (detail.providerError?.code) fields.push(`Код сервісу: ${detail.providerError.code}.`);
+  if (detail.providerRequestId) fields.push(`ID запиту: ${detail.providerRequestId}.`);
+  fields.push(source === 'Telegram delivery'
+    ? 'Перевірте чат перед повторним надсиланням, щоб не створити дубль.'
+    : source === 'System One handoff'
+      ? 'Чернетку клієнту не надіслано; перевірте її вручну.'
+      : 'Перевірте стан операції перед повторною спробою.');
+  const summary = fields.join(' ');
+  const hasReadableCause = Boolean(detail.type === 'TimeoutError' || detail.type === 'AbortError' || detail.upstreamStatus || detail.code || detail.providerError?.code);
+  return hasReadableCause ? summary.slice(0, 700) : stackFallback(`${summary}\nЛюдське пояснення причини недоступне.`);
+}
 export function collectSensitiveStrings(value: unknown, limit = 500): string[] {
   const found = new Set<string>();
   const visit = (item: unknown, depth: number): void => {
@@ -94,6 +181,11 @@ export function collectSensitiveStrings(value: unknown, limit = 500): string[] {
 export const safeErrorCategory = (error: unknown): string => {
   if (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name)) return 'timeout';
   const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+  const proposalIssue = error && typeof error === 'object' && 'proposalIssue' in error ? error.proposalIssue : undefined;
+  if (isPreparationErrorCode(code)) return code;
+  if (code === 'BOOKING_PROPOSAL_STATE' && typeof proposalIssue === 'string' && bookingProposalIssues.includes(proposalIssue as BookingProposalIssue)) return `booking proposal state: ${proposalIssue}`;
+  if (code === 'BOOKING_PROPOSAL_STATE') return 'booking proposal state';
+  if (code === 'BOOKING_PROPOSAL_FACT_MISMATCH') return 'booking proposal fact mismatch';
   if (code === 'OPENAI_DECISION_TOKEN_LIMIT') return 'provider output token limit';
   if (code === 'OPENAI_DECISION_INCOMPLETE') return 'provider response incomplete';
   if (code === 'OPENAI_S2_TOKEN_LIMIT') return 'System Two output token limit';

@@ -8,6 +8,8 @@ The local API loads the root `.env` on startup without overriding environment va
 
 The backend starts on port 2301 and the Vite client on port 5173. Run `pnpm seed` against the configured persistence adapter to populate the documented development services and schedule.
 
+Open the Swagger UI through the signed-in admin app at `http://localhost:5173/api/docs/`; the Vite proxy forwards it to the API. Direct API clients can read `http://localhost:2301/docs/openapi.json` with `Authorization: Bearer <token>`. After an authorized Firebase release, Hosting serves the UI and JSON under `/api/docs/` and `/api/docs/openapi.json`. Every docs route and UI asset requires the same Firebase ID-token authorization as other admin routes. The admin app exchanges its Firebase token for a one-hour HttpOnly docs cookie scoped to `/api/docs`, renews it on token refresh, and clears it on sign-out. Owner-only and debug-owner operations need the corresponding account. The Telegram webhook uses its secret-token header. Do not paste live credentials into shared screenshots or exported documents.
+
 
 ### Schedule and Calendar booking
 

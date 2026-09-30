@@ -6,33 +6,6 @@ import { adminApi } from './api.js';
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'Request failed.';
 const TabPanel = ({ active, id, children }: { active: boolean; id: string; children: React.ReactNode }) => <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab`} hidden={!active}><Box sx={{ pt: 3 }}>{children}</Box></div>;
-const RoutingPromptEditor = () => {
-  const queryClient = useQueryClient();
-  const queryKey = ['editable-prompt', 'routing'];
-  const query = useQuery({ queryKey, queryFn: adminApi.routingPrompt });
-  const [draft, setDraft] = useState<{ instructions: string; general: string; booking: string } | undefined>();
-  const [message, setMessage] = useState('');
-  const value = draft ?? query.data;
-  const save = useMutation({ mutationFn: () => adminApi.saveRoutingPrompt({ instructions: value!.instructions, general: value!.general, booking: value!.booking }), onSuccess: (saved) => { queryClient.setQueryData(queryKey, saved); setDraft(undefined); setMessage('Saved. Changes apply to the next request.'); } });
-  const reset = useMutation({ mutationFn: adminApi.resetRoutingPrompt, onSuccess: (saved) => { queryClient.setQueryData(queryKey, saved); setDraft(undefined); setMessage('Reset to the default prompt.'); } });
-  if (query.isPending) return <Typography>Loading Routing prompt…</Typography>;
-  if (query.isError || !value) return <Alert severity="error">Could not load the Routing prompt. {errorText(query.error)}</Alert>;
-  const fields = [
-    { id: 'instructions', label: 'Routing instructions', rows: 7 },
-    { id: 'general', label: 'General criteria', rows: 4 },
-    { id: 'booking', label: 'Booking criteria', rows: 4 },
-  ] as const;
-  const canSave = fields.some(({ id }) => value[id] !== query.data[id]) && fields.every(({ id }) => value[id].trim().length > 0 && value[id].length <= 20_000) && !save.isPending && !reset.isPending;
-  return <Stack spacing={2}>
-    <Typography variant="h5">Routing</Typography>
-    <Stack direction="row" alignItems="center" spacing={1}><Chip size="small" color={query.data.isCustom ? 'primary' : 'default'} label={query.data.isCustom ? 'Custom prompt' : 'Default prompt'} /><Typography variant="body2" color="text.secondary">Instructions ask the question. Criteria describe when each workflow applies. Changes apply to the next request.</Typography></Stack>
-    {fields.map(({ id, label, rows }) => <TextField key={id} label={label} value={value[id]} onChange={(event) => { setDraft({ instructions: value.instructions, general: value.general, booking: value.booking, [id]: event.target.value }); setMessage(''); }} multiline minRows={rows} fullWidth inputProps={{ maxLength: 20_000, 'aria-label': label }} helperText={`${value[id].length.toLocaleString()} / 20,000 characters`} disabled={save.isPending || reset.isPending} />)}
-    {message && <Alert severity="success">{message}</Alert>}
-    {save.isError && <Alert severity="error">Could not save the prompt. {errorText(save.error)}</Alert>}
-    {reset.isError && <Alert severity="error">Could not reset the prompt. {errorText(reset.error)}</Alert>}
-    <Box display="flex" gap={1}><Button variant="contained" onClick={() => { setMessage(''); save.mutate(); }} disabled={!canSave}>Save Routing prompt</Button><Button variant="outlined" color="inherit" onClick={() => { setMessage(''); reset.mutate(); }} disabled={!query.data.isCustom || save.isPending || reset.isPending}>Reset Routing prompt</Button></Box>
-  </Stack>;
-};
 const CatalogPromptEditor = ({ id, label, description }: { id: AssistantPromptId; label: string; description: string }) => {
   const queryClient = useQueryClient();
   const queryKey = ['editable-prompt', id];
@@ -63,13 +36,13 @@ const CatalogPromptEditor = ({ id, label, description }: { id: AssistantPromptId
 };
 export const AssistantPrompt = () => {
   const [system, setSystem] = useState<'one' | 'two'>('one');
-  const [onePrompt, setOnePrompt] = useState('routing');
-  const [twoPrompt, setTwoPrompt] = useState('general');
+  const [onePrompt, setOnePrompt] = useState('handoff');
+  const [twoPrompt, setTwoPrompt] = useState('assistant');
   const catalog = useQuery({ queryKey: ['prompt-catalog'], queryFn: adminApi.promptCatalog });
   const oneEntries = catalog.data?.systemOne ?? [];
   const twoEntries = catalog.data?.systemTwo ?? [];
   return <Stack spacing={2}>
-    <Typography variant="body2">System One automatically selects General or Booking for each message using conversation context. Every prompt can be edited; provider schemas, tool access, and booking checks remain enforced by the server.</Typography>
+    <Typography variant="body2">System Two writes replies and can book a confirmed appointment in Calendar. System One checks whether the proposed reply sounds automated.</Typography>
     <Tabs value={system} onChange={(_, value: 'one' | 'two') => setSystem(value)} aria-label="Prompt systems">
       <Tab value="one" label="System One" id="system-one-tab" aria-controls="system-one-panel" />
       <Tab value="two" label="System Two" id="system-two-tab" aria-controls="system-two-panel" />
@@ -79,7 +52,7 @@ export const AssistantPrompt = () => {
         <Tabs value={onePrompt} onChange={(_, value: string) => setOnePrompt(value)} aria-label="System One prompts" variant="scrollable" scrollButtons="auto">
           {oneEntries.map(({ id, label }) => <Tab key={id} value={id} label={label} id={`one-${id}-tab`} aria-controls={`one-${id}-panel`} />)}
         </Tabs>
-        {oneEntries.map(({ id, label, description }) => <TabPanel key={id} active={onePrompt === id} id={`one-${id}`}>{id === 'routing' ? <RoutingPromptEditor /> : <CatalogPromptEditor id={id as AssistantPromptId} label={label} description={description} />}</TabPanel>)}
+        {oneEntries.map(({ id, label, description }) => <TabPanel key={id} active={onePrompt === id} id={`one-${id}`}>{<CatalogPromptEditor id={id as AssistantPromptId} label={label} description={description} />}</TabPanel>)}
       </>}
     </TabPanel>
     <TabPanel active={system === 'two'} id="system-two">

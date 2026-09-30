@@ -9,13 +9,14 @@ vi.mock('./api.js', () => ({ adminApi: { conversations: vi.fn(), humanRequests: 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 it('clears context beside request release and reports removed message count', async () => {
-  vi.mocked(adminApi.conversations).mockResolvedValue([{ telegramChatId: 'chat-1', assistantEnabled: true, state: 'active', summary: '', createdAt: '2026-09-28T10:00:00.000Z', updatedAt: '2026-09-28T10:00:00.000Z' }]);
+  vi.mocked(adminApi.conversations).mockResolvedValue([{ telegramChatId: 'chat-1', telegramUsername: 'client123', assistantEnabled: true, state: 'active', summary: '', createdAt: '2026-09-28T10:00:00.000Z', updatedAt: '2026-09-28T10:00:00.000Z' }]);
   vi.mocked(adminApi.humanRequests).mockResolvedValue([{ id: 'case-1', conversationId: 'chat-1', telegramChatId: 'chat-1', telegramUpdateId: 1, status: 'open', reason: 'operation_error', thresholdPercent: 60, question: 'Need help', queuedMessages: [], notifications: {}, createdAt: '2026-09-28T10:00:00.000Z', updatedAt: '2026-09-28T10:00:00.000Z' }]);
   vi.mocked(adminApi.clearConversationContext).mockResolvedValue({ clearedMessages: 2 });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  render(<QueryClientProvider client={client}><Conversations /></QueryClientProvider>);
+  const { container } = render(<QueryClientProvider client={client}><Conversations /></QueryClientProvider>);
 
   expect(await screen.findByText('Request case-1 · open')).toBeTruthy();
+  expect(container.textContent).toContain('@client123');
   const buttons = screen.getAllByRole('button', { name: 'Clear context' });
   fireEvent.click(buttons[0]!);
   await waitFor(() => expect(adminApi.clearConversationContext).toHaveBeenCalledWith('chat-1'));

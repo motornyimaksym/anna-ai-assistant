@@ -80,25 +80,17 @@ const RequestDetails = ({ eventId, request }: { eventId: string; request: DebugR
   </Stack>;
 };
 
-const onePrompts = [
-  { value: 'routing', label: 'Routing' }, { value: 'approval', label: 'Approval' },
-  { value: 'probability', label: 'Probability' },
-] as const;
-const twoPrompts = [
-  { value: 'general', label: 'General' }, { value: 'booking-conversation', label: 'Booking conversation' },
-  { value: 'booking-planner', label: 'Booking planner' },
-] as const;
+const onePrompts = [{ value: 'handoff', label: 'Handoff' }] as const;
+const twoPrompts = [{ value: 'assistant', label: 'Assistant' }] as const;
 const PromptTest = () => {
   const [system, setSystem] = useState<'one' | 'two'>('one');
-  const [onePrompt, setOnePrompt] = useState<(typeof onePrompts)[number]['value']>('routing');
-  const [twoPrompt, setTwoPrompt] = useState<(typeof twoPrompts)[number]['value']>('general');
-  const [intent, setIntent] = useState<'availability' | 'create'>('availability');
+  const [onePrompt, setOnePrompt] = useState<(typeof onePrompts)[number]['value']>('handoff');
+  const [twoPrompt, setTwoPrompt] = useState<(typeof twoPrompts)[number]['value']>('assistant');
   const [example, setExample] = useState('');
   const test = useMutation({ mutationFn: adminApi.promptTest });
   const promptId = system === 'one' ? onePrompt : twoPrompt;
   const run = () => {
     if (system === 'one') test.mutate({ system, promptId: onePrompt, text: example });
-    else if (twoPrompt === 'booking-planner') test.mutate({ system, promptId: twoPrompt, intent, text: example });
     else test.mutate({ system, promptId: twoPrompt, text: example });
   };
   return <Stack spacing={2}>
@@ -110,12 +102,8 @@ const PromptTest = () => {
       <TextField select label="Prompt" value={promptId} onChange={(event) => { if (system === 'one') setOnePrompt(event.target.value as typeof onePrompt); else setTwoPrompt(event.target.value as typeof twoPrompt); test.reset(); }} disabled={test.isPending} sx={{ minWidth: 220 }}>
         {(system === 'one' ? onePrompts : twoPrompts).map(({ value, label }) => <MenuItem key={value} value={value}>{label}</MenuItem>)}
       </TextField>
-      {system === 'two' && twoPrompt === 'booking-planner' && <TextField select label="Planner intent" value={intent} onChange={(event) => { setIntent(event.target.value as typeof intent); test.reset(); }} disabled={test.isPending} sx={{ minWidth: 180 }}>
-        <MenuItem value="availability">Availability</MenuItem><MenuItem value="create">Create proposal</MenuItem>
-      </TextField>}
     </Stack>
-    {system === 'one' && onePrompt !== 'routing' && <Alert severity="info">Tests against fixed sample proposal: 60-minute massage tomorrow at 10:00.</Alert>}
-    {system === 'two' && twoPrompt === 'booking-planner' && <Alert severity="info">Uses sample schedule tomorrow at 10:00, 12:00, and 14:00 with no busy Calendar times. Output is not real availability.</Alert>}
+    {system === 'one' && <Alert severity="info">Uses a sample recent reply, your example as the client message, and an unsent draft. The score measures whether the draft sounds automated; copied text alone is not proof.</Alert>}
     <TextField label="Example text" value={example} onChange={(event) => { setExample(event.target.value); test.reset(); }} multiline minRows={4} fullWidth disabled={test.isPending} inputProps={{ maxLength: 4_000 }} helperText={`${example.length.toLocaleString()} / 4,000 characters`} />
     <Button variant="contained" onClick={run} disabled={!example.trim() || test.isPending} sx={{ alignSelf: 'flex-start' }}>{test.isPending ? 'Running…' : 'Run test'}</Button>
     {test.isError && <Alert severity="error">{test.error instanceof Error ? test.error.message : 'Prompt test failed.'}</Alert>}

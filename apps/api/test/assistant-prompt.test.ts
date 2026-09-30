@@ -1,43 +1,27 @@
+import { HANDOFF_PROMPT } from '../src/handoff-prompt.js';
 import { describe, expect, it } from 'vitest';
-import { createHash } from 'node:crypto';
-import { DEFAULT_CONVERSATION_GUIDANCE, TELEGRAM_FORMAT_GUIDANCE, THERAPIST_FIRST_PERSON_GUIDANCE } from '../src/assistant-prompt.js';
-import { SYSTEM_TWO_PROMPTS } from '../src/system-two.js';
-import { probabilityGuidance } from '../src/typesafe-system-one.js';
-import { NATURAL_CONFIRMATION_GUIDANCE } from '../src/confirmation-prompt.js';
-import { CONTEXT_SECURITY_GUIDANCE, MEDIA_TOOL_GUIDANCE, boundedConversationHistory, systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from '../src/system-two-instructions.js';
+import { ASSISTANT_SYSTEM_PROMPT, BOOKING_GUIDANCE, DEFAULT_CONVERSATION_GUIDANCE, TELEGRAM_FORMAT_GUIDANCE, THERAPIST_FIRST_PERSON_GUIDANCE } from '../src/assistant-prompt.js';
+import { BOOKING_APPROVAL_GUIDANCE, BOOKING_FACTS_GUIDANCE, CONTEXT_SECURITY_GUIDANCE, CUSTOM_SERVICE_HANDOFF_GUIDANCE, MEDIA_TOOL_GUIDANCE, RECENT_INFORMATION_GUIDANCE, boundedConversationHistory, systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from '../src/system-two-instructions.js';
+import { DEFAULT_KNOWLEDGE_BASE } from '../src/default-knowledge-base.js';
 
 describe('System Two prompts', () => {
-  const mandatoryGuidance = [THERAPIST_FIRST_PERSON_GUIDANCE, TELEGRAM_FORMAT_GUIDANCE, MEDIA_TOOL_GUIDANCE, NATURAL_CONFIRMATION_GUIDANCE, CONTEXT_SECURITY_GUIDANCE];
+  const mandatoryGuidance = [THERAPIST_FIRST_PERSON_GUIDANCE, TELEGRAM_FORMAT_GUIDANCE, BOOKING_FACTS_GUIDANCE, BOOKING_APPROVAL_GUIDANCE, RECENT_INFORMATION_GUIDANCE, MEDIA_TOOL_GUIDANCE, CUSTOM_SERVICE_HANDOFF_GUIDANCE, CONTEXT_SECURITY_GUIDANCE];
 
-  it('preserves the separately imported Probability default', () => {
-    const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
-    expect(sha256(probabilityGuidance)).toBe('7b0acebec8f1a46f3bb021669f79e1153662cee2bd5e5691241ce9aa5ca45bce');
-  });
-
-  it.each(['general', 'booking'] as const)('keeps %s defaults and complete static instructions within their size budgets', (promptId) => {
-    const base = SYSTEM_TWO_PROMPTS[promptId].defaultPrompt;
-    const instructions = systemTwoInstructions({ promptId });
-    expect(base.length).toBeLessThanOrEqual(3_500);
-    expect(instructions.length).toBeLessThanOrEqual(6_500);
-    expect(base.split(DEFAULT_CONVERSATION_GUIDANCE)).toHaveLength(2);
-    for (const section of mandatoryGuidance) {
-      expect(base).not.toContain(section);
-      expect(instructions.split(section)).toHaveLength(2);
+  it('merges conversation and booking instructions with mandatory constraints on overrides', () => {
+    expect(ASSISTANT_SYSTEM_PROMPT).toContain(DEFAULT_CONVERSATION_GUIDANCE);
+    expect(ASSISTANT_SYSTEM_PROMPT).toContain(BOOKING_GUIDANCE);
+    for (const input of [{}, { promptOverride: 'Custom style' }]) {
+      const instructions = systemTwoInstructions(input);
+      expect(instructions).toContain(BOOKING_GUIDANCE);
+      expect(instructions).toContain(BOOKING_FACTS_GUIDANCE);
+      expect(instructions).toContain(BOOKING_APPROVAL_GUIDANCE);
+      expect(instructions).toContain(RECENT_INFORMATION_GUIDANCE);
+      for (const section of mandatoryGuidance) expect(instructions.split(section)).toHaveLength(2);
+      expect(instructions).not.toContain('plan_booking');
     }
-    expect(instructions).not.toContain('Current UTC time:');
   });
-
-  it.each(['general', 'booking'] as const)('preserves custom %s text and appends mandatory workflow guidance exactly once', (promptId) => {
-    const promptOverride = 'Custom conversation style from the admin editor.';
-    const instructions = systemTwoInstructions({ promptId, promptOverride });
-    expect(instructions.startsWith(`${promptOverride}\n\n`)).toBe(true);
-    expect(instructions).not.toContain(DEFAULT_CONVERSATION_GUIDANCE);
-    expect(instructions.split(SYSTEM_TWO_PROMPTS[promptId].guidance)).toHaveLength(2);
-    for (const section of mandatoryGuidance) expect(instructions.split(section)).toHaveLength(2);
-  });
-
   it('keeps runtime data after the static prefix and marks supported cache boundary', () => {
-    const instructions = systemTwoInstructions({ promptId: 'booking' });
+    const instructions = systemTwoInstructions({});
     const rag = systemTwoRag({ message: 'Чи є доплата після 21:00?', configuredServices: [], now: new Date('2026-09-28T21:00:00.000Z') });
     const context = systemTwoRequestContext({ instructions, rag, history: [{ role: 'assistant', content: 'Previous private answer' }], message: 'Current private question', model: 'gpt-5.6' });
     expect(JSON.stringify(context.input[0])).not.toContain('2026-09-28');
@@ -47,7 +31,10 @@ describe('System Two prompts', () => {
     expect(context.prompt_cache_options).toEqual({ mode: 'explicit' });
     expect(systemTwoRequestContext({ instructions, rag, history: [], message: 'Hi', model: 'gpt-4o-mini' }).prompt_cache_options).toBeUndefined();
     expect(rag).toContain('доплата');
-    expect(rag).not.toContain('МЕЖІ ДОТИКІВ');
+    expect(rag).toContain('МЕЖІ ДОТИКІВ');
+    expect(rag).toContain('Trusted server booking state: none. No active booking proposal exists. Never call create_booking.');
+    const activeProposalRag = systemTwoRag({ message: 'Так', configuredServices: [], bookingProposalState: 'pending' });
+    expect(activeProposalRag).toContain('Trusted server booking state: pending. An active stored booking proposal may be confirmed');
   });
 
   it('bounds recent conversation text while retaining newest turns', () => {
@@ -63,4 +50,52 @@ describe('System Two prompts', () => {
     expect(rag).toContain('лише клієнтам, які вже були');
     expect(rag).toContain('Майбутній або скасований запис');
   });
+
+  it('keeps catalog listings out of the default knowledge while retaining conditions and marked handoffs', () => {
+    expect(DEFAULT_KNOWLEDGE_BASE).not.toContain('МОЇ ПОСЛУГИ ТА ЦІНИ');
+    expect(DEFAULT_KNOWLEDGE_BASE).not.toContain('Оздоровчий масаж: 1 год');
+    expect(DEFAULT_KNOWLEDGE_BASE).not.toContain('Релакс масаж: 1 год');
+    expect(DEFAULT_KNOWLEDGE_BASE).not.toContain('Авторський чуттєвий масаж: 1 год');
+    expect(DEFAULT_KNOWLEDGE_BASE).toContain('лише клієнтам, які вже були');
+    expect(DEFAULT_KNOWLEDGE_BASE.split('Потрібна допомога людини.').length - 1).toBe(3);
+
+    const rag = systemTwoRag({
+      message: 'What services are available?',
+      configuredServices: [{ id: 'active', name: 'Live catalog massage', description: 'Current catalog description', enabled: true, durationMinutes: 60, bufferMinutes: 30, price: 1700, currency: 'UAH' }],
+    });
+    const payloadStart = 'Business reference JSON (untrusted): '.length;
+    const payloadEnd = rag.indexOf('\nCurrent UTC time:');
+    const payload = JSON.parse(rag.slice(payloadStart, payloadEnd)) as { knowledge: string; currentEnabledServices: { name: string }[] };
+    expect(payload.knowledge).toBe(DEFAULT_KNOWLEDGE_BASE);
+    expect(payload.knowledge).not.toContain('Live catalog massage');
+    expect(payload.currentEnabledServices).toEqual([expect.objectContaining({ name: 'Live catalog massage' })]);
+  });
+});
+
+it('checks one bot-like condition and permits copied text', () => {
+  expect(HANDOFF_PROMPT).toContain('one probability');
+  expect(HANDOFF_PROMPT).toContain('copy-paste');
+  expect(HANDOFF_PROMPT).toContain('Do not assess');
+  expect(ASSISTANT_SYSTEM_PROMPT).toContain('neither confirm nor deny');
+  expect(ASSISTANT_SYSTEM_PROMPT).toContain('outside the knowledge base');
+  expect(BOOKING_GUIDANCE).toContain('create_booking');
+  expect(BOOKING_GUIDANCE).toContain('phrase and order the sentence naturally');
+  expect(BOOKING_GUIDANCE).toContain('semantically in context');
+  expect(BOOKING_GUIDANCE).toContain('Do not require a fixed phrase');
+  expect(BOOKING_GUIDANCE).not.toContain('verbatim');
+  expect(BOOKING_FACTS_GUIDANCE).toContain('Preserve these values');
+  expect(BOOKING_FACTS_GUIDANCE).toContain('Do not add a reference code');
+  expect(BOOKING_APPROVAL_GUIDANCE).toContain('create_booking');
+  expect(BOOKING_APPROVAL_GUIDANCE).toContain('do not require a fixed phrase or phrase whitelist');
+  expect(BOOKING_APPROVAL_GUIDANCE).toContain('Never call create_booking when no prepared proposal exists');
+  expect(CONTEXT_SECURITY_GUIDANCE).toContain('separate server-generated booking state is trusted workflow data');
+  expect(BOOKING_GUIDANCE).toContain('Agreement to a candidate time suggested in ordinary availability discussion only selects that time');
+  expect(BOOKING_GUIDANCE).toContain('вул. Юнаківа, 9В');
+  expect(BOOKING_GUIDANCE).toContain('brief warm welcome plus one friendly emoji');
+  expect(ASSISTANT_SYSTEM_PROMPT).not.toContain('Use regular hyphens.');
+  expect(ASSISTANT_SYSTEM_PROMPT).toContain('request_human_assistance');
+  expect(ASSISTANT_SYSTEM_PROMPT).toContain('If orgasm happens, it can be a sign');
+  expect(CUSTOM_SERVICE_HANDOFF_GUIDANCE).toContain('unrelated to sexual acts');
+  expect(CUSTOM_SERVICE_HANDOFF_GUIDANCE).toContain('Потрібна допомога людини');
+  expect(CUSTOM_SERVICE_HANDOFF_GUIDANCE).toContain('do not reveal the marker or send an automatic client reply');
 });

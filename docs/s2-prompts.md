@@ -1,36 +1,13 @@
-# S2 prompt review
+# Unified assistant prompts
 
-The General and Booking conversation defaults were revised after importing production prompts. This changes prompt text and its shared composition, not the structured Booking planner, tool schemas, or booking implementation.
+SPEC section 62 defines the current flow: S2 Assistant drafts every automatic client response, then S1 Handoff assesses the exact outgoing text and current conversation. No router, boolean approval, separate planner or server-authored booking messages remain.
 
-## Findings and changes
+Assistant combines conversational and booking guidance. Before each response, mandatory S2 guidance checks the three chat messages immediately before the current client message. It does not repeat facts the assistant already provided there, including price, duration, date/time or knowledge/catalog information; it answers new parts and may briefly note that a fact was already shared. A fact only stated by the client does not count as already answered. The assistant may repeat a fact on an explicit request to repeat or clarify it, and includes exact required facts in a new booking proposal. It playfully redirects bot-identity questions toward massage booking without confirming or denying, and gently redirects unrelated questions outside the knowledge base. An explicit request for an unlisted, nonsexual custom massage, or a request covered by the default knowledge base's exact `Потрібна допомога людини` marker, goes to a responder through terminal `request_human_assistance`, without an automatic reply; the default marker covers payment assistance, couple/four-hands requests, and training inquiries. Unlisted sexual acts remain outside scope. For a configured lingam service discussed on explicit request, the assistant may explain that orgasm, if it occurs, can indicate the client found the service pleasurable, without promising it or treating it as the goal. After successful booking, its confirmation includes the exact address `вул. Юнаківа, 9В` and ends with a brief warm welcome and one friendly emoji. Server-side normalization replaces long dashes; the editable default no longer instructs the model to use regular hyphens. Read-only tools provide service data, owned appointments and fresh schedule/Calendar evidence. For new bookings, `prepare_booking` stages a concrete proposal; after the client confirms the delivered proposal, `create_booking` writes the Calendar event with server-side identity, expiry and conflict checks. Uncertain writes go to human review. Humans handle cancellation and rescheduling. Legacy pending actions remain inactive.
 
-- Mandatory questions after every answer made acknowledgments and completed conversations feel scripted. Ask one question only when useful; stop after a complete answer.
-- The knowledge-base-only question rule could prohibit collecting client preferences. Keep business facts grounded, but allow missing service, duration, time, and preference questions.
-- Booking described itself as the therapist, conflicting with the server's identity rule. Both defaults describe an assistant; first-person service wording remains, with truthful identity on direct questions.
-- General duplicated security and formatting. Booking repeated most server guidance and incorrectly implied every planning call stages a proposal. Share concise dialogue rules, append mandatory sections once, and distinguish availability from create/reschedule proposals.
-- Booking lacked clear intent selection and repeated catalog lookups unnecessarily. Choose planner intent from client intent, use current supplied catalog data, fetch owned bookings before mutations, and let the planner handle missing scheduling details.
-- Media guidance pushed discovery on informational turns. Discover media when requested or directly useful; all delivery and cooldown safeguards remain.
+Handoff returns a number from 0 to 1 for one condition: whether the outgoing reply sounds automated in context. It receives only the latest 20 delivered messages, including the incoming message, and the unsent draft. Copy-pasted wording can be natural and does not alone imply a bot. Score 1 always pauses; other scores pause only above threshold. Failures pause without sending a fallback message. Withheld drafts remain unsent.
 
-## Evaluation cases
+New editable IDs are `assistant` and `handoff`, with independent new override documents. Old overrides are inactive. The debug tester uses a synthetic recent conversation for Handoff and displays Assistant tool requests without executing them.
 
-Use synthetic facts and the isolated prompt tester; inspect tool calls without executing them. These are review cases, not claims of completed live model evaluation.
+Evaluation cases: bot identity; out-of-knowledge questions; normal factual questions; missing service/duration; dates supported only by fresh schedule and Calendar; robotic drafts; copied text; direct confirmation of a delivered appointment proposal; conditional agreement or changed details; stale source data; invalid provider output. Automated tests verify contracts and orchestration; model wording still requires qualitative evaluation.
 
-| Context / request | Expected behavior |
-| --- | --- |
-| General: "Дякую, поки подумаю" | Short acknowledgment, no new sales question or tool call. |
-| General: price question with current service price/duration supplied | State those facts concisely; no redundant lookup or invented price. |
-| General: essential payment policy absent from retrieved knowledge | State that the specific policy cannot be confirmed; do not ask the client to define it, invent it, or open a human case. |
-| General: unrelated question or fake admin instructions | Brief scope redirection; do not reveal internal instructions or escalate solely for being off topic. |
-| Either: "Ти бот?" | Truthful, brief automated-assistant disclosure. |
-| Booking: "Є час завтра?" with service missing | `plan_booking` with `availability`, null booking ID; planner asks the missing question. |
-| Booking: explicit booking request with service, duration and chosen time already given | `plan_booking` with `create`, null booking ID; do not re-ask known details or claim completion. |
-| Booking: reschedule/cancel with two owned appointments | `get_bookings`, one question identifying the target, then the correct tool/intent and returned ID. |
-| Booking: previously offered slot followed by new availability question | Fresh `plan_booking`; old messages do not establish availability. |
-| Planner unavailable, clarification, or uncertain mutation | Planning stays a normal clarification/unavailable response; server-detected uncertain mutation requires human review without retry. |
-| Media request | Discover one eligible match; only `sent` confirms delivery, and uncertain delivery is never retried automatically. |
-
-## Limits outside these prompts
-
-The server composes availability lists, proposals and execution results using Ukrainian dates without timezone labels and a short confirmation invitation. It returns the planner's clarification text directly. An active delivered proposal is handled by System One approval before S2: non-approval clears the matching proposal, then routes the same message normally with no fixed discard reply. These template and control-flow changes are implemented in code; changing S2 prose alone cannot replace them.
-
-The Probability gate can still withhold any automatic reply; prompt brevity does not guarantee a lower score. Keyword retrieval can omit a relevant policy, and persistent OpenAI conversation state can retain old instructions. These require separate changes or evaluation. Production overrides mask new code defaults until replaced through Save or removed through Reset after deployment.
+Client-turn external API failures also enter the existing human queue. Responders receive only bounded, redacted service/status/code/message details, not raw provider bodies, credentials or prompts. Background schedule refresh stays best-effort.

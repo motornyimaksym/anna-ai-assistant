@@ -1,16 +1,17 @@
 import { systemOneSettingsSchema, type SystemOneSettings } from '@booking/contracts';
-import { isDeepStrictEqual } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { FieldValue, getFirestore, type DocumentData, type Firestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import {
-  debugEventsSchema, debugEventSchema, debugPayloadSchema, type DebugEvent, type DebugPayload, type AssistantPromptId, availabilityRuleSchema, bookingSchema, botSettingsSchema, conversationSchema, scheduleExceptionSchema, serviceSchema, updateAdminAccessSchema,
+  debugEventsSchema, debugEventSchema, debugPayloadSchema, type BookingConfirmationFacts, type DebugEvent, type DebugPayload, type AssistantPromptId, availabilityRuleSchema, bookingSchema, botSettingsSchema, conversationSchema, pendingActionSchema, scheduleExceptionSchema, serviceSchema, updateAdminAccessSchema,
   type AvailabilityRuleDto, type BookingDto, type BotSettings, type ConversationDto, type ScheduleExceptionDto, type ServiceDto,
 } from '@booking/contracts';
 import { BookingConflictError, BookingNotFoundError, lockedSlotKeys, serviceEndAt } from '@booking/domain';
 import { FirebaseAdminService } from './firebase-admin.js';
 import type { RequestBodies } from './request-diagnostics.js';
+import { getLegacyTesterUsernames } from './bot-settings.js';
+import { bookingProposalError } from './booking-proposal-errors.js';
 
 export type CreateStoredBooking = Omit<BookingDto, 'id' | 'createdAt' | 'updatedAt'> & { lockedSlots: string[]; bufferMinutes: number };
 export type BookingOperation = { id: string; kind: 'create' | 'reschedule' | 'cancel'; targetStartAt?: string; targetEndAt?: string; leaseId?: string; leaseUntil?: number };
@@ -54,25 +55,11 @@ export class BookingRepository {
   constructor(_firebase: FirebaseAdminService) { this.db = getFirestore(); }
 
   private promptDocumentId(id: AssistantPromptId): string {
-    return {
-      routing: 'systemOneRoutingPrompt', approval: 'systemOneApprovalPrompt', probability: 'systemOneProbabilityPrompt',
-      general: 'prompt', 'booking-conversation': 'bookingConversationPrompt', 'booking-planner': 'bookingPrompt',
-    }[id];
+    return { handoff: 'handoffPrompt', assistant: 'unifiedAssistantPrompt' }[id];
   }
   async getPromptOverride(id: AssistantPromptId): Promise<{ prompt: string; updatedAt: string } | undefined> {
     const data = (await this.db.collection('assistantSettings').doc(this.promptDocumentId(id)).get()).data();
     return typeof data?.prompt === 'string' && typeof data.updatedAt === 'string' ? { prompt: data.prompt, updatedAt: data.updatedAt } : undefined;
-  }
-  async getRoutingPromptOverride(): Promise<{ instructions: string; general?: string; booking?: string; updatedAt: string } | undefined> {
-    const data = (await this.db.collection('assistantSettings').doc('systemOneRoutingPrompt').get()).data();
-    const instructions = typeof data?.instructions === 'string' ? data.instructions : data?.prompt;
-    if (typeof instructions !== 'string' || typeof data?.updatedAt !== 'string') return undefined;
-    return { instructions, ...(typeof data.general === 'string' ? { general: data.general } : {}), ...(typeof data.booking === 'string' ? { booking: data.booking } : {}), updatedAt: data.updatedAt };
-  }
-  async saveRoutingPromptOverride(value: { instructions: string; general: string; booking: string }) {
-    const saved = { ...value, updatedAt: new Date().toISOString() };
-    await this.db.collection('assistantSettings').doc('systemOneRoutingPrompt').set(saved);
-    return saved;
   }
   async savePromptOverride(id: AssistantPromptId, prompt: string): Promise<{ prompt: string; updatedAt: string }> {
     const value = { prompt, updatedAt: new Date().toISOString() };
@@ -240,6 +227,15 @@ export class BookingRepository {
       return candidate;
     });
   }
+  async detachOpenAiConversation(chatId: string, clientId: string, expected: string): Promise<void> {
+    const ref = this.db.collection('conversations').doc(chatId);
+    await this.db.runTransaction(async (tx) => {
+      const data = (await tx.get(ref)).data();
+      if (data?.clientId === clientId && data.openaiConversationId === expected) {
+        tx.update(ref, { openaiConversationId: FieldValue.delete() });
+      }
+    });
+  }
   async replaceOpenAiConversation(chatId: string, clientId: string, expected: string, candidate: string): Promise<void> {
     const ref = this.db.collection('conversations').doc(chatId);
     await this.db.runTransaction(async (tx) => {
@@ -273,23 +269,36 @@ export class BookingRepository {
     const ref = this.db.collection('conversations').doc(conversation.telegramChatId);
     await this.db.runTransaction(async (tx) => {
       const doc = await tx.get(ref);
-      if (doc.exists) tx.update(ref, { updatedAt: conversation.updatedAt });
+      if (doc.exists) tx.update(ref, { updatedAt: conversation.updatedAt, telegramUsername: conversation.telegramUsername ?? null });
       else tx.set(ref, withoutUndefined(conversation));
     });
   }
-  /** Compare-and-set: staging, rejection and consumption all bind to one proposal snapshot. */
-  async replacePendingAction(chatId: string, clientId: string, expected: ConversationDto['pendingAction'], replacement: ConversationDto['pendingAction'], options: { requireUnexpired?: boolean } = {}): Promise<boolean> {
+  async stageAssistantBooking(chatId: string, clientId: string, input: { serviceId: string; durationMinutes: number; startAt: string; confirmationFacts: BookingConfirmationFacts }) {
+    const proposal = pendingActionSchema.parse({ id: randomUUID(), name: 'create_booking', arguments: { serviceId: input.serviceId, durationMinutes: input.durationMinutes, startAt: input.startAt }, confirmationFacts: input.confirmationFacts, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() });
+    const ref = this.db.collection('conversations').doc(chatId);
+    await this.db.runTransaction(async (tx) => {
+      const data = (await tx.get(ref)).data();
+      if (!data || data.clientId !== clientId || !data.assistantEnabled || data.activeHumanRequestId || (data.humanTakeoverUntil && data.humanTakeoverUntil > new Date().toISOString())) throw new Error('Conversation is unavailable for booking');
+      tx.update(ref, { pendingAction: proposal, updatedAt: new Date().toISOString() });
+    });
+    return proposal;
+  }
+  async consumeAssistantBooking(chatId: string, clientId: string, proposalId: string) {
     const ref = this.db.collection('conversations').doc(chatId);
     return this.db.runTransaction(async (tx) => {
-      const doc = await tx.get(ref);
-      if (!doc.exists) return false;
-      const current = conversationSchema.parse({ ...doc.data(), telegramChatId: chatId });
-      const now = new Date().toISOString();
-      if (current.clientId !== clientId || !current.assistantEnabled || current.activeHumanRequestId || (current.humanTakeoverUntil && current.humanTakeoverUntil > now)) return false;
-      if (!isDeepStrictEqual(current.pendingAction, expected)) return false;
-      if (options.requireUnexpired && (!current.pendingAction || current.pendingAction.expiresAt <= now)) return false;
-      tx.update(ref, { pendingAction: replacement ? withoutUndefined(replacement) : FieldValue.delete(), updatedAt: now });
-      return true;
+      const data = (await tx.get(ref)).data();
+      if (!data) throw bookingProposalError('missing', 'Booking proposal is no longer valid');
+      if (data.clientId !== clientId) throw bookingProposalError('client_mismatch', 'Booking proposal is no longer valid');
+      if (!data.assistantEnabled || data.activeHumanRequestId || (data.humanTakeoverUntil && data.humanTakeoverUntil > new Date().toISOString())) throw bookingProposalError('unavailable', 'Booking proposal is no longer valid');
+      if (!data.pendingAction) throw bookingProposalError('missing', 'Booking proposal is no longer valid');
+      const proposal = pendingActionSchema.safeParse(data?.pendingAction);
+      if (!proposal.success) throw bookingProposalError('incomplete', 'Booking proposal is no longer valid');
+      if (proposal.data.id !== proposalId) throw bookingProposalError('replaced', 'Booking proposal is no longer valid');
+      if (proposal.data.name !== 'create_booking') throw bookingProposalError('wrong_action', 'Booking proposal is no longer valid');
+      if (!proposal.data.confirmationFacts) throw bookingProposalError('incomplete', 'Booking proposal is no longer valid');
+      if (proposal.data.expiresAt <= new Date().toISOString()) throw bookingProposalError('expired', 'Booking proposal is no longer valid');
+      tx.update(ref, { pendingAction: FieldValue.delete(), updatedAt: new Date().toISOString() });
+      return proposal.data;
     });
   }
   async listConversations(): Promise<ConversationDto[]> {
@@ -300,8 +309,16 @@ export class BookingRepository {
     const snapshot = await this.db.collection('conversations').doc(chatId).collection('messages').orderBy('createdAt', 'desc').limit(20).get();
     return snapshot.docs.reverse().map((doc) => ({ role: doc.data().role === 'user' ? 'user' as const : 'assistant' as const, content: String(doc.data().text) }));
   }
-  async appendMessage(chatId: string, role: 'user' | 'assistant' | 'human', text: string): Promise<void> {
-    await this.db.collection('conversations').doc(chatId).collection('messages').add({ role, text, createdAt: new Date().toISOString() });
+  async listMessagesForBookingCheck(chatId: string): Promise<{ role: 'user' | 'assistant' | 'human'; content: string; bookingProposalId?: string }[]> {
+    const snapshot = await this.db.collection('conversations').doc(chatId).collection('messages').orderBy('createdAt', 'desc').limit(20).get();
+    return snapshot.docs.reverse().map((doc) => {
+      const data = doc.data();
+      const role = data.role === 'user' ? 'user' as const : data.role === 'human' ? 'human' as const : 'assistant' as const;
+      return { role, content: String(data.text), ...(typeof data.bookingProposalId === 'string' ? { bookingProposalId: data.bookingProposalId } : {}) };
+    });
+  }
+  async appendMessage(chatId: string, role: 'user' | 'assistant' | 'human', text: string, bookingProposalId?: string): Promise<void> {
+    await this.db.collection('conversations').doc(chatId).collection('messages').add({ role, text, createdAt: new Date().toISOString(), ...(role === 'assistant' && bookingProposalId ? { bookingProposalId } : {}) });
   }
   async clearConversationContext(chatId: string, expectedBusinessConnectionId?: string): Promise<{ clearedMessages: number } | undefined> {
     const conversationRef = this.db.collection('conversations').doc(chatId);
@@ -341,17 +358,7 @@ export class BookingRepository {
   async deleteKnowledgeBaseOverride(): Promise<void> {
     await this.db.collection('assistantSettings').doc('knowledgeBase').delete();
   }
-  async getBookingPromptOverride(): Promise<{ prompt: string; updatedAt: string } | undefined> {
-    const doc = await this.db.collection('assistantSettings').doc('bookingPrompt').get();
-    const data = doc.data();
-    return typeof data?.prompt === 'string' && typeof data.updatedAt === 'string' ? { prompt: data.prompt, updatedAt: data.updatedAt } : undefined;
-  }
-  async saveBookingPromptOverride(prompt: string) {
-    const value = { prompt, updatedAt: new Date().toISOString() };
-    await this.db.collection('assistantSettings').doc('bookingPrompt').set(value);
-    return value;
-  }
-  async deleteBookingPromptOverride() { await this.db.collection('assistantSettings').doc('bookingPrompt').delete(); }
+
   private diagnosticBodyFile(id: string, kind: 'request' | 'response') { return getStorage().bucket().file(`assistant-diagnostics/${id}/${kind}.json`); }
   private async deleteDiagnosticBodies(id: string) {
     await Promise.all((['request', 'response'] as const).map(async (kind) => {
@@ -445,20 +452,7 @@ export class BookingRepository {
     }
     return { status: 'unavailable' };
   }
-  async getAssistantPromptOverride(): Promise<{ prompt: string; updatedAt: string } | undefined> {
-    const doc = await this.db.collection('assistantSettings').doc('prompt').get();
-    if (!doc.exists) return undefined;
-    const data = doc.data();
-    return typeof data?.prompt === 'string' && typeof data.updatedAt === 'string' ? { prompt: data.prompt, updatedAt: data.updatedAt } : undefined;
-  }
-  async saveAssistantPromptOverride(prompt: string): Promise<{ prompt: string; updatedAt: string }> {
-    const value = { prompt, updatedAt: new Date().toISOString() };
-    await this.db.collection('assistantSettings').doc('prompt').set(value);
-    return value;
-  }
-  async deleteAssistantPromptOverride(): Promise<void> {
-    await this.db.collection('assistantSettings').doc('prompt').delete();
-  }
+
   async getSystemOneSettings(): Promise<SystemOneSettings> {
     const doc = await this.db.collection('assistantSettings').doc('systemOne').get();
     if (!doc.exists) return { provider: 'openai' };
@@ -474,7 +468,8 @@ export class BookingRepository {
     if (!doc.exists) return undefined;
     const data = doc.data();
     if (typeof data?.updatedAt !== 'string') return undefined;
-    return { ...botSettingsSchema.parse(data), updatedAt: data.updatedAt };
+    const settings = botSettingsSchema.parse({ ...data, testerUsernames: data.testerUsernames ?? getLegacyTesterUsernames() });
+    return { ...settings, updatedAt: data.updatedAt };
   }
   async saveBotSettingsOverride(settings: BotSettings): Promise<BotSettings & { updatedAt: string }> {
     const value = { ...botSettingsSchema.parse(settings), updatedAt: new Date().toISOString() };
