@@ -58,7 +58,8 @@ export class TelegramService {
     const responder = update.message?.chat.type === 'private' ? update.message : undefined;
     const responderCommand = responder?.text?.trim();
     const isAnswerCommand = Boolean(responderCommand && /^\/answer(?:@[a-zA-Z0-9_]+)?(?:\s|$)/i.test(responderCommand));
-    if (responder?.from?.username && !responder.from.is_bot && responderCommand && (responderCommand === '/start' || isAnswerCommand)) {
+    const isResumeCommand = Boolean(responderCommand && /^\/resume(?:@[a-zA-Z0-9_]+)?(?:\s|$)/i.test(responderCommand));
+    if (responder?.from?.username && !responder.from.is_bot && responderCommand && (responderCommand === '/start' || isAnswerCommand || isResumeCommand)) {
       const userId = String(responder.from.id);
       const chatId = String(responder.chat.id);
       const username = responder.from.username.toLowerCase();
@@ -69,6 +70,18 @@ export class TelegramService {
       }
       if (await this.human.authorizedResponder(userId, chatId, username)) {
         if (!await this.repository.claimTelegramUpdate(update.update_id)) return;
+        if (isResumeCommand) {
+          const match = /^\/resume(?:@[a-zA-Z0-9_]+)?\s+(\S+)$/i.exec(responderCommand);
+          if (!match?.[1]) { await this.human.send(chatId, undefined, 'Формат: /resume <номер запиту>'); return; }
+          try {
+            await this.human.release(match[1], `telegram:${userId}`);
+          } catch {
+            await this.human.send(chatId, undefined, 'Не вдалося відновити обробку: запит уже закрито або потребує перевірки в адмінпанелі.');
+            return;
+          }
+          await this.human.send(chatId, undefined, 'Автоматичну обробку відновлено. Нові повідомлення знову надходитимуть боту.');
+          return;
+        }
         const match = /^\/answer(?:@[a-zA-Z0-9_]+)?\s+(\S+)(?:\s+([\s\S]+))?$/i.exec(responderCommand);
         if (!match || !match[1] || !match[2]?.trim()) { await this.human.send(chatId, undefined, 'Формат: /answer <номер запиту> <текст>'); return; }
         try {
@@ -78,7 +91,7 @@ export class TelegramService {
         return;
       }
     }
-    if (isAnswerCommand) return;
+    if (isAnswerCommand || isResumeCommand) return;
     if (message?.from?.is_bot || (message?.chat.type && message.chat.type !== 'private') || !message?.from?.username || !message.text) { await this.debug.record(trace, 'ignored', { reason: 'sender_or_message_not_eligible' }); return; }
     const settings = await this.repository.getBotSettingsOverride() ?? getDefaultBotSettings();
     const testerUsernames = settings.testerUsernames ?? getLegacyTesterUsernames();

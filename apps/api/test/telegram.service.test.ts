@@ -29,7 +29,7 @@ const setup = (settings: { maxReadDelayMs: number; typingDelayPerSymbolMs: numbe
   const send = vi.fn(async (url: string, _init?: RequestInit) => { order.push(url.split('/').at(-1)!); return { ok: true, json: async () => ({ ok: true }) }; });
   vi.stubGlobal('fetch', send);
   const assistant = { respond: vi.fn(async (): Promise<AssistantReply> => { order.push('assistant'); return { text: 'OK', fromOpenAI: true }; }) };
-  const human = { approveOutgoing: vi.fn(async () => true), isConfiguredUsername: vi.fn(async () => false), authorizedResponder: vi.fn(async () => undefined), enroll: vi.fn(async () => true), send: vi.fn(), reply: vi.fn(), queueExisting: vi.fn(), escalate: vi.fn(), escalateError: vi.fn() };
+  const human = { approveOutgoing: vi.fn(async () => true), isConfiguredUsername: vi.fn(async () => false), authorizedResponder: vi.fn(async () => undefined), enroll: vi.fn(async () => true), send: vi.fn(), reply: vi.fn(), release: vi.fn(async () => ({ ok: true as const })), queueExisting: vi.fn(), escalate: vi.fn(), escalateError: vi.fn() };
   const scheduleImport = { syncIfDue: vi.fn(async () => undefined) };
   return { service: new TelegramService(repository as unknown as BookingRepository, assistant as unknown as OpenAiService, human as unknown as HumanAssistanceService, scheduleImport as never, { record: vi.fn(async () => {}) } as never), repository, send, assistant, human, scheduleImport, order };
 };
@@ -364,6 +364,72 @@ it('gives usage guidance when copied answer command has no answer text', async (
 
   expect(human.reply).not.toHaveBeenCalled();
   expect(human.send).toHaveBeenCalledWith('777', undefined, expect.stringContaining('/answer <номер запиту> <текст>'));
+  expect(assistant.respond).not.toHaveBeenCalled();
+});
+
+it('releases a human case for an authorized responder without messaging or replaying client turns', async () => {
+  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+  vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+  const { service, human, assistant, repository, send } = setup();
+  human.authorizedResponder.mockResolvedValueOnce({ userId: '888', chatId: '777', username: 'helper123', enrolledAt: '2026-09-25T10:00:00.000Z' } as never);
+
+  await service.handle('webhook-secret', { update_id: 704, message: { message_id: 1, chat: { id: 777, type: 'private' }, from: { id: 888, username: 'Helper123' }, text: '/resume case-1' } });
+
+  expect(repository.claimTelegramUpdate).toHaveBeenCalledWith(704);
+  expect(human.release).toHaveBeenCalledWith('case-1', 'telegram:888');
+  expect(human.send).toHaveBeenCalledWith('777', undefined, expect.any(String));
+  expect(human.reply).not.toHaveBeenCalled();
+  expect(assistant.respond).not.toHaveBeenCalled();
+  expect(send).not.toHaveBeenCalled();
+  expect(repository.saveConversation).not.toHaveBeenCalled();
+});
+
+it('accepts Telegram bot-qualified resume commands', async () => {
+  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+  vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+  const { service, human, assistant } = setup();
+  human.authorizedResponder.mockResolvedValueOnce({ userId: '888', chatId: '777', username: 'helper123', enrolledAt: '2026-09-25T10:00:00.000Z' } as never);
+
+  await service.handle('webhook-secret', { update_id: 705, message: { message_id: 1, chat: { id: 777, type: 'private' }, from: { id: 888, username: 'Helper123' }, text: '/resume@AssistantBot case-1' } });
+
+  expect(human.release).toHaveBeenCalledWith('case-1', 'telegram:888');
+  expect(assistant.respond).not.toHaveBeenCalled();
+});
+
+it('gives usage guidance when resume command has no request ID', async () => {
+  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+  vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+  const { service, human, assistant } = setup();
+  human.authorizedResponder.mockResolvedValueOnce({ userId: '888', chatId: '777', username: 'helper123', enrolledAt: '2026-09-25T10:00:00.000Z' } as never);
+
+  await service.handle('webhook-secret', { update_id: 706, message: { message_id: 1, chat: { id: 777, type: 'private' }, from: { id: 888, username: 'Helper123' }, text: '/resume' } });
+
+  expect(human.release).not.toHaveBeenCalled();
+  expect(human.send).toHaveBeenCalledWith('777', undefined, expect.any(String));
+  expect(assistant.respond).not.toHaveBeenCalled();
+});
+
+it('reports stale or unreleasable resume requests without claiming success', async () => {
+  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+  vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+  const { service, human, assistant } = setup();
+  human.authorizedResponder.mockResolvedValueOnce({ userId: '888', chatId: '777', username: 'helper123', enrolledAt: '2026-09-25T10:00:00.000Z' } as never);
+  human.release.mockRejectedValueOnce(new Error('Human request is no longer releasable'));
+
+  await service.handle('webhook-secret', { update_id: 707, message: { message_id: 1, chat: { id: 777, type: 'private' }, from: { id: 888, username: 'Helper123' }, text: '/resume case-1' } });
+
+  expect(human.send).toHaveBeenCalledWith('777', undefined, expect.any(String));
+  expect(assistant.respond).not.toHaveBeenCalled();
+});
+
+it('ignores resume commands from senders who are not authorized responders', async () => {
+  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+  vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+  const { service, human, assistant } = setup();
+
+  await service.handle('webhook-secret', { update_id: 708, message: { message_id: 1, chat: { id: 777, type: 'private' }, from: { id: 888, username: 'Helper123' }, text: '/resume case-1' } });
+
+  expect(human.release).not.toHaveBeenCalled();
   expect(assistant.respond).not.toHaveBeenCalled();
 });
 

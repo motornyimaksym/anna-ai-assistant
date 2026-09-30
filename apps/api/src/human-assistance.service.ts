@@ -175,7 +175,10 @@ export class HumanAssistanceService {
     const clientChatId = chatId === 'unknown' ? (await this.store.get(requestId))?.telegramChatId : chatId;
     const contact = clientChatId ? await this.clientContact(clientChatId) : {};
     const notification = formatResponderNotification(transcript, contact);
-    const replyMarkup: AnswerReplyMarkup = { inline_keyboard: [[{ text: 'Копіювати /answer', copy_text: { text: `/answer ${requestId} ` } }]] };
+    const replyMarkup: AnswerReplyMarkup = { inline_keyboard: [[
+      { text: 'Копіювати /answer', copy_text: { text: `/answer ${requestId} ` } },
+      { text: 'Копіювати resume', copy_text: { text: `/resume ${requestId}` } },
+    ]] };
     for (const responder of responders) await this.deliver(requestId, `${responder.userId}:${eventId}`, responder.chatId, undefined, notification, replyMarkup, 'HTML');
   }
 

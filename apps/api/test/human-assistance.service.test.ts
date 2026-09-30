@@ -164,7 +164,7 @@ it.each([true, false])('includes a client link when available: %s', async (avail
   expect(text.length).toBeLessThanOrEqual(4096);
 });
 
-it('formats a chronological transcript and adds only a copy-answer button', async () => {
+it('formats a chronological transcript and adds answer and resume copy buttons', async () => {
   vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
   const { service, store, repository } = setup();
   store.open.mockResolvedValue({ request, created: true });
@@ -187,7 +187,10 @@ it('formats a chronological transcript and adds only a copy-answer button', asyn
   expect(body.text).not.toContain('Натисніть кнопку');
   expect(body.text).not.toContain('Не надіслане повідомлення');
   expect(body.parse_mode).toBe('HTML');
-  expect(body.reply_markup).toEqual({ inline_keyboard: [[{ text: 'Копіювати /answer', copy_text: { text: '/answer case-1 ' } }]] });
+  expect(body.reply_markup).toEqual({ inline_keyboard: [[
+    { text: 'Копіювати /answer', copy_text: { text: '/answer case-1 ' } },
+    { text: 'Копіювати resume', copy_text: { text: '/resume case-1' } },
+  ]] });
 });
 
 it('separates a withheld draft, escapes transcript text, and hides request and chat IDs', async () => {
@@ -221,6 +224,7 @@ it('separates a withheld draft, escapes transcript text, and hides request and c
   expect(body.text).not.toContain('/answer case-1');
   expect(body.parse_mode).toBe('HTML');
   expect(body.reply_markup.inline_keyboard[0][0].copy_text.text).toBe('/answer case-1 ');
+  expect(body.reply_markup.inline_keyboard[0][1]).toEqual({ text: 'Копіювати resume', copy_text: { text: '/resume case-1' } });
 });
 
 it('keeps command and client contact inside Telegram text limit for long Unicode follow-ups', async () => {
@@ -244,6 +248,7 @@ it('keeps command and client contact inside Telegram text limit for long Unicode
   expect(body.text).not.toContain('/answer');
   expect(body.text).toContain('…');
   expect(body.reply_markup.inline_keyboard[0][0].copy_text.text).toBe('/answer case-1 ');
+  expect(body.reply_markup.inline_keyboard[0][1]).toEqual({ text: 'Копіювати resume', copy_text: { text: '/resume case-1' } });
   expect(body.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
 });
 
