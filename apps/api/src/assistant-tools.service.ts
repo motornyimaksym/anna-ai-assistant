@@ -8,7 +8,8 @@ import { BookingRepository } from './repository.js';
 import { selectServiceOption } from './service-options.js';
 import { bookingConfirmationMismatches } from './booking-confirmation.js';
 import { bookingProposalError, bookingProposalFactError } from './booking-proposal-errors.js';
-export type AssistantContext = { clientId: string; telegramChatId: string; businessConnectionId?: string; traceId?: string; currentMessage?: string };
+import type { BookingEventContext } from './calendar.js';
+export type AssistantContext = { clientId: string; telegramChatId: string; businessConnectionId?: string; traceId?: string; currentMessage?: string; telegramUsername?: string; telegramDisplayName?: string };
 const bookingArguments = z.object({ serviceId: z.string().min(1), durationMinutes: z.number().int().min(15).max(480), startAt: z.string().datetime({ offset: true }) }).strict();
 export const assistantToolSchema = z.discriminatedUnion('name', [
   z.object({ name: z.literal('get_media'), arguments: z.object({}).strict() }),
@@ -75,10 +76,19 @@ export class AssistantToolsService {
           ? latestAssistant.bookingProposalId === proposal.id
           : Boolean(proposal.confirmationFacts.referenceCode);
         if (!bindingMatches) throw bookingProposalError('binding_mismatch', 'Booking proposal was not delivered accurately');
+        if (!context.currentMessage?.trim()) throw new Error('Current client message required for booking');
         const consumed = await this.repository.consumeAssistantBooking(context.telegramChatId, context.clientId, proposal.id);
         if (JSON.stringify(consumed) !== JSON.stringify(proposal)) throw bookingProposalError('replaced', 'Booking proposal changed before confirmation');
         const args = bookingArguments.parse(consumed.arguments);
-        const booking = await this.bookings.create(createBookingRequestSchema.parse({ ...args, clientId: context.clientId, telegramChatId: context.telegramChatId, ...(context.businessConnectionId ? { businessConnectionId: context.businessConnectionId } : {}) }));
+        const eventContext: BookingEventContext = {
+          ...(context.telegramUsername ? { telegramUsername: context.telegramUsername } : {}),
+          ...(context.telegramDisplayName ? { telegramDisplayName: context.telegramDisplayName } : {}),
+          messages: [
+            ...history.slice(-19).map(({ role, content }) => ({ role, content })),
+            { role: 'user', content: context.currentMessage },
+          ],
+        };
+        const booking = await this.bookings.create(createBookingRequestSchema.parse({ ...args, clientId: context.clientId, telegramChatId: context.telegramChatId, ...(context.businessConnectionId ? { businessConnectionId: context.businessConnectionId } : {}) }), eventContext);
         return { status: 'created', booking };
       }
     }

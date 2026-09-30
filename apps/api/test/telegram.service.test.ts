@@ -9,7 +9,7 @@ const update = (username?: string) => ({
   business_message: {
     message_id: 9,
     chat: { id: 123 },
-    from: { id: 456, ...(username ? { username } : {}) },
+    from: { id: 456, first_name: 'Test', last_name: 'User', ...(username ? { username } : {}) },
     text: 'Hello',
     business_connection_id: 'connection-1',
   },
@@ -113,6 +113,7 @@ describe('Telegram private test restriction', () => {
     expect(repository.touchConversation).toHaveBeenCalledWith(expect.objectContaining({ telegramUsername: 'user61785' }));
     expect(send).toHaveBeenCalledTimes(3);
     expect(assistant.respond).toHaveBeenCalledOnce();
+    expect(assistant.respond).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ telegramUsername: 'User61785', telegramDisplayName: expect.any(String) }), expect.any(String));
     expect(order.slice(0, 3)).toEqual(['readBusinessMessage', 'sendChatAction', 'assistant']);
     expect(JSON.parse(send.mock.calls[0]![1]!.body as string)).toEqual({ business_connection_id: 'connection-1', chat_id: 123, message_id: 9 });
     expect(JSON.parse(send.mock.calls[1]![1]!.body as string)).toMatchObject({ chat_id: '123', business_connection_id: 'connection-1', action: 'typing' });

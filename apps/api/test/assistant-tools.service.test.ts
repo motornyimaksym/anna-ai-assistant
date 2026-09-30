@@ -44,7 +44,7 @@ describe('assistant tools', () => {
       consumeAssistantBooking: vi.fn(async () => { consumed = true; return proposal; }),
     };
     const booking = { id: 'created', clientId: 'alice', telegramChatId: 'chat' };
-    const bookingService = { create: vi.fn(async () => booking) };
+    const bookingService = { create: vi.fn(async (..._args: unknown[]) => booking) };
     const evidence = { read: vi.fn(async () => ({ schedule: { status: 'ready' }, calendar: { status: 'ready', rangeStart: new Date().toISOString(), rangeEnd: new Date(Date.now() + 30 * 24 * 60 * 60_000).toISOString(), busy: [] } })) };
     const subject = new AssistantToolsService(repository as never, bookingService as never, evidence as never);
     const prepared = await subject.execute({ name: 'prepare_booking', arguments: { serviceId: 'massage', durationMinutes: 60, startAt } }, context);
@@ -64,8 +64,16 @@ describe('assistant tools', () => {
     await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toThrow('not delivered');
     superseded = false;
     expect(bookingService.create).not.toHaveBeenCalled();
-    expect(await subject.execute({ name: 'create_booking', arguments: {} }, context)).toEqual({ status: 'created', booking });
-    expect(bookingService.create).toHaveBeenCalledWith({ serviceId: 'massage', durationMinutes: 60, startAt: normalizedStartAt, clientId: 'alice', telegramChatId: 'chat' });
+    const bookingTurnContext = { ...context, currentMessage: 'Підходить', telegramUsername: 'user61785', telegramDisplayName: 'Іван Петренко' };
+    expect(await subject.execute({ name: 'create_booking', arguments: {} }, bookingTurnContext)).toEqual({ status: 'created', booking });
+    expect(bookingService.create).toHaveBeenCalledWith(
+      { serviceId: 'massage', durationMinutes: 60, startAt: normalizedStartAt, clientId: 'alice', telegramChatId: 'chat' },
+      expect.objectContaining({
+        telegramUsername: 'user61785',
+        telegramDisplayName: 'Іван Петренко',
+        messages: [expect.objectContaining({ role: 'assistant' }), { role: 'user', content: expect.any(String) }],
+      }),
+    );
     await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toMatchObject({ code: 'BOOKING_PROPOSAL_STATE', proposalIssue: 'missing' });
     expect(bookingService.create).toHaveBeenCalledTimes(1);
   });
@@ -91,8 +99,9 @@ describe('assistant tools', () => {
     const booking = { id: 'legacy-created', clientId: 'alice', telegramChatId: 'chat' };
     const bookingService = { create: vi.fn(async () => booking) };
     const subject = new AssistantToolsService(repository as never, bookingService as never, {} as never);
-    await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toThrow('not delivered accurately');
+    const approvalContext = { ...context, currentMessage: 'Так, підтверджую' };
+    await expect(subject.execute({ name: 'create_booking', arguments: {} }, approvalContext)).rejects.toThrow('not delivered accurately');
     deliveredProposalId = undefined;
-    expect(await subject.execute({ name: 'create_booking', arguments: {} }, context)).toEqual({ status: 'created', booking });
+    expect(await subject.execute({ name: 'create_booking', arguments: {} }, approvalContext)).toEqual({ status: 'created', booking });
   });
 });

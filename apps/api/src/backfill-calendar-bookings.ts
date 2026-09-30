@@ -20,8 +20,7 @@ for (const booking of legacy) {
   const current = await calendar.getBookingEvent(booking);
   if (!current) { missing++; continue; }
   const timing = await repository.getBookingTiming(booking.id);
-  const service = await repository.getService(booking.serviceId);
-  const result = await calendar.backfillLegacyBookingEvent(booking, timing.bufferMinutes, service?.name ?? booking.serviceId, apply);
+  const result = await calendar.backfillLegacyBookingEvent(booking, timing.bufferMinutes, apply);
   if (result === 'ready') ready++; else pending++;
 }
 process.stdout.write(JSON.stringify({ mode: apply ? 'apply' : 'dry-run', checked: legacy.length, ready, pending, missingTreatedAsCancelled: missing }) + '\n');

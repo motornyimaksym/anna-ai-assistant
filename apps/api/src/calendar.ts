@@ -5,9 +5,70 @@ import type { BookingDto } from '@booking/contracts';
 import { localDayBounds } from '@booking/domain';
 import { GoogleCalendarConnection, type CalendarCredentials } from './google-calendar.connection.js';
 export type BusyInterval = { start: string; end: string };
+export type BookingConversationMessage = { role: 'user' | 'assistant' | 'human'; content: string };
+export type BookingEventContext = { telegramUsername?: string; telegramDisplayName?: string; messages?: BookingConversationMessage[] };
 export const bookingEventId = (id: string) => createHash('sha256').update(`booking:${id}`).digest('hex');
 const instant = z.string().datetime({ offset: true });
 const eventSchema = z.object({ id: z.string(), etag: z.string().optional(), status: z.string().optional(), transparency: z.string().optional(), start: z.object({ dateTime: instant.optional(), date: z.string().optional() }).optional(), end: z.object({ dateTime: instant.optional(), date: z.string().optional() }).optional(), extendedProperties: z.object({ private: z.record(z.string()).optional() }).optional() });
+const calendarDescriptionLimit = 2048;
+const transcriptRoleNames: Record<BookingConversationMessage['role'], string> = { user: 'Клієнт', assistant: 'Помічник', human: 'Людина' };
+const plainAssistantText = (value: string) => value
+  .replace(/<\/?(?:b|i|code)>/gi, '')
+  .replace(/&(?:amp|lt|gt|quot|#39|#\d+|#x[\da-f]+);/gi, (entity) => {
+    const named: Record<string, string> = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" };
+    const lower = entity.toLowerCase();
+    if (lower in named) return named[lower]!;
+    const codePoint = lower.startsWith('&#x') ? Number.parseInt(lower.slice(3, -1), 16) : Number.parseInt(lower.slice(2, -1), 10);
+    return Number.isInteger(codePoint) && codePoint > 0 && codePoint <= 0x10ffff && !(codePoint >= 0xd800 && codePoint <= 0xdfff) ? String.fromCodePoint(codePoint) : entity;
+  });
+const cleanTranscriptText = (message: BookingConversationMessage) => (message.role === 'assistant' ? plainAssistantText(message.content) : message.content)
+  .split('').filter((character) => {
+    const code = character.charCodeAt(0);
+    return !(code <= 8 || (code >= 11 && code <= 12) || (code >= 14 && code <= 31) || code === 127);
+  }).join('')
+  .replace(/[\r\n\t]+/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+const truncateCodePoints = (value: string, limit: number) => {
+  if (value.length <= limit) return value;
+  if (limit <= 0) return '';
+  let result = ''; let units = 0;
+  for (const point of value) {
+    if (units + point.length > limit - 1) break;
+    result += point; units += point.length;
+  }
+  return `${result}…`;
+};
+const calendarTitlePart = (value: string) => value.replace(/[\r\n\t]+/g, ' ').replace(/\|/g, '／').replace(/\s+/g, ' ').trim();
+const bookingDescription = (booking: BookingDto, messages: BookingConversationMessage[] = []) => {
+  const header = `Booking ID: ${booking.id}\nClient: ${booking.clientId}\nTelegram chat: ${booking.telegramChatId}`;
+  const heading = '\n\nОстанні повідомлення:\n';
+  const entries = messages.slice(-20).map((message) => `${transcriptRoleNames[message.role]}: ${cleanTranscriptText(message)}`);
+  const separatorsLength = Math.max(0, entries.length - 1);
+  const labelsLength = entries.reduce((total, entry) => total + entry.length - entry.slice(entry.indexOf(': ') + 2).length, 0);
+  const contentBudget = Math.max(0, calendarDescriptionLimit - header.length - heading.length - separatorsLength - labelsLength);
+  const contents = entries.map((entry) => entry.slice(entry.indexOf(': ') + 2));
+  const allocated = contents.map(() => 0);
+  let remaining = contentBudget;
+  while (remaining > 0) {
+    const active = contents.map((content, index) => index).filter((index) => allocated[index]! < contents[index]!.length);
+    if (!active.length) break;
+    const share = Math.max(1, Math.floor(remaining / active.length));
+    let used = 0;
+    for (const index of active) {
+      if (remaining === 0) break;
+      const amount = Math.min(share, contents[index]!.length - allocated[index]!, remaining);
+      allocated[index] = allocated[index]! + amount;
+      remaining -= amount; used += amount;
+    }
+    if (!used) break;
+  }
+  const transcript = entries.map((entry, index) => {
+    const label = entry.slice(0, entry.indexOf(': ') + 2);
+    return `${label}${truncateCodePoints(contents[index]!, allocated[index]!)}`;
+  }).join('\n');
+  return `${header}${heading}${transcript}`.slice(0, calendarDescriptionLimit);
+};
 type CalendarEvent = z.infer<typeof eventSchema>;
 const path = (calendarId: string, eventId?: string) => `/calendars/${encodeURIComponent(calendarId)}/events${eventId ? `/${encodeURIComponent(eventId)}` : ''}`;
 const sameTime = (event: CalendarEvent, booking: Pick<BookingDto, 'startAt' | 'endAt'>) => Date.parse(event.start?.dateTime ?? '') === Date.parse(booking.startAt) && Date.parse(event.end?.dateTime ?? '') === Date.parse(booking.endAt);
@@ -145,7 +206,7 @@ export class CalendarService {
     if (!sameTime(event, booking)) throw new Error('Calendar event was changed. Human review required');
     return true;
   }
-  async backfillLegacyBookingEvent(booking: BookingDto, bufferMinutes: number, serviceName: string, apply = false): Promise<'ready' | 'needs_backfill'> {
+  async backfillLegacyBookingEvent(booking: BookingDto, bufferMinutes: number, apply = false): Promise<'ready' | 'needs_backfill'> {
     if (!booking.googleCalendarId || !booking.googleCalendarEventId || !booking.durationMinutes || booking.price === undefined || !booking.currency || !Number.isInteger(bufferMinutes) || bufferMinutes < 0 || bufferMinutes > 120) throw new Error('Legacy booking snapshot is incomplete');
     const event = await this.getBookingEvent(booking);
     if (!event || !sameTime(event, booking) || !event.etag) throw new Error('Legacy Calendar event is missing or changed');
@@ -159,17 +220,20 @@ export class CalendarService {
     if (!apply) return 'needs_backfill';
     const credentials = await this.required();
     const metadata = { schemaVersion: '1', bookingId: booking.id, clientId: booking.clientId, telegramChatId: booking.telegramChatId, ...(booking.businessConnectionId ? { businessConnectionId: booking.businessConnectionId } : {}), serviceId: booking.serviceId, durationMinutes: String(booking.durationMinutes), price: String(booking.price), currency: booking.currency, bufferMinutes: String(bufferMinutes), createdAt: booking.createdAt };
-    const response = await this.connection.request(credentials, path(booking.googleCalendarId, booking.googleCalendarEventId), { method: 'PATCH', headers: { 'If-Match': event.etag }, body: JSON.stringify({ description: `Service: ${serviceName}\nBooking ID: ${booking.id}\nClient: ${booking.clientId}\nTelegram chat: ${booking.telegramChatId}`, extendedProperties: { private: metadata } }) });
+    const response = await this.connection.request(credentials, path(booking.googleCalendarId, booking.googleCalendarEventId), { method: 'PATCH', headers: { 'If-Match': event.etag }, body: JSON.stringify({ description: bookingDescription(booking), extendedProperties: { private: metadata } }) });
     const changed = this.parseManaged(eventSchema.parse(await response.json()), booking.googleCalendarId);
     if (!changed || changed.booking.id !== booking.id || changed.bufferMinutes !== bufferMinutes) throw new Error('Calendar backfill result is uncertain');
     return 'ready';
   }
-  async createBookingEvent(booking: BookingDto, serviceName = booking.serviceId, bufferMinutes = 0): Promise<{ eventId: string; calendarId: string }> {
+  async createBookingEvent(booking: BookingDto, serviceName = booking.serviceId, bufferMinutes = 0, context: BookingEventContext = {}): Promise<{ eventId: string; calendarId: string }> {
     const credentials = await this.required();
     const calendarId = booking.googleCalendarId ?? credentials.calendarId!;
     const eventId = booking.googleCalendarEventId ?? bookingEventId(booking.id);
     if (!booking.durationMinutes || booking.price === undefined || !booking.currency) throw new Error('Booking snapshot is incomplete');
-    const response = await this.connection.request(credentials, path(calendarId), { method: 'POST', body: JSON.stringify({ id: eventId, summary: `Massage: ${serviceName}`, description: `Service: ${serviceName}\nBooking ID: ${booking.id}\nClient: ${booking.clientId}\nTelegram chat: ${booking.telegramChatId}`, extendedProperties: { private: { schemaVersion: '1', bookingId: booking.id, clientId: booking.clientId, telegramChatId: booking.telegramChatId, ...(booking.businessConnectionId ? { businessConnectionId: booking.businessConnectionId } : {}), serviceId: booking.serviceId, durationMinutes: String(booking.durationMinutes), price: String(booking.price), currency: booking.currency, bufferMinutes: String(bufferMinutes), createdAt: booking.createdAt } }, transparency: 'opaque', start: { dateTime: booking.startAt }, end: { dateTime: booking.endAt } }) }, [409], { replaySafe: true });
+    const username = calendarTitlePart(context.telegramUsername?.replace(/^@+/, '') ?? '') || 'unknown';
+    const displayName = calendarTitlePart(context.telegramDisplayName ?? '') || 'Без імені';
+    const summary = `@${username} | ${displayName} | ${calendarTitlePart(serviceName)} | ${booking.price} ${booking.currency} (ai-bot)`;
+    const response = await this.connection.request(credentials, path(calendarId), { method: 'POST', body: JSON.stringify({ id: eventId, summary, description: bookingDescription(booking, context.messages), extendedProperties: { private: { schemaVersion: '1', bookingId: booking.id, clientId: booking.clientId, telegramChatId: booking.telegramChatId, ...(booking.businessConnectionId ? { businessConnectionId: booking.businessConnectionId } : {}), serviceId: booking.serviceId, durationMinutes: String(booking.durationMinutes), price: String(booking.price), currency: booking.currency, bufferMinutes: String(bufferMinutes), createdAt: booking.createdAt } }, transparency: 'opaque', start: { dateTime: booking.startAt }, end: { dateTime: booking.endAt } }) }, [409], { replaySafe: true });
     if (response.status === 409) {
       if (!await this.verifyBookingEvent({ ...booking, googleCalendarId: calendarId, googleCalendarEventId: eventId })) throw new Error('Calendar event is missing');
     } else {

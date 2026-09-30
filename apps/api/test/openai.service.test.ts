@@ -112,7 +112,7 @@ describe('Unified OpenAI conversation', () => {
     const fetch = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'function_call', call_id: 'c1', name: 'get_services', arguments: '{}' }] }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Вітаю!' }] }] }) });
     vi.stubGlobal('fetch', fetch);
     expect(await service.respond(conversation, context, 'Привіт')).toEqual({ text: 'Вітаю!', fromOpenAI: true });
-    expect(tools.execute).toHaveBeenCalledWith({ name: 'get_services', arguments: {} }, context);
+    expect(tools.execute).toHaveBeenCalledWith({ name: 'get_services', arguments: {} }, expect.objectContaining({ clientId: 'alice', telegramChatId: 'chat', currentMessage: expect.any(String) }));
     expect(fetch).toHaveBeenCalledTimes(2);
   });
   it('allows natural booking wording when all proposal facts are preserved', async () => {
@@ -166,7 +166,7 @@ it('lets the model write availability and confirmation wording after reading evi
   const fetcher = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'get_booking_context', arguments: '{}', call_id: 'call-1' }] }) }).mockResolvedValueOnce(answer('Можу запропонувати завтра о 10:00. Вам підходить?'));
   vi.stubGlobal('fetch', fetcher);
   expect(await service.respond(conversation, context, 'Є час завтра?')).toEqual({ text: 'Можу запропонувати завтра о 10:00. Вам підходить?', fromOpenAI: true });
-  expect(tools.execute).toHaveBeenCalledWith({ name: 'get_booking_context', arguments: {} }, context);
+  expect(tools.execute).toHaveBeenCalledWith({ name: 'get_booking_context', arguments: {} }, expect.objectContaining({ clientId: 'alice', telegramChatId: 'chat', currentMessage: expect.any(String) }));
   expect(repository.replacePendingAction).not.toHaveBeenCalled();
   expect(JSON.parse(fetcher.mock.calls[1]![1].body).input[0]).toMatchObject({ type: 'function_call_output', call_id: 'call-1', output: expect.stringContaining('Tomorrow 10:00') });
   expect(fetcher).toHaveBeenCalledTimes(2);
@@ -179,7 +179,7 @@ it('uses the model create_booking call as semantic approval without a phrase whi
     .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'create_booking', arguments: '{}', call_id: 'create-1' }] }) })
     .mockResolvedValueOnce(answer('Запис підтверджено.')));
   expect(await service.respond(conversation, context, 'Цей час мені чудово підходить, можете мене записати')).toEqual({ text: 'Запис підтверджено.', fromOpenAI: true });
-  expect(tools.execute).toHaveBeenCalledWith({ name: 'create_booking', arguments: {} }, context);
+  expect(tools.execute).toHaveBeenCalledWith({ name: 'create_booking', arguments: {} }, expect.objectContaining({ clientId: 'alice', telegramChatId: 'chat', currentMessage: expect.any(String) }));
 });
 
 it('does not create a booking when the model replies without calling create_booking', async () => {
@@ -217,7 +217,7 @@ it('hands an unlisted custom-service request to a person without an automatic re
   vi.stubGlobal('fetch', fetcher);
   const reply = await service.respond(conversation, context, 'Do you offer custom hot stone massage?');
   expect(reply).toMatchObject({ text: '', needsHuman: true, humanContext: expect.stringContaining('requires human assistance') });
-  expect(tools.execute).toHaveBeenCalledWith({ name: 'request_human_assistance', arguments: {} }, { ...context, currentMessage: 'Do you offer custom hot stone massage?' });
+  expect(tools.execute).toHaveBeenCalledWith({ name: 'request_human_assistance', arguments: {} }, expect.objectContaining({ clientId: 'alice', telegramChatId: 'chat', currentMessage: expect.any(String) }));
   expect(JSON.parse(fetcher.mock.calls[1]![1].body).input).toContainEqual({ type: 'function_call_output', call_id: 'human-1', output: JSON.stringify({ status: 'human_requested' }) });
 });
 

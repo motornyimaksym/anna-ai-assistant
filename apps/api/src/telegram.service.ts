@@ -12,7 +12,7 @@ import { HumanAssistanceService } from './human-assistance.service.js';
 import { TelegramScheduleImportService } from './telegram-schedule-import.service.js';
 import { fetchWithLinearBackoff } from '@booking/http';
 import { TextUtils } from './text-utils.js';
-const messageSchema = z.object({ message_id: z.number().int(), chat: z.object({ id: z.union([z.string(), z.number()]), type: z.string().optional() }), from: z.object({ id: z.union([z.string(), z.number()]), username: z.string().optional(), is_bot: z.boolean().optional() }).optional(), text: z.string().optional(), business_connection_id: z.string().optional() });
+const messageSchema = z.object({ message_id: z.number().int(), chat: z.object({ id: z.union([z.string(), z.number()]), type: z.string().optional() }), from: z.object({ id: z.union([z.string(), z.number()]), username: z.string().optional(), first_name: z.string().optional(), last_name: z.string().optional(), is_bot: z.boolean().optional() }).optional(), text: z.string().optional(), business_connection_id: z.string().optional() });
 const updateSchema = z.object({ update_id: z.number().int(), business_message: messageSchema.optional(), message: messageSchema.optional(), deleted_business_messages: z.object({ business_connection_id: z.string().min(1), chat: z.object({ id: z.union([z.string(), z.number()]) }), message_ids: z.array(z.number().int()).min(1) }).optional() });
 const escapeHtml = (value: string) => value.replace(/&(?!(?:amp|lt|gt|quot|#39|#\d+|#x[\da-f]+);)/gi, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 export const formatTelegramHtml = (value: string): string => {
@@ -107,7 +107,11 @@ export class TelegramService {
     let parseMode: 'HTML' | undefined;
     let bookingProposalId: string | undefined;
     try {
-      const answer = await this.assistant.respond(conversation, { clientId: String(message.from!.id), telegramChatId: chatId, businessConnectionId: message.business_connection_id, traceId: trace.traceId }, message.text);
+      const answer = await this.assistant.respond(conversation, {
+        clientId: String(message.from!.id), telegramChatId: chatId, businessConnectionId: message.business_connection_id, traceId: trace.traceId,
+        ...(message.from?.username ? { telegramUsername: message.from.username } : {}),
+        telegramDisplayName: [message.from?.first_name, message.from?.last_name].filter(Boolean).join(' '),
+      }, message.text);
       if (answer.needsHuman) {
         await this.debug.record(trace, 'handoff', { reason: 'assistant_requested_human' }, 'warn');
         await this.repository.appendMessage(chatId, 'user', message.text.slice(0, 4000));

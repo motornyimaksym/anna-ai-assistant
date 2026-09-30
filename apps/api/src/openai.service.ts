@@ -115,7 +115,7 @@ export class OpenAiService {
           if (parsed.name === 'send_media') {
             if (mediaAttempted) result = { status: 'unavailable', reason: 'Only one media attempt per turn' };
             else { mediaAttempted = true; result = await this.assistantTools.execute(parsed, context); }
-          } else result = await this.assistantTools.execute(parsed, parsed.name === 'request_human_assistance' ? { ...context, currentMessage: text } : context);
+          } else result = await this.assistantTools.execute(parsed, { ...context, currentMessage: text });
           if (parsed.name === 'request_human_assistance' && result && typeof result === 'object' && 'status' in result && result.status === 'human_requested') terminalReply = { text: '', fromOpenAI: false, needsHuman: true, humanContext: 'The client request requires human assistance; review the original client message and relevant business facts.' };
         } catch (error) {
           terminalReply = { text: '', fromOpenAI: false, needsHuman: true, humanContext: responderErrorContext(error, `S2 tool ${call.name ?? 'unknown'}`, sensitiveValues) };
