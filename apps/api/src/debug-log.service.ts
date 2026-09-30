@@ -1,3 +1,4 @@
+import { isPreparationErrorCode, preparationErrors } from './booking-preparation-errors.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import type { RequestBodies } from './request-diagnostics.js';
@@ -110,6 +111,7 @@ function bookingValidationMessage(detail: ErrorDiagnostic, source: string): stri
 /** Plain Ukrainian responder summary; use a bounded sanitized stack only when no useful diagnosis is available. */
 export function humanErrorContext(error: unknown, source: string, sensitiveValues: string[] = []): string {
   const detail = safeErrorDiagnostic(error, sensitiveValues);
+  if (isPreparationErrorCode(detail.code)) return `${preparationErrors[detail.code]} Пропозицію та запис до календаря не створено.`;
   const stackFallback = (message: string) => detail.stack?.length
     ? `${message}\nТехнічний стек викликів:\n${detail.stack.join('\n')}`.slice(0, 1500)
     : message.slice(0, 700);
@@ -180,6 +182,7 @@ export const safeErrorCategory = (error: unknown): string => {
   if (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name)) return 'timeout';
   const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
   const proposalIssue = error && typeof error === 'object' && 'proposalIssue' in error ? error.proposalIssue : undefined;
+  if (isPreparationErrorCode(code)) return code;
   if (code === 'BOOKING_PROPOSAL_STATE' && typeof proposalIssue === 'string' && bookingProposalIssues.includes(proposalIssue as BookingProposalIssue)) return `booking proposal state: ${proposalIssue}`;
   if (code === 'BOOKING_PROPOSAL_STATE') return 'booking proposal state';
   if (code === 'BOOKING_PROPOSAL_FACT_MISMATCH') return 'booking proposal fact mismatch';

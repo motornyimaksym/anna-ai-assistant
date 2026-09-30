@@ -57,3 +57,16 @@ describe('poisoned provider conversation replacement', () => {
     expect(read().openaiConversationId).toBe('old');
   });
 });
+
+it('detaches only the failed provider conversation and preserves workflow state', async () => {
+  const { repository, read } = setup({ ...initial, openaiConversationId: 'failed', activeHumanRequestId: 'human', assistantEnabled: false });
+  await repository.detachOpenAiConversation('chat', 'wrong-client', 'failed');
+  expect(read().openaiConversationId).toBe('failed');
+  await repository.detachOpenAiConversation('chat', 'client', 'older');
+  expect(read().openaiConversationId).toBe('failed');
+  await repository.detachOpenAiConversation('chat', 'client', 'failed');
+  expect(read().openaiConversationId).toBeUndefined();
+  expect(read().pendingAction).toEqual(pending);
+  expect(read().activeHumanRequestId).toBe('human');
+  expect(read().assistantEnabled).toBe(false);
+});

@@ -5,7 +5,7 @@ const conversation = { telegramChatId: 'chat', clientId: 'alice', openaiConversa
 const context = { clientId: 'alice', telegramChatId: 'chat' };
 const setup = () => {
   vi.stubEnv('OPENAI_API_KEY', 'test-key');
-  const repository = { listMessages: vi.fn(async () => []), getPromptOverride: vi.fn(async () => undefined), getKnowledgeBaseOverride: vi.fn(async () => undefined), listServices: vi.fn(async () => []), replacePendingAction: vi.fn(), replaceOpenAiConversation: vi.fn(), ensureOpenAiConversation: vi.fn(async () => 'conv-created'), appendMessage: vi.fn() };
+  const repository = { listMessages: vi.fn(async () => []), getPromptOverride: vi.fn(async () => undefined), getKnowledgeBaseOverride: vi.fn(async () => undefined), listServices: vi.fn(async () => [{ id: 'massage', name: 'Massage', enabled: true, durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH' }]), detachOpenAiConversation: vi.fn(), replacePendingAction: vi.fn(), replaceOpenAiConversation: vi.fn(), ensureOpenAiConversation: vi.fn(async () => 'conv-created'), appendMessage: vi.fn() };
   const tools = { execute: vi.fn(async (): Promise<unknown> => []) };
   const debug = { record: vi.fn(async () => {}) };
   return { repository, tools, debug, service: new OpenAiService(repository as never, tools as never, debug as never) };
@@ -218,7 +218,7 @@ it('hands an unlisted custom-service request to a person without an automatic re
   const reply = await service.respond(conversation, context, 'Do you offer custom hot stone massage?');
   expect(reply).toMatchObject({ text: '', needsHuman: true, humanContext: expect.stringContaining('requires human assistance') });
   expect(tools.execute).toHaveBeenCalledWith({ name: 'request_human_assistance', arguments: {} }, expect.objectContaining({ clientId: 'alice', telegramChatId: 'chat', currentMessage: expect.any(String) }));
-  expect(JSON.parse(fetcher.mock.calls[1]![1].body).input).toContainEqual({ type: 'function_call_output', call_id: 'human-1', output: JSON.stringify({ status: 'human_requested' }) });
+  expect(fetcher).toHaveBeenCalledTimes(1);
 });
 
 it('includes safe tool API failure details in the human handoff', async () => {
@@ -267,4 +267,69 @@ it('uses the unified override for every turn and keeps full knowledge and catalo
   expect(JSON.stringify(body.input[0])).toContain('create_booking');
   expect(body.input[1].content).toContain('Unrelated policy still retained');
   expect(body.input[1].content).toContain('bufferMinutes');
+});
+
+it.each([false, true])('bounds invalid catalog ID correction (repeated=%s)', async (repeated) => {
+  const { service, tools, repository, debug } = setup();
+  const catalog = [{ id: 'actual-id', name: 'Massage', enabled: true, durationMinutes: 90, price: 4000, currency: 'UAH', bufferMinutes: 15 }];
+  repository.listServices.mockResolvedValue(catalog as never);
+  const failure = Object.assign(new Error('Service unavailable'), { code: 'BOOKING_SERVICE_UNAVAILABLE' });
+  tools.execute.mockRejectedValueOnce(failure);
+  if (repeated) tools.execute.mockRejectedValueOnce(failure);
+  else tools.execute.mockResolvedValueOnce({ status: 'prepared', proposalId: '2a1c75d0-d891-4e04-8b54-341cba762ae6', confirmationFacts: { serviceName: 'Massage', durationMinutes: 90, localDate: '2 жовт. 2026 р.', localTime: '18:30', price: 4000, currency: 'UAH' }, expiresAt: '2099-01-01T00:00:00.000Z' });
+  const call = (id: string) => ({ ok: true, json: async () => ({ output: [{ type: 'function_call', name: 'prepare_booking', call_id: id, arguments: JSON.stringify({ serviceId: id, durationMinutes: 90, startAt: '2099-01-01T10:00:00Z' }) }] }) });
+  const fetcher = vi.fn().mockResolvedValueOnce(call('invented-id')).mockResolvedValueOnce(call('actual-id')).mockResolvedValueOnce(answer('Massage, 90 хв, 2 жовт. 2026 р. о 18:30, 4000 UAH. Підтверджуєте?'));
+  vi.stubGlobal('fetch', fetcher);
+  const reply = await service.respond(conversation, { ...context, traceId: 'trace' }, 'Selected time');
+  const first = JSON.parse(fetcher.mock.calls[0]![1].body);
+  expect(first.tools.find((t: { name: string }) => t.name === 'prepare_booking').parameters.properties.serviceId.enum).toEqual(['actual-id']);
+  const correction = JSON.parse(JSON.parse(fetcher.mock.calls[1]![1].body).input[0].output);
+  expect(correction).toMatchObject({ status: 'correction_required', code: 'BOOKING_SERVICE_UNAVAILABLE', services: [{ id: 'actual-id' }] });
+  expect(repository.listServices).toHaveBeenCalledTimes(2);
+  expect(tools.execute).toHaveBeenCalledTimes(2);
+  expect(debug.record).toHaveBeenCalledWith(expect.objectContaining({ traceId: 'trace' }), 'error', expect.objectContaining({ tool: 'prepare_booking', errorCategory: 'BOOKING_SERVICE_UNAVAILABLE', reason: 'catalog_correction_offered' }), 'warn');
+  expect(fetcher).toHaveBeenCalledTimes(repeated ? 2 : 3);
+  if (repeated) {
+    expect(reply.needsHuman).toBe(true);
+    expect(repository.detachOpenAiConversation).toHaveBeenCalledWith('chat', 'alice', 'conv-existing');
+  } else {
+    expect(reply.needsHuman).not.toBe(true);
+    expect(repository.detachOpenAiConversation).not.toHaveBeenCalled();
+  }
+});
+
+it('does not retry an uncertain booking write or generate an unsent final reply', async () => {
+  const { service, tools, repository, debug } = setup();
+  tools.execute.mockRejectedValue(Object.assign(new Error('Private client value'), { code: 'CALENDAR_UNCERTAIN' }));
+  const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'function_call', name: 'create_booking', arguments: '{}', call_id: 'write' }] }) });
+  vi.stubGlobal('fetch', fetcher);
+  expect(await service.respond(conversation, context, 'Approve')).toMatchObject({ needsHuman: true, text: '' });
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(tools.execute).toHaveBeenCalledTimes(1);
+  expect(repository.detachOpenAiConversation).toHaveBeenCalledWith('chat', 'alice', 'conv-existing');
+  expect(debug.record).toHaveBeenCalledWith(context, 'error', expect.objectContaining({ reason: 'tool_execution_failed', tool: 'create_booking' }), 'error');
+});
+
+it.each(['empty', 'error'])('escalates without another model call when catalog recovery is %s', async (kind) => {
+  const { service, tools, repository, debug } = setup();
+  if (kind === 'empty') repository.listServices.mockResolvedValueOnce([{ id: 'massage', name: 'Massage', enabled: true, durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH' }]).mockResolvedValueOnce([]);
+  else repository.listServices.mockResolvedValueOnce([{ id: 'massage', name: 'Massage', enabled: true, durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH' }]).mockRejectedValueOnce(new Error('Catalog unavailable'));
+  tools.execute.mockRejectedValue(Object.assign(new Error('Service unavailable'), { code: 'BOOKING_SERVICE_UNAVAILABLE' }));
+  const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'function_call', name: 'prepare_booking', call_id: 'c1', arguments: JSON.stringify({ serviceId: 'missing', durationMinutes: 90, startAt: '2099-01-01T10:00:00Z' }) }] }) });
+  vi.stubGlobal('fetch', fetcher);
+  expect(await service.respond(conversation, context, 'Selected time')).toMatchObject({ needsHuman: true, text: '' });
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(tools.execute).toHaveBeenCalledTimes(1);
+  expect(repository.detachOpenAiConversation).toHaveBeenCalledWith('chat', 'alice', 'conv-existing');
+  if (kind === 'error') expect(debug.record).toHaveBeenCalledWith(context, 'error', expect.objectContaining({ reason: 'catalog_refresh_failed' }), 'error');
+});
+
+it('does not offer preparation with an empty or disabled catalog', async () => {
+  const { service, repository } = setup();
+  repository.listServices.mockResolvedValue([{ id: 'disabled', name: 'Massage', enabled: false, durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH' }]);
+  const fetcher = vi.fn().mockResolvedValue(answer('Reply'));
+  vi.stubGlobal('fetch', fetcher);
+  await service.respond(conversation, context, 'Hi');
+  const body = JSON.parse(fetcher.mock.calls[0]![1].body);
+  expect(body.tools.map((tool: { name: string }) => tool.name)).not.toContain('prepare_booking');
 });

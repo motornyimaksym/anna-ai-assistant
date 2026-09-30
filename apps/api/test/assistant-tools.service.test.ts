@@ -105,3 +105,36 @@ describe('assistant tools', () => {
     expect(await subject.execute({ name: 'create_booking', arguments: {} }, approvalContext)).toEqual({ status: 'created', booking });
   });
 });
+
+it.each([undefined, { enabled: false }])('rejects an unavailable service before evidence reads or writes', async (service) => {
+  const repository = { getService: vi.fn(async () => service), stageAssistantBooking: vi.fn() };
+  const evidence = { read: vi.fn() };
+  const bookings = { create: vi.fn() };
+  const subject = new AssistantToolsService(repository as never, bookings as never, evidence as never);
+  await expect(subject.execute({ name: 'prepare_booking', arguments: { serviceId: 'invented-id', durationMinutes: 90, startAt: '2099-01-01T18:30:00+03:00' } }, context)).rejects.toMatchObject({ code: 'BOOKING_SERVICE_UNAVAILABLE' });
+  expect(evidence.read).not.toHaveBeenCalled();
+  expect(repository.stageAssistantBooking).not.toHaveBeenCalled();
+  expect(bookings.create).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['BOOKING_DURATION_UNAVAILABLE', 'duration'],
+  ['BOOKING_SCHEDULE_UNAVAILABLE', 'schedule'],
+  ['BOOKING_CALENDAR_UNAVAILABLE', 'calendar'],
+  ['BOOKING_TIME_INVALID', 'past'],
+  ['BOOKING_RANGE_UNAVAILABLE', 'range'],
+  ['BOOKING_TIME_BUSY', 'busy'],
+])('reports %s before staging or writing', async (code, failure) => {
+  const start = Date.now() + (failure === 'past' ? -1 : 1) * 86400_000;
+  const repository = {
+    getService: vi.fn(async () => ({ id: 'massage', name: 'Massage', enabled: true, durationMinutes: 90, price: 4000, currency: 'UAH', bufferMinutes: 15 })),
+    stageAssistantBooking: vi.fn(),
+  };
+  const calendar = { status: failure === 'calendar' ? 'unavailable' : 'ready', rangeStart: new Date(Date.now() - 2 * 86400_000).toISOString(), rangeEnd: new Date(failure === 'range' ? start + 60_000 : start + 86400_000).toISOString(), busy: failure === 'busy' ? [{ start: new Date(start + 95 * 60_000).toISOString(), end: new Date(start + 120 * 60_000).toISOString() }] : [] };
+  const evidence = { read: vi.fn(async () => ({ schedule: { status: failure === 'schedule' ? 'unavailable' : 'ready' }, calendar })) };
+  const bookings = { create: vi.fn() };
+  const subject = new AssistantToolsService(repository as never, bookings as never, evidence as never);
+  await expect(subject.execute({ name: 'prepare_booking', arguments: { serviceId: 'massage', durationMinutes: failure === 'duration' ? 75 : 90, startAt: new Date(start).toISOString() } }, context)).rejects.toMatchObject({ code });
+  expect(repository.stageAssistantBooking).not.toHaveBeenCalled();
+  expect(bookings.create).not.toHaveBeenCalled();
+});

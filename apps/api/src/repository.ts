@@ -227,6 +227,15 @@ export class BookingRepository {
       return candidate;
     });
   }
+  async detachOpenAiConversation(chatId: string, clientId: string, expected: string): Promise<void> {
+    const ref = this.db.collection('conversations').doc(chatId);
+    await this.db.runTransaction(async (tx) => {
+      const data = (await tx.get(ref)).data();
+      if (data?.clientId === clientId && data.openaiConversationId === expected) {
+        tx.update(ref, { openaiConversationId: FieldValue.delete() });
+      }
+    });
+  }
   async replaceOpenAiConversation(chatId: string, clientId: string, expected: string, candidate: string): Promise<void> {
     const ref = this.db.collection('conversations').doc(chatId);
     await this.db.runTransaction(async (tx) => {

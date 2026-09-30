@@ -1,3 +1,4 @@
+import { BookingPreparationError } from './booking-preparation-errors.js';
 import { MediaStoreService } from './media-store.service.js';
 import { Inject, Injectable } from '@nestjs/common';
 import { z } from 'zod';
@@ -39,12 +40,18 @@ export class AssistantToolsService {
       case 'get_booking_context': return this.bookingContext.read();
       case 'prepare_booking': {
         const service = await this.repository.getService(tool.arguments.serviceId);
-        if (!service?.enabled) throw new Error('Service unavailable');
-        const option = selectServiceOption(service, tool.arguments.durationMinutes);
+        if (!service?.enabled) throw new BookingPreparationError('BOOKING_SERVICE_UNAVAILABLE');
+        let option: ReturnType<typeof selectServiceOption>;
+        try { option = selectServiceOption(service, tool.arguments.durationMinutes); }
+        catch { throw new BookingPreparationError('BOOKING_DURATION_UNAVAILABLE'); }
         const evidence = await this.bookingContext.read();
         const start = Date.parse(tool.arguments.startAt);
         const end = start + (option.durationMinutes + service.bufferMinutes) * 60_000;
-        if (evidence.schedule.status !== 'ready' || evidence.calendar.status !== 'ready' || !Number.isFinite(start) || start <= Date.now() || start < Date.parse(evidence.calendar.rangeStart) || end > Date.parse(evidence.calendar.rangeEnd) || evidence.calendar.busy.some(({ start: busyStart, end: busyEnd }) => Date.parse(busyStart) < end && Date.parse(busyEnd) > start)) throw new Error('Booking availability is not verified');
+        if (evidence.schedule.status !== 'ready') throw new BookingPreparationError('BOOKING_SCHEDULE_UNAVAILABLE');
+        if (evidence.calendar.status !== 'ready') throw new BookingPreparationError('BOOKING_CALENDAR_UNAVAILABLE');
+        if (!Number.isFinite(start) || start <= Date.now()) throw new BookingPreparationError('BOOKING_TIME_INVALID');
+        if (start < Date.parse(evidence.calendar.rangeStart) || end > Date.parse(evidence.calendar.rangeEnd)) throw new BookingPreparationError('BOOKING_RANGE_UNAVAILABLE');
+        if (evidence.calendar.busy.some(({ start: busyStart, end: busyEnd }) => Date.parse(busyStart) < end && Date.parse(busyEnd) > start)) throw new BookingPreparationError('BOOKING_TIME_BUSY');
         const zone = process.env.DEFAULT_TIMEZONE ?? 'Europe/Kyiv';
         const date = new Date(start);
         const confirmationFacts = {

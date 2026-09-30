@@ -2,7 +2,7 @@ import { BookingNeedsHumanError } from './booking.service.js';
 import { createOpenAiConversation, requestOpenAiResponse } from './openai-transport.js';
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
-import { bookingConfirmationFactsSchema, type BookingConfirmationFacts, type ConversationDto } from '@booking/contracts';
+import { bookingConfirmationFactsSchema, type BookingConfirmationFacts, type ConversationDto, type ServiceDto } from '@booking/contracts';
 import { boundedConversationHistory, systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from './system-two-instructions.js';
 import { bookingConfirmationMismatches } from './booking-confirmation.js';
 import { AssistantToolsService, assistantToolSchema, type AssistantContext } from './assistant-tools.service.js';
@@ -22,6 +22,12 @@ export const assistantToolDefinitions = [
   tool('create_booking', 'Create the stored Calendar proposal only after the client clearly and unconditionally approves that exact delivered proposal in their current message. Interpret the reply semantically in context; no fixed phrase is required. Do not call for uncertainty, questions, conditional/changed details, or hypothetical/quoted consent. No arguments.', {}),
   tool('request_human_assistance', 'Request a human for an explicit unlisted nonsexual custom service or a current request covered by an explicit human-assistance marker in business knowledge. No arguments; no automatic client reply.', {}),
 ];
+const catalogTools = (services: ServiceDto[]) => {
+  const ids = services.filter((service) => service.enabled).map((service) => service.id);
+  return assistantToolDefinitions.flatMap((definition) => definition.name !== 'prepare_booking' ? [definition] : ids.length ? [{
+    ...definition, parameters: { ...definition.parameters, properties: { ...definition.parameters.properties, serviceId: { type: 'string', enum: ids } } },
+  }] : []);
+};
 const outputSchema = z.object({ status: z.string().optional(), incomplete_details: z.object({ reason: z.string().optional() }).nullish(), output: z.array(z.object({ type: z.string(), name: z.string().optional(), arguments: z.string().optional(), call_id: z.string().optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()).optional() }).passthrough()) });
 export type AssistantReply = { text: string; fromOpenAI: boolean; needsHuman?: boolean; humanContext?: string; bookingProposalId?: string };
 const responderErrorContext = (error: unknown, source: string, sensitiveValues: string[] = []) => error instanceof BookingNeedsHumanError
@@ -46,7 +52,6 @@ export class OpenAiService {
     const deadline = AbortSignal.timeout(60_000);
     const history = (await this.repository.listMessages(context.telegramChatId)).slice(-20).map(({ role, content }) => ({ role, content: content.slice(0, 4000) }));
     sensitiveValues.push(...history.map(({ content }) => content), conversation.summary);
-    const selectedTools = assistantToolDefinitions;
     const key = process.env.OPENAI_API_KEY;
     if (!key) throw new Error('OpenAI is not configured');
     const [promptOverride, knowledgeBaseOverride, configuredServices] = await Promise.all([
@@ -54,6 +59,8 @@ export class OpenAiService {
       this.repository.getKnowledgeBaseOverride(),
       this.repository.listServices(),
     ]);
+    let selectedTools = catalogTools(configuredServices);
+    let catalogCorrectionUsed = false;
     const instructions = systemTwoInstructions({ promptOverride: promptOverride?.prompt });
     const bookingProposalState = conversation.pendingAction?.name === 'create_booking' && conversation.pendingAction.expiresAt > new Date().toISOString() ? 'pending' : 'none';
     const rag = systemTwoRag({ message: text, knowledgeBaseOverride: knowledgeBaseOverride?.content, configuredServices, bookingProposalState });
@@ -69,7 +76,7 @@ export class OpenAiService {
     let preparedProposalId: string | undefined;
     let terminalReply: AssistantReply | undefined;
     for (let round = 0; round <= 4; round++) {
-      const request = () => requestOpenAiResponse({ model, conversation: openaiConversationId, ...(model === 'gpt-6-luna' ? { reasoning: { effort: 'low' } } : {}), ...(round === 0 ? requestContext : {}), input, tools: selectedTools, ...(terminalReply || round === 4 ? { tool_choice: 'none' } : {}), parallel_tool_calls: false, max_output_tokens: 4096 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]), 's2_assistant');
+      const request = () => requestOpenAiResponse({ model, conversation: openaiConversationId, ...(model === 'gpt-6-luna' ? { reasoning: { effort: 'low' } } : {}), ...(round === 0 ? requestContext : {}), input, tools: selectedTools, ...(round === 4 ? { tool_choice: 'none' } : {}), parallel_tool_calls: false, max_output_tokens: 4096 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]), 's2_assistant');
       let response: unknown;
       try { response = await request(); }
       catch (error) {
@@ -87,7 +94,6 @@ export class OpenAiService {
       const { status, incomplete_details, output } = outputSchema.parse(response);
       if (status && status !== 'completed') throw Object.assign(new Error('OpenAI System Two response incomplete'), { code: incomplete_details?.reason === 'max_output_tokens' ? 'OPENAI_S2_TOKEN_LIMIT' : 'OPENAI_S2_INCOMPLETE' });
       input = [];
-      if (terminalReply) return terminalReply;
       const calls = output.filter((item) => item.type === 'function_call');
       if (!calls.length) {
         const reply = output.flatMap((item) => item.type === 'message' ? item.content ?? [] : []).filter((part) => part.type === 'output_text').map((part) => part.text ?? '').join('\n').trim();
@@ -101,10 +107,6 @@ export class OpenAiService {
         return { text: normalizedReply, fromOpenAI: true, ...(preparedProposalId ? { bookingProposalId: preparedProposalId } : {}) };
       }
       for (const call of calls) {
-        if (terminalReply) {
-          input.push({ type: 'function_call_output', call_id: call.call_id, output: JSON.stringify({ status: 'skipped', reason: 'Human handoff or prior tool failure' }) });
-          continue;
-        }
         sensitiveValues.push(...collectSensitiveStrings(call.arguments));
         let result: unknown;
         let parsed: z.infer<typeof assistantToolSchema> | undefined;
@@ -118,8 +120,29 @@ export class OpenAiService {
           } else result = await this.assistantTools.execute(parsed, { ...context, currentMessage: text });
           if (parsed.name === 'request_human_assistance' && result && typeof result === 'object' && 'status' in result && result.status === 'human_requested') terminalReply = { text: '', fromOpenAI: false, needsHuman: true, humanContext: 'The client request requires human assistance; review the original client message and relevant business facts.' };
         } catch (error) {
-          terminalReply = { text: '', fromOpenAI: false, needsHuman: true, humanContext: responderErrorContext(error, `S2 tool ${call.name ?? 'unknown'}`, sensitiveValues) };
-          result = { status: 'failed', category: safeErrorCategory(error) };
+          let corrected = false;
+          if (call.name === 'prepare_booking' && safeErrorDiagnostic(error).code === 'BOOKING_SERVICE_UNAVAILABLE' && !catalogCorrectionUsed && round < 4) {
+            catalogCorrectionUsed = true;
+            try {
+              const services = (await this.repository.listServices()).filter((service) => service.enabled);
+              selectedTools = catalogTools(services);
+              if (services.length) {
+                corrected = true;
+                result = { status: 'correction_required', code: 'BOOKING_SERVICE_UNAVAILABLE', services: services.map(({ id, name, durationMinutes, durationOptions, price, currency }) => ({ id, name, durationMinutes, durationOptions, price, currency })) };
+              }
+            } catch (refreshError) {
+              await this.debug.record(context, 'error', { tool: 'get_services', reason: 'catalog_refresh_failed', errorCategory: safeErrorCategory(refreshError) }, 'error');
+              this.logger.error(`Catalog recovery failed trace=${context.traceId ?? 'unknown'}: ${JSON.stringify(safeErrorDiagnostic(refreshError, sensitiveValues))}`);
+              terminalReply = { text: '', fromOpenAI: false, needsHuman: true, humanContext: responderErrorContext(refreshError, 'S2 tool get_services', sensitiveValues) };
+            }
+          }
+          const errorCategory = safeErrorCategory(error);
+          await this.debug.record(context, 'error', { tool: call.name?.slice(0, 100), reason: corrected ? 'catalog_correction_offered' : 'tool_execution_failed', errorCategory }, corrected ? 'warn' : 'error');
+          this.logger.error(`Assistant tool failed trace=${context.traceId ?? 'unknown'} tool=${parsed?.name ?? 'unsupported'} category=${errorCategory}: ${JSON.stringify(safeErrorDiagnostic(error, sensitiveValues))}`);
+          if (!corrected) {
+            terminalReply ??= { text: '', fromOpenAI: false, needsHuman: true, humanContext: responderErrorContext(error, `S2 tool ${call.name ?? 'unknown'}`, sensitiveValues) };
+            result = { status: 'failed', category: errorCategory };
+          }
         }
         let modelResult = result;
         if (parsed?.name === 'prepare_booking' && result && typeof result === 'object' && 'status' in result && result.status === 'prepared') {
@@ -136,6 +159,10 @@ export class OpenAiService {
           const detail = 'errorContext' in result && typeof result.errorContext === 'string' ? `: ${result.errorContext}` : 'reason' in result && typeof result.reason === 'string' ? `: ${result.reason}` : '';
           const safeToolContext = 'errorContext' in result && typeof result.errorContext === 'string' ? result.errorContext.slice(0, 1500) : undefined;
           terminalReply ??= { text: '', fromOpenAI: false, needsHuman: true, humanContext: safeToolContext || humanErrorContext(new Error(`${status}${detail}`), `S2 tool ${call.name ?? 'unknown'}`, sensitiveValues) };
+        }
+        if (terminalReply) {
+          await this.repository.detachOpenAiConversation(context.telegramChatId, context.clientId, openaiConversationId);
+          return terminalReply;
         }
         sensitiveValues.push(...collectSensitiveStrings(result));
         input.push({ type: 'function_call_output', call_id: call.call_id, output: JSON.stringify(modelResult) });
