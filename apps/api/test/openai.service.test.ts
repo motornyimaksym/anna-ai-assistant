@@ -135,7 +135,10 @@ describe('Unified OpenAI conversation', () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'prepare_booking', arguments: '{"serviceId":"massage","durationMinutes":60,"startAt":"2026-09-30T17:00:00.000Z"}', call_id: 'prepare-1' }] }) })
       .mockResolvedValueOnce(answer('Запишу вас на Massage на годину, 30 вересня о 20:00 за 1400 гривень.')));
-    expect(await service.respond(conversation, context, 'Запиши мене')).toMatchObject({ text: '', needsHuman: true });
+    const reply = await service.respond(conversation, context, 'Запиши мене');
+    expect(reply).toMatchObject({ text: '', needsHuman: true, humanContext: expect.stringContaining('Не вдалося перевірити факти пропозиції запису') });
+    expect(reply.humanContext).toContain('Перевірка не пройдена: тривалість, ціна, зайве або суперечливе число.');
+    expect(reply.humanContext).not.toContain('Технічний стек викликів');
   });
   it('returns catalog facts without automatic Telegram card delivery', async () => {
     const { service, tools } = setup();

@@ -1,7 +1,21 @@
 import type { BookingConfirmationFacts } from '@booking/contracts';
 
+export type BookingConfirmationMismatch = 'service' | 'duration' | 'date' | 'time' | 'price' | 'currency' | 'reference_code' | 'conflicting_number' | 'conflicting_currency';
+
 function tokens(value: string): string[] {
-  return value.normalize('NFKC').toLocaleLowerCase('uk-UA').match(/[\p{L}\p{N}]+/gu) ?? [];
+  return normalizeNumberGroups(value).toLocaleLowerCase('uk-UA').match(/[\p{L}\p{N}]+/gu)?.map(normalizeNumericToken) ?? [];
+}
+
+function normalizeNumberGroups(value: string): string {
+  return value.normalize('NFKC').replace(/(?<=\d)[\s\u00a0\u202f,.'’](?=\d{3}(?:\D|$))/gu, '');
+}
+
+function normalizeNumericToken(value: string): string {
+  return /^\d+$/u.test(value) ? value.replace(/^0+(?=\d)/u, '') : value;
+}
+
+function moneyTokens(value: string): string[] {
+  return normalizeNumberGroups(value).toLocaleLowerCase('uk-UA').match(/[\p{L}\p{N}]+|₴/gu)?.map(normalizeNumericToken) ?? [];
 }
 
 function containsPhrase(text: string[], phrase: string): boolean {
@@ -23,7 +37,10 @@ function localDatePhrases(localDate: string): string[] {
   if (monthIndex < 0) return [localDate];
   const expanded = [...parts];
   expanded[monthIndex] = months[expanded[monthIndex]!]!;
-  return [parts.join(' '), expanded.join(' ')];
+  const yearIndex = parts.findIndex((part) => /^\d{4}$/u.test(part));
+  const withoutYear = parts.filter((_part, index) => index !== yearIndex);
+  const expandedWithoutYear = expanded.filter((_part, index) => index !== yearIndex);
+  return [parts.join(' '), expanded.join(' '), withoutYear.join(' '), expandedWithoutYear.join(' ')];
 }
 
 function readableText(value: string): string {
@@ -38,8 +55,39 @@ const foreignCurrencies = [
   { code: 'RUB', terms: ['rub', 'ruble', 'рубль', 'рублі', 'рублів'], symbols: ['₽'] },
 ];
 
+function containsPriceAndCurrency(message: string, price: number, currency: string): boolean {
+  const text = moneyTokens(message.replace(/<[^>]*>/g, ''));
+  const amount = moneyTokens(String(price));
+  const aliases = currency.toUpperCase() === 'UAH' ? ['uah', 'грн', 'гривня', 'гривні', 'гривень', '₴'] : [currency];
+  const hasSequence = (sequence: string[], start: number) => sequence.length > 0 && sequence.every((token, offset) => text[start + offset] === token);
+  return aliases.some((alias) => {
+    const currencyTokens = moneyTokens(alias);
+    if (!currencyTokens.length) return false;
+    for (let start = 0; start <= text.length - amount.length - currencyTokens.length; start++) {
+      if ((hasSequence(amount, start) && hasSequence(currencyTokens, start + amount.length))
+        || (hasSequence(currencyTokens, start) && hasSequence(amount, start + currencyTokens.length))) return true;
+    }
+    return false;
+  });
+}
+
+function containsAmount(message: string, price: number): boolean {
+  const text = moneyTokens(message.replace(/<[^>]*>/g, ''));
+  const amount = moneyTokens(String(price));
+  return amount.length > 0 && text.some((_token, start) => amount.every((token, offset) => text[start + offset] === token));
+}
+
+function containsCurrency(message: string, currency: string): boolean {
+  const text = moneyTokens(message.replace(/<[^>]*>/g, ''));
+  const aliases = currency.toUpperCase() === 'UAH' ? ['uah', 'грн', 'гривня', 'гривні', 'гривень', '₴'] : [currency];
+  return aliases.some((alias) => {
+    const phrase = moneyTokens(alias);
+    return phrase.length > 0 && text.some((_token, start) => phrase.every((token, offset) => text[start + offset] === token));
+  });
+}
+
 /** Required booking facts may move within natural wording, but may not be changed or omitted. */
-export function containsBookingConfirmationFacts(message: string, facts: BookingConfirmationFacts): boolean {
+export function bookingConfirmationMismatches(message: string, facts: BookingConfirmationFacts): BookingConfirmationMismatch[] {
   const readable = readableText(message);
   const text = tokens(readable);
   const duration = facts.durationMinutes;
@@ -47,7 +95,7 @@ export function containsBookingConfirmationFacts(message: string, facts: Booking
     `${duration} хв`, `${duration} хвилина`, `${duration} хвилини`, `${duration} хвилин`,
     `${duration} min`, `${duration} mins`, `${duration} minute`, `${duration} minutes`,
   ];
-  const allNumbers = (value: string) => value.normalize('NFKC').match(/\d+/gu) ?? [];
+  const allNumbers = (value: string) => normalizeNumberGroups(value).match(/\d+/gu)?.map(normalizeNumericToken) ?? [];
   const expectedNumbers = new Map<string, number>();
   for (const number of allNumbers(`${facts.serviceName} ${duration} ${facts.localDate} ${facts.localTime} ${facts.price}${facts.referenceCode ? ` ${facts.referenceCode}` : ''}`)) expectedNumbers.set(number, (expectedNumbers.get(number) ?? 0) + 1);
   const usedNumbers = new Map<string, number>();
@@ -55,12 +103,21 @@ export function containsBookingConfirmationFacts(message: string, facts: Booking
   const hasNoConflictingNumbers = [...usedNumbers].every(([number, count]) => count <= (expectedNumbers.get(number) ?? 0));
   const hasNoConflictingCurrency = foreignCurrencies.every(({ code, terms, symbols }) => code === facts.currency.toUpperCase()
     || (!terms.some((term) => text.includes(term)) && !symbols.some((symbol) => readable.includes(symbol))));
-  return hasNoConflictingNumbers
-    && hasNoConflictingCurrency
-    && containsPhrase(text, facts.serviceName)
-    && localDatePhrases(facts.localDate).some((phrase) => containsPhrase(text, phrase))
-    && containsPhrase(text, facts.localTime)
-    && durationPhrases.some((phrase) => containsPhrase(text, phrase))
-    && containsPhrase(text, `${facts.price} ${facts.currency}`)
-    && (!facts.referenceCode || containsPhrase(text, facts.referenceCode));
+  const mismatches: BookingConfirmationMismatch[] = [];
+  if (!containsPhrase(text, facts.serviceName)) mismatches.push('service');
+  if (!durationPhrases.some((phrase) => containsPhrase(text, phrase))) mismatches.push('duration');
+  if (!localDatePhrases(facts.localDate).some((phrase) => containsPhrase(text, phrase))) mismatches.push('date');
+  if (!containsPhrase(text, facts.localTime)) mismatches.push('time');
+  const hasPrice = containsAmount(readable, facts.price);
+  const hasCurrency = containsCurrency(readable, facts.currency);
+  if (!hasPrice) mismatches.push('price');
+  if (!hasCurrency || (hasPrice && !containsPriceAndCurrency(readable, facts.price, facts.currency))) mismatches.push('currency');
+  if (facts.referenceCode && !containsPhrase(text, facts.referenceCode)) mismatches.push('reference_code');
+  if (!hasNoConflictingNumbers) mismatches.push('conflicting_number');
+  if (!hasNoConflictingCurrency) mismatches.push('conflicting_currency');
+  return mismatches;
+}
+
+export function containsBookingConfirmationFacts(message: string, facts: BookingConfirmationFacts): boolean {
+  return bookingConfirmationMismatches(message, facts).length === 0;
 }

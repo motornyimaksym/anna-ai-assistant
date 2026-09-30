@@ -4,7 +4,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { bookingConfirmationFactsSchema, type BookingConfirmationFacts, type ConversationDto } from '@booking/contracts';
 import { boundedConversationHistory, systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from './system-two-instructions.js';
-import { containsBookingConfirmationFacts } from './booking-confirmation.js';
+import { bookingConfirmationMismatches } from './booking-confirmation.js';
 import { AssistantToolsService, assistantToolSchema, type AssistantContext } from './assistant-tools.service.js';
 import { BookingRepository } from './repository.js';
 import { collectSensitiveStrings, DebugLogService, humanErrorContext, safeErrorCategory, safeErrorDiagnostic } from './debug-log.service.js';
@@ -93,7 +93,10 @@ export class OpenAiService {
         if (!reply) throw new Error('Empty model reply');
         if (reply.length > 4000) throw new Error('Model reply too long');
         const normalizedReply = TextUtils.replaceLongDashes(reply);
-        if (preparedConfirmationFacts && !containsBookingConfirmationFacts(normalizedReply, preparedConfirmationFacts)) throw new Error('Booking proposal response omitted or changed verified facts');
+        if (preparedConfirmationFacts) {
+          const factIssues = bookingConfirmationMismatches(normalizedReply, preparedConfirmationFacts);
+          if (factIssues.length) throw Object.assign(new Error('Proposal confirmation facts were not verified'), { code: 'BOOKING_PROPOSAL_FACT_MISMATCH', factIssues });
+        }
         return { text: normalizedReply, fromOpenAI: true, ...(preparedProposalId ? { bookingProposalId: preparedProposalId } : {}) };
       }
       for (const call of calls) {

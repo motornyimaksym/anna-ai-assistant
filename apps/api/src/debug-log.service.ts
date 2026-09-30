@@ -6,7 +6,8 @@ import { BookingRepository } from './repository.js';
 
 export type TraceContext = { telegramChatId: string; traceId?: string };
 type ProviderError = { code?: string; param?: string; message?: string };
-type ErrorDiagnostic = { type: string; message?: string; code?: string; providerError?: ProviderError; upstreamStatus?: number; providerRequestId?: string; issues?: Array<{ code: string; path: Array<string | number> }>; stack?: string[]; cause?: ErrorDiagnostic };
+type ErrorDiagnostic = { type: string; message?: string; code?: string; providerError?: ProviderError; upstreamStatus?: number; providerRequestId?: string; issues?: Array<{ code: string; path: Array<string | number> }>; factIssues?: string[]; stack?: string[]; cause?: ErrorDiagnostic };
+const bookingFactIssueNames = new Set(['service', 'duration', 'date', 'time', 'price', 'currency', 'reference_code', 'conflicting_number', 'conflicting_currency']);
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const redact = (value: string, sensitiveValues: string[] = []): string => {
   let result = value
@@ -45,7 +46,7 @@ export function sanitizeOpenAiError(value: unknown, sensitiveValues: string[] = 
 
 function errorDiagnostic(error: unknown, depth = 0, sensitiveValues: string[] = []): ErrorDiagnostic {
   if (!error || typeof error !== 'object') return { type: typeof error };
-  const object = error as { name?: unknown; message?: unknown; code?: unknown; providerError?: unknown; status?: unknown; upstreamStatus?: unknown; providerRequestId?: unknown; requestId?: unknown; stack?: unknown; cause?: unknown; issues?: unknown };
+  const object = error as { name?: unknown; message?: unknown; code?: unknown; providerError?: unknown; status?: unknown; upstreamStatus?: unknown; providerRequestId?: unknown; requestId?: unknown; stack?: unknown; cause?: unknown; issues?: unknown; factIssues?: unknown };
   const type = typeof object.name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,59}$/.test(object.name) ? object.name : 'Error';
   const result: ErrorDiagnostic = { type };
   const providerError = sanitizeOpenAiError(object.providerError, sensitiveValues);
@@ -65,6 +66,7 @@ function errorDiagnostic(error: unknown, depth = 0, sensitiveValues: string[] = 
       return [{ code: entry.code.slice(0, 50), path }];
     });
   }
+  if (Array.isArray(object.factIssues)) result.factIssues = [...new Set(object.factIssues.filter((item): item is string => typeof item === 'string' && bookingFactIssueNames.has(item)))].slice(0, 9);
   if (typeof object.stack === 'string') {
     result.stack = object.stack.split('\n').slice(1).filter((line) => /^\s+at /.test(line)).slice(0, 20).map((line) => redact(line, sensitiveValues));
   }
@@ -109,6 +111,12 @@ export function humanErrorContext(error: unknown, source: string, sensitiveValue
   const stackFallback = (message: string) => detail.stack?.length
     ? `${message}\nТехнічний стек викликів:\n${detail.stack.join('\n')}`.slice(0, 1500)
     : message.slice(0, 700);
+  if (detail.code === 'BOOKING_PROPOSAL_FACT_MISMATCH') {
+    const labels: Record<string, string> = { service: 'послуга', duration: 'тривалість', date: 'дата', time: 'час', price: 'ціна', currency: 'валюта', reference_code: 'код пропозиції', conflicting_number: 'зайве або суперечливе число', conflicting_currency: 'інша валюта' };
+    const fields = detail.factIssues?.map((issue) => labels[issue]).filter((label): label is string => Boolean(label)) ?? [];
+    const diagnosis = fields.length ? ` Перевірка не пройдена: ${fields.join(', ')}.` : '';
+    return `Не вдалося перевірити факти пропозиції запису.${diagnosis} Повідомлення клієнту не надіслано; звірте пропозицію перед ручною відповіддю.`;
+  }
   if (detail.type === 'ZodError') {
     const bookingMessage = bookingValidationMessage(detail, source);
     if (bookingMessage) return bookingMessage.slice(0, 700);
@@ -154,6 +162,7 @@ export function collectSensitiveStrings(value: unknown, limit = 500): string[] {
 export const safeErrorCategory = (error: unknown): string => {
   if (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name)) return 'timeout';
   const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+  if (code === 'BOOKING_PROPOSAL_FACT_MISMATCH') return 'booking proposal fact mismatch';
   if (code === 'OPENAI_DECISION_TOKEN_LIMIT') return 'provider output token limit';
   if (code === 'OPENAI_DECISION_INCOMPLETE') return 'provider response incomplete';
   if (code === 'OPENAI_S2_TOKEN_LIMIT') return 'System Two output token limit';

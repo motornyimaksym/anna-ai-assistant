@@ -8,6 +8,13 @@ describe('booking confirmation facts', () => {
     expect(containsBookingConfirmationFacts('Підійде вам 30 вер. 2026 року о 20:00 авторський чуттєвий масаж? Тривалість — 120 хвилин, вартість — 5500 UAH.', facts)).toBe(true);
   });
 
+  it('accepts client-facing date without year, zero-padded day, and grouped UAH price', () => {
+    const appointment = { ...facts, serviceName: 'Авторський чуттєвий масаж', durationMinutes: 90, localDate: '1 жовт. 2026 р.', price: 4000 };
+    expect(containsBookingConfirmationFacts('Авторський чуттєвий масаж, 90 хв, 01 жовтня, четвер, 20:00 - 4 000 грн. Підтверджуєте?', appointment)).toBe(true);
+    expect(containsBookingConfirmationFacts('Авторський чуттєвий масаж, 90 хв, 01 жовтня, четвер, 20:00 - ₴4000. Підтверджуєте?', appointment)).toBe(true);
+    expect(containsBookingConfirmationFacts('Авторський чуттєвий масаж, 90 хв, 01 жовтня 2027 року, четвер, 20:00 - 4 000 гривень. Підтверджуєте?', appointment)).toBe(false);
+  });
+
   it('keeps legacy reference codes required only when older proposals contain one', () => {
     const legacyFacts = { ...facts, referenceCode: 'f6b473a6' };
     const codeFreeMessage = 'Авторський чуттєвий масаж, 120 хв, 30 вер. 2026 р. о 20:00, 5500 UAH.';

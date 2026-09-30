@@ -110,8 +110,20 @@ it('shows a sanitized stack trace when no localized diagnosis is available', () 
 it.each([
   ['OPENAI_DECISION_TOKEN_LIMIT', 'provider output token limit'],
   ['OPENAI_DECISION_INCOMPLETE', 'provider response incomplete'],
-])('categorizes safe System One failure %s', (code, category) => {
+  ['BOOKING_PROPOSAL_FACT_MISMATCH', 'booking proposal fact mismatch'],
+])('categorizes safe failure %s', (code, category) => {
   const error = Object.assign(new Error('System One decision failed'), { code });
   expect(safeErrorCategory(error)).toBe(category);
   expect(safeErrorDiagnostic(error).code).toBe(code);
+});
+
+it('explains proposal fact mismatches without returning an unhelpful stack trace', () => {
+  const error = Object.assign(new Error('Proposal confirmation facts were not verified'), { code: 'BOOKING_PROPOSAL_FACT_MISMATCH', factIssues: ['date', 'currency', 'private client text'], stack: 'Error\n    at OpenAiService.run (/workspace/dist/openai.service.js:121:27)' });
+  const context = humanErrorContext(error, 'OpenAI System Two');
+  expect(context).toContain('Не вдалося перевірити факти пропозиції запису');
+  expect(context).toContain('Перевірка не пройдена: дата, валюта.');
+  expect(context).not.toContain('private client text');
+  expect(context).not.toContain('Технічний стек викликів');
+  expect(context).not.toContain('openai.service.js');
+  expect(safeErrorDiagnostic(error).factIssues).toEqual(['date', 'currency']);
 });
