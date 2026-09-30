@@ -218,6 +218,7 @@ it('separates a withheld draft, escapes transcript text, and hides request and c
   const body = JSON.parse(delivery[1]!.body as string);
   expect(body.text).toContain('<b>Діалог:</b>\nclient123: Старе питання &lt;прайс&gt; &amp; час\n\nБот: Стара відповідь бота\n\nclient123: Середа');
   expect(body.text).toContain('<b>Не надіслане повідомлення:</b>\nЗапис: Масаж, 120 хв. Код abc12345.\n\nПідтверджуєте запис?');
+  expect(body.reply_markup.inline_keyboard[1]).toEqual([{ text: 'Approve', copy_text: { text: '/answer case-1 Запис: Масаж, 120 хв. Код abc12345.\n\nПідтверджуєте запис?' } }]);
   expect(body.text).toContain('Чат клієнта: https://t.me/client123');
   expect(body.text).not.toContain('Запит: case-1');
   expect(body.text).not.toContain('Чат клієнта: 123');
@@ -270,4 +271,20 @@ it('still sends queued assistance when client chat lookup fails', async () => {
   expect(JSON.parse(delivery[1]!.body as string).text).not.toContain('Чат клієнта: 123');
   expect(JSON.parse(delivery[1]!.body as string).text).toContain('Follow-up question');
   expect(store.setDelivery).toHaveBeenCalledWith('case-1', '42:999', 'sent');
+});
+
+
+it.each([256, 257])('respects the copy-text command limit at %i characters', async (length) => {
+  vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
+  const { service, store } = setup();
+  store.open.mockResolvedValue({ request, created: true });
+  store.connected.mockResolvedValue([{ userId: '42', chatId: '42', username: 'responsible' }] as never);
+  const fetcher = vi.fn(async (url: string, _init?: RequestInit) => ({ ok: true, json: async () => url.endsWith('/getChat') ? { ok: true, result: { id: 42, type: 'private', username: 'responsible' } } : { ok: true } }));
+  vi.stubGlobal('fetch', fetcher);
+  const draft = 'я'.repeat(length - '/answer case-1 '.length);
+  await service.escalate('123', undefined, 1, 'Question', { reason: 'handoff_probability', thresholdPercent: 95 }, { unsentMessage: draft });
+  const delivery = fetcher.mock.calls.find(([url]) => url.endsWith('/sendMessage'))!;
+  const body = JSON.parse(delivery[1]!.body as string);
+  expect(body.reply_markup.inline_keyboard).toHaveLength(length === 256 ? 2 : 1);
+  if (length === 256) expect(body.reply_markup.inline_keyboard[1][0]).toEqual({ text: 'Approve', copy_text: { text: `/answer case-1 ${draft}` } });
 });

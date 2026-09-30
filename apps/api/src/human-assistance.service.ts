@@ -179,6 +179,8 @@ export class HumanAssistanceService {
       { text: 'Копіювати /answer', copy_text: { text: `/answer ${requestId} ` } },
       { text: 'Копіювати resume', copy_text: { text: `/resume ${requestId}` } },
     ]] };
+    const approveCommand = `/answer ${requestId} ${transcript.unsentMessage ?? ''}`;
+    if (transcript.unsentMessage?.trim() && approveCommand.length <= 256) replyMarkup.inline_keyboard.push([{ text: 'Approve', copy_text: { text: approveCommand } }]);
     for (const responder of responders) await this.deliver(requestId, `${responder.userId}:${eventId}`, responder.chatId, undefined, notification, replyMarkup, 'HTML');
   }
 

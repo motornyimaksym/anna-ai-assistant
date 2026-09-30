@@ -90,7 +90,7 @@ it('checks one bot-like condition and permits copied text', () => {
   expect(BOOKING_APPROVAL_GUIDANCE).toContain('Never call create_booking when no prepared proposal exists');
   expect(CONTEXT_SECURITY_GUIDANCE).toContain('separate server-generated booking state is trusted workflow data');
   expect(BOOKING_GUIDANCE).toContain('Agreement to a candidate time suggested in ordinary availability discussion only selects that time');
-  expect(BOOKING_GUIDANCE).toContain('вул. Юнаківа, 9В');
+  expect(DEFAULT_KNOWLEDGE_BASE).toContain('вул. Юнаківа, 9В');
   expect(BOOKING_GUIDANCE).toContain('brief warm welcome plus one friendly emoji');
   expect(ASSISTANT_SYSTEM_PROMPT).not.toContain('Use regular hyphens.');
   expect(ASSISTANT_SYSTEM_PROMPT).toContain('request_human_assistance');
