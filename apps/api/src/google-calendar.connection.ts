@@ -4,9 +4,10 @@ import { OAuth2Client } from 'google-auth-library';
 import { z } from 'zod';
 import type { GoogleCalendarChoice, GoogleCalendarStatus } from '@booking/contracts';
 import { GoogleCalendarStore, openCalendar, sealCalendar } from './google-calendar.store.js';
-import { fetchWithLinearBackoff } from '@booking/http';
+import { fetchWithLinearBackoff, type LinearBackoffOptions } from '@booking/http';
 import { safeErrorDiagnostic } from './debug-log.service.js';
 const calendarScopes = ['calendar.events', 'calendar.freebusy', 'calendar.calendarlist.readonly'].map((scope) => `https://www.googleapis.com/auth/${scope}`);
+const calendarRetryDelaysMs = [1000, 5000, 15000] as const;
 const fail = (response?: Response) => Object.assign(new ServiceUnavailableException('Google Calendar request failed. Check the connection or reconnect in Settings.'), {
   ...(response ? { upstreamStatus: response.status, providerRequestId: response.headers?.get('x-request-id') ?? undefined } : {}),
 });
@@ -78,10 +79,10 @@ export class GoogleCalendarConnection {
       return z.object({ access_token: z.string().min(1) }).parse(await response.json()).access_token;
     } catch (error) { this.logger.error(`Google token refresh failed: ${JSON.stringify(safeErrorDiagnostic(error, [credentials.refreshToken, process.env.GOOGLE_CLIENT_SECRET ?? '']))}`); throw fail(); }
   }
-  async request(credentials: CalendarCredentials, path: string, init: RequestInit = {}, allowedStatuses: number[] = [], retry: { replaySafe?: boolean } = {}): Promise<Response> {
+  async request(credentials: CalendarCredentials, path: string, init: RequestInit = {}, allowedStatuses: number[] = [], retry: Pick<LinearBackoffOptions, 'replaySafe'> = {}): Promise<Response> {
     try {
       const token = await this.accessToken(credentials);
-      const response = await fetchWithLinearBackoff(`https://www.googleapis.com/calendar/v3${path}`, { ...init, signal: AbortSignal.timeout(15000), headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...init.headers } }, retry);
+      const response = await fetchWithLinearBackoff(`https://www.googleapis.com/calendar/v3${path}`, { ...init, signal: AbortSignal.timeout(30000), headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...init.headers } }, { ...retry, retryDelaysMs: calendarRetryDelaysMs });
       if (!response.ok && !allowedStatuses.includes(response.status)) throw fail(response); return response;
     } catch (error) { this.logger.error(`Google Calendar API request failed: ${JSON.stringify(safeErrorDiagnostic(error))}`); throw fail(); }
   }

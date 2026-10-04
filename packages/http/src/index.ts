@@ -9,6 +9,8 @@ export type LinearBackoffOptions = {
   retries?: number;
   /** First wait in milliseconds; later waits scale linearly. */
   baseDelayMs?: number;
+  /** Optional exact waits for each retry, indexed from the first retry. */
+  retryDelaysMs?: readonly number[];
   /** Per-attempt timeout. Caller signal remains the overall deadline. */
   timeoutMs?: number;
 };
@@ -96,6 +98,12 @@ export async function fetchWithLinearBackoff(
   const replaySafe = options.replaySafe ?? ['GET', 'HEAD', 'OPTIONS'].includes(method);
   const retries = Math.max(0, Math.min(defaultRetries, Math.floor(options.retries ?? defaultRetries)));
   const baseDelayMs = Math.max(0, options.baseDelayMs ?? defaultBaseDelayMs);
+  const retryDelayMs = (attempt: number) => {
+    const configured = options.retryDelaysMs?.[attempt];
+    return configured !== undefined && Number.isFinite(configured) && configured >= 0
+      ? configured
+      : baseDelayMs * (attempt + 1);
+  };
   const overallSignal = requestSignal(input, init);
   const requestTemplate = input instanceof Request ? input.clone() : undefined;
 
@@ -116,13 +124,13 @@ export async function fetchWithLinearBackoff(
     } catch (error) {
       const retry = replaySafe || hasPreSendFailure(error);
       if (attempt >= retries || !retry || overallSignal?.aborted) throw error;
-      await wait(baseDelayMs * (attempt + 1), overallSignal);
+      await wait(retryDelayMs(attempt), overallSignal);
       continue;
     }
 
     const mayRetryResponse = replaySafe || response.status === 425 || response.status === 429;
     if (attempt >= retries || !isRetryableStatus(response.status) || !mayRetryResponse) return response;
-    const fallback = response.status === 429 ? Math.max(1000 * 2 ** attempt, baseDelayMs * (attempt + 1)) : baseDelayMs * (attempt + 1);
+    const fallback = response.status === 429 ? Math.max(1000 * 2 ** attempt, retryDelayMs(attempt)) : retryDelayMs(attempt);
     const delay = Math.max(fallback, serverRetryDelay(response, options.rateLimitResetHeaders ?? false));
     if (delay > maxRetryWaitMs) return response;
     await response.body?.cancel().catch(() => undefined);
