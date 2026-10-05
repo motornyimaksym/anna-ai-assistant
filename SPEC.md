@@ -250,6 +250,7 @@ TELEGRAM_SESSION_ENCRYPTION_KEY
 OPENAI_API_KEY
 OPENAI_ADMIN_KEY
 OPENAI_TOTAL_CREDITS
+OPENAI_CREDITS_START_TIME
 TYPESAFE_AI_TOKEN
 OPENAI_MODEL
 
@@ -912,7 +913,7 @@ The Bookings admin page and navigation entry are removed when Google Calendar be
 
 ### 25.1. Dashboard
 
-Operational launchpad as specified in section 56. Add an uppercase OpenAI balance card with estimated remaining balance displayed prominently and total credits and used amount alongside it. `GET /admin/openai-balance` obtains all-time organization spend from paginated OpenAI Costs API results and calculates `estimatedRemaining = totalCredits - used`. `OPENAI_ADMIN_KEY` is server-side only and must never be returned to or bundled for the frontend. `OPENAI_TOTAL_CREDITS` is the configured total purchased credit amount in USD. If the total is unset, show used spend and clearly indicate that remaining balance cannot be calculated. If the key or Costs API is unavailable, show a localized retryable error without exposing provider response bodies or credentials. Refresh may use a short server-side cache.
+Operational launchpad as specified in section 56. Add an uppercase OpenAI balance card with estimated remaining balance displayed prominently and total credits and used amount alongside it. A discreet edit button opens a localized dialog for entering the current USD balance. `PUT /admin/openai-balance` saves that balance and the server's current timestamp in backend-only Firestore settings; subsequent cost queries begin at that timestamp and calculate `estimatedRemaining = savedBalance - spendSinceTimestamp`. `GET /admin/openai-balance` obtains organization spend from the active baseline through paginated OpenAI Costs API results. `OPENAI_ADMIN_KEY` is server-side only and must never be returned to or bundled for the frontend. Before a Firestore baseline is saved, `OPENAI_TOTAL_CREDITS` is the fallback USD balance at `OPENAI_CREDITS_START_TIME`; the timestamp defaults to the OpenAI API launch timestamp when unset. If no balance is configured, show used spend and clearly indicate that remaining balance cannot be calculated. If the key or Costs API is unavailable, show a localized retryable error without exposing provider response bodies or credentials. Refresh may use a short server-side cache.
 
 ### 25.2. Bookings
 
@@ -1022,6 +1023,7 @@ POST   /admin/conversations/:id/clear-context
 
 GET    /admin/dashboard
 GET    /admin/openai-balance
+PUT    /admin/openai-balance
 GET    /admin/spec
 GET    /admin/assistant-prompt
 PUT    /admin/assistant-prompt
@@ -1044,7 +1046,7 @@ GET    /health
 
 `GET /admin/spec` повертає `{ content: string }`. Prompt endpoints використовують спільні Zod contracts. `GET` повертає `{ prompt: string, isCustom: boolean, updatedAt?: string }`; `PUT` приймає `{ prompt: string }` і повертає ефективне значення; `DELETE` видаляє override та повертає default. Усі `/admin/**` endpoints вимагають Firebase ID token від owner UID у `ADMIN_UIDS` або verified email з stakeholder allowlist.
 
-`GET /admin/openai-balance` requires the existing admin guard and returns `{ totalCredits: number | null, used: number, estimatedRemaining: number | null, currency: "usd", updatedAt: string }`. The backend paginates `GET https://api.openai.com/v1/organization/costs` from the OpenAI API launch timestamp (`start_time=1591833600`, June 11, 2020) through the current time. This avoids empty epoch buckets while including the complete possible API cost history. `used` is the sum of USD cost results; `estimatedRemaining` is `totalCredits - used` only when `OPENAI_TOTAL_CREDITS` is configured. The server deduplicates concurrent balance reads, caches successful results briefly, and bounds the page count and total request duration. The OpenAI Admin API key is read only by the backend from `OPENAI_ADMIN_KEY`; provider errors return a generic retryable error and never include response bodies or credentials. No client-side OpenAI request is allowed.
+`GET /admin/openai-balance` requires the existing admin guard and returns `{ totalCredits: number | null, used: number, estimatedRemaining: number | null, currency: "usd", updatedAt: string }`. `PUT /admin/openai-balance` requires the same guard, accepts `{ balance: number }` (finite, nonnegative USD), and returns `{ balance: number, updatedAt: string }`; the backend sets `updatedAt` and persists the baseline in `assistantSettings/openAiBalance`. When that document exists, its balance and timestamp override environment fallbacks. Otherwise, `OPENAI_TOTAL_CREDITS` and `OPENAI_CREDITS_START_TIME` define the initial baseline; the timestamp defaults to the OpenAI API launch timestamp (`1591833600`, June 11, 2020). The backend paginates `GET https://api.openai.com/v1/organization/costs` from the active baseline timestamp (Unix seconds, inclusive) through the current time. `used` is the sum of USD cost results since that timestamp; `estimatedRemaining` is the active baseline balance minus that spend. The server deduplicates concurrent balance reads, caches successful results briefly, and bounds the page count and total request duration. The OpenAI Admin API key is read only by the backend from `OPENAI_ADMIN_KEY`; provider errors return a generic retryable error and never include response bodies or credentials. No client-side OpenAI request is allowed.
 
 Knowledge Base endpoints використовують shared Zod contracts. `GET` повертає `{ content: string, isCustom: boolean, updatedAt?: string, services: KnowledgeBaseService[] }`; `services` містить лише enabled service ID, назву, опис, тривалості, ціни й валюту. `PUT` приймає `{ content: string }` розміром 1–12,000 символів та повертає те саме response зі свіжим `services`; `DELETE` видаляє override та повертає repo default. Збереження доступне авторизованому адміністратору. Зміни застосовуються до наступного OpenAI запиту без deploy.
 

@@ -8,10 +8,16 @@ import {
   Chip,
   CircularProgress,
   Container,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Drawer,
   IconButton,
   Paper,
   Stack,
+  TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import {
@@ -21,6 +27,7 @@ import {
   CloseRounded,
   DashboardRounded,
   DescriptionOutlined,
+  EditOutlined,
   HubOutlined,
   MenuBookRounded,
   MenuRounded,
@@ -29,7 +36,7 @@ import {
   TuneRounded,
 } from "@mui/icons-material";
 import { Link, NavLink, useLocation } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DebugLink } from "./DebugLogs.js";
 import { signIn } from "./auth.js";
 import { AdminAppearance, ThemeToggle } from "./AdminAppearance.js";
@@ -442,6 +449,9 @@ const shortcuts = [
 ];
 function OpenAiBalanceCard() {
   const { t, language } = useI18n();
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [balanceDraft, setBalanceDraft] = useState("");
   const query = useQuery({
     queryKey: ["openai-balance"],
     queryFn: adminApi.openAiBalance,
@@ -449,15 +459,38 @@ function OpenAiBalanceCard() {
     refetchInterval: 5 * 60_000,
     retry: false,
   });
+  const saveBalance = useMutation({
+    mutationFn: adminApi.updateOpenAiBalance,
+    onSuccess: async () => {
+      setEditing(false);
+      await queryClient.invalidateQueries({ queryKey: ["openai-balance"] });
+    },
+  });
+  const openEditor = () => {
+    setBalanceDraft(query.data?.estimatedRemaining === null || query.data?.estimatedRemaining === undefined
+      ? query.data?.totalCredits?.toFixed(2) ?? ""
+      : query.data.estimatedRemaining.toFixed(2));
+    saveBalance.reset();
+    setEditing(true);
+  };
+  const parsedBalance = balanceDraft.trim() === "" ? Number.NaN : Number(balanceDraft);
+  const balanceInvalid = !Number.isFinite(parsedBalance) || parsedBalance < 0;
   const formatUsd = (amount: number | null) => amount === null
     ? "—"
     : new Intl.NumberFormat(language === "uk" ? "uk-UA" : "en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
 
   return (
     <Paper variant="outlined" sx={{ p: { xs: 2.5, md: 3 }, borderColor: "var(--admin-hero-border)" }}>
-      <Typography variant="overline" color="primary.main" sx={{ letterSpacing: "0.12em", fontWeight: 700 }}>
-        {t("OPENAI BALANCE")}
-      </Typography>
+      <Stack direction="row" alignItems="center" justifyContent="space-between">
+        <Typography variant="overline" color="primary.main" sx={{ letterSpacing: "0.12em", fontWeight: 700 }}>
+          {t("OPENAI BALANCE")}
+        </Typography>
+        <Tooltip title={t("Edit current balance")}>
+          <IconButton size="small" aria-label={t("Edit current balance")} onClick={openEditor} sx={{ color: "text.secondary", opacity: 0.58, "&:hover": { opacity: 1 } }}>
+            <EditOutlined fontSize="small" />
+          </IconButton>
+        </Tooltip>
+      </Stack>
       {query.isPending ? (
         <Stack direction="row" spacing={1.5} alignItems="center" sx={{ py: 2 }}>
           <CircularProgress size={22} />
@@ -474,7 +507,7 @@ function OpenAiBalanceCard() {
             <Typography component="p" sx={{ fontSize: { xs: "2.8rem", md: "3.8rem" }, lineHeight: 1.1, fontWeight: 800, letterSpacing: "-0.055em", my: 0.5 }}>
               {formatUsd(query.data.estimatedRemaining)}
             </Typography>
-            {query.data.totalCredits === null && <Typography variant="body2" color="text.secondary">{t("Set OPENAI_TOTAL_CREDITS on the server to calculate the estimate.")}</Typography>}
+            {query.data.totalCredits === null && <Typography variant="body2" color="text.secondary">{t("Save a current balance to start the estimate.")}</Typography>}
           </Box>
           <Box sx={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(130px, 1fr))", gap: { xs: 2, md: 4 }, width: { xs: "100%", md: "auto" } }}>
             <Box>
@@ -488,6 +521,22 @@ function OpenAiBalanceCard() {
           </Box>
         </Stack>
       )}
+      <Dialog open={editing} onClose={() => { if (!saveBalance.isPending) setEditing(false); }} fullWidth maxWidth="xs">
+        <DialogTitle>{t("Edit current balance")}</DialogTitle>
+        <Box component="form" onSubmit={(event) => { event.preventDefault(); if (!balanceInvalid) saveBalance.mutate(parsedBalance); }}>
+          <DialogContent>
+            <Stack spacing={2} sx={{ pt: 1 }}>
+              <Typography variant="body2" color="text.secondary">{t("Saving sets this as current balance and starts counting costs from now.")}</Typography>
+              <TextField autoFocus required fullWidth label={t("Current balance (USD)")} type="number" value={balanceDraft} onChange={(event) => setBalanceDraft(event.target.value)} inputProps={{ min: 0, step: 0.01 }} error={balanceDraft.trim() === "" || balanceInvalid} disabled={saveBalance.isPending} />
+              {saveBalance.isError && <Alert severity="error">{t("Could not save OpenAI balance.")}</Alert>}
+            </Stack>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2 }}>
+            <Button onClick={() => setEditing(false)} disabled={saveBalance.isPending}>{t("Cancel")}</Button>
+            <Button type="submit" variant="contained" disabled={balanceInvalid || saveBalance.isPending} startIcon={saveBalance.isPending ? <CircularProgress size={16} color="inherit" /> : undefined}>{t("Save")}</Button>
+          </DialogActions>
+        </Box>
+      </Dialog>
     </Paper>
   );
 }

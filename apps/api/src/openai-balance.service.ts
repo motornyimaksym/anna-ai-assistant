@@ -1,8 +1,9 @@
 import { ServiceUnavailableException, Injectable } from '@nestjs/common';
-import { openAiBalanceResponseSchema, type OpenAiBalanceResponse } from '@booking/contracts';
+import { openAiBalanceResponseSchema, type OpenAiBalanceBaseline, type OpenAiBalanceResponse } from '@booking/contracts';
 import { loadBackendRuntimeEnv } from '@booking/config';
 import { fetchWithLinearBackoff } from '@booking/http';
 import { z } from 'zod';
+import { BookingRepository } from './repository.js';
 
 const costsPageSchema = z.object({
   data: z.array(z.object({
@@ -21,29 +22,43 @@ const secondsPerDay = 86_400;
 
 @Injectable()
 export class OpenAiBalanceService {
-  private cached?: { value: OpenAiBalanceResponse; expiresAt: number };
-  private inFlight?: Promise<OpenAiBalanceResponse>;
+  private cached?: { baselineKey: string; value: OpenAiBalanceResponse; expiresAt: number };
+  private inFlight?: { baselineKey: string; promise: Promise<OpenAiBalanceResponse> };
+
+  constructor(private readonly repository: BookingRepository) {}
 
   async getBalance(): Promise<OpenAiBalanceResponse> {
-    if (this.cached && this.cached.expiresAt > Date.now()) return this.cached.value;
-    if (this.inFlight) return this.inFlight;
+    const runtimeEnv = loadBackendRuntimeEnv(process.env);
+    const baseline = await this.repository.getOpenAiBalanceBaseline();
+    const totalCredits = baseline?.balance ?? runtimeEnv.OPENAI_TOTAL_CREDITS ?? null;
+    const startTime = baseline ? Math.floor(Date.parse(baseline.updatedAt) / 1000) : runtimeEnv.OPENAI_CREDITS_START_TIME ?? openAiApiStartTime;
+    const baselineKey = `${baseline?.updatedAt ?? 'environment'}:${totalCredits ?? 'unset'}:${startTime}`;
+    if (this.cached?.baselineKey === baselineKey && this.cached.expiresAt > Date.now()) return this.cached.value;
+    if (this.inFlight?.baselineKey === baselineKey) return this.inFlight.promise;
 
-    const request = this.loadBalance();
-    this.inFlight = request;
-    try {
-      return await request;
-    } finally {
-      if (this.inFlight === request) this.inFlight = undefined;
-    }
+    const request = this.loadBalance(totalCredits, startTime).then((value) => {
+      this.cached = { baselineKey, value, expiresAt: Date.now() + 5 * 60_000 };
+      return value;
+    }).finally(() => {
+      if (this.inFlight?.promise === request) this.inFlight = undefined;
+    });
+    this.inFlight = { baselineKey, promise: request };
+    return request;
   }
 
-  private async loadBalance(): Promise<OpenAiBalanceResponse> {
+  async setCurrentBalance(balance: number): Promise<OpenAiBalanceBaseline> {
+    const baseline = await this.repository.saveOpenAiBalanceBaseline(balance);
+    this.cached = undefined;
+    this.inFlight = undefined;
+    return baseline;
+  }
+
+  private async loadBalance(totalCredits: number | null, startTime: number): Promise<OpenAiBalanceResponse> {
     const adminKey = process.env.OPENAI_ADMIN_KEY?.trim();
     if (!adminKey) throw unavailable();
-    const totalCredits = loadBackendRuntimeEnv(process.env).OPENAI_TOTAL_CREDITS ?? null;
     const endTime = Math.floor(Date.now() / 1000);
     const deadline = AbortSignal.timeout(60_000);
-    const maxPages = Math.ceil((endTime - openAiApiStartTime) / (costBucketPageSize * secondsPerDay)) + 1;
+    const maxPages = Math.ceil((endTime - startTime) / (costBucketPageSize * secondsPerDay)) + 1;
     const cursors = new Set<string>();
     let cursor: string | undefined;
     let used = 0;
@@ -51,7 +66,7 @@ export class OpenAiBalanceService {
 
     for (let pageNumber = 0; pageNumber < maxPages; pageNumber++) {
       const url = new URL('https://api.openai.com/v1/organization/costs');
-      url.searchParams.set('start_time', String(openAiApiStartTime));
+      url.searchParams.set('start_time', String(startTime));
       url.searchParams.set('end_time', String(endTime));
       url.searchParams.set('bucket_width', '1d');
       url.searchParams.set('limit', String(costBucketPageSize));
@@ -99,7 +114,6 @@ export class OpenAiBalanceService {
       currency: 'usd',
       updatedAt: new Date().toISOString(),
     });
-    this.cached = { value, expiresAt: Date.now() + 5 * 60_000 };
     return value;
   }
 }

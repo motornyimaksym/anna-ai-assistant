@@ -1,4 +1,4 @@
-import { systemOneSettingsSchema, type SystemOneSettings } from '@booking/contracts';
+import { openAiBalanceBaselineSchema, systemOneSettingsSchema, updateOpenAiBalanceSchema, type OpenAiBalanceBaseline, type SystemOneSettings } from '@booking/contracts';
 import { createHash, randomUUID } from 'node:crypto';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { FieldValue, getFirestore, type DocumentData, type Firestore } from 'firebase-admin/firestore';
@@ -461,6 +461,16 @@ export class BookingRepository {
   async saveSystemOneSettings(settings: SystemOneSettings): Promise<SystemOneSettings> {
     const value = systemOneSettingsSchema.parse(settings);
     await this.db.collection('assistantSettings').doc('systemOne').set({ ...value, updatedAt: new Date().toISOString() });
+    return value;
+  }
+  async getOpenAiBalanceBaseline(): Promise<OpenAiBalanceBaseline | undefined> {
+    const data = (await this.db.collection('assistantSettings').doc('openAiBalance').get()).data();
+    const value = openAiBalanceBaselineSchema.safeParse(data);
+    return value.success ? value.data : undefined;
+  }
+  async saveOpenAiBalanceBaseline(balance: number): Promise<OpenAiBalanceBaseline> {
+    const value = openAiBalanceBaselineSchema.parse({ ...updateOpenAiBalanceSchema.parse({ balance }), updatedAt: new Date().toISOString() });
+    await this.db.collection('assistantSettings').doc('openAiBalance').set(value);
     return value;
   }
   async getBotSettingsOverride(): Promise<(BotSettings & { updatedAt: string }) | undefined> {

@@ -1,6 +1,6 @@
 import { systemOneSettingsSchema } from '@booking/contracts';
 import { Body, Controller, Delete, Get, Header, Headers, HttpCode, NotFoundException, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
-import { adminAccessResponseSchema, assistantPromptResponseSchema, clearConversationContextResponseSchema, debugClearResponseSchema, promptCatalogResponseSchema, availabilityRuleSchema, availableSlotsRequestSchema, botSettingsResponseSchema, patchConversationSchema, scheduleExceptionSchema, servicePhotoUploadSchema, serviceSchema, serviceDeleteResponseSchema, updateAdminAccessSchema, updateAssistantPromptSchema, updateBotSettingsSchema, knowledgeBaseResponseSchema, updateKnowledgeBaseSchema, humanAssistanceSettingsResponseSchema, humanReplySchema, updateHumanAssistanceSettingsSchema } from '@booking/contracts';
+import { adminAccessResponseSchema, assistantPromptResponseSchema, clearConversationContextResponseSchema, debugClearResponseSchema, promptCatalogResponseSchema, availabilityRuleSchema, availableSlotsRequestSchema, botSettingsResponseSchema, openAiBalanceBaselineSchema, patchConversationSchema, scheduleExceptionSchema, servicePhotoUploadSchema, serviceSchema, serviceDeleteResponseSchema, updateAdminAccessSchema, updateAssistantPromptSchema, updateBotSettingsSchema, updateOpenAiBalanceSchema, knowledgeBaseResponseSchema, updateKnowledgeBaseSchema, humanAssistanceSettingsResponseSchema, humanReplySchema, updateHumanAssistanceSettingsSchema } from '@booking/contracts';
 import { AdminGuard, AdminOwnerGuard, AdminDebugGuard, canViewDebug, type AdminRequest } from './auth.js'; import { AvailabilityService } from './availability.service.js'; import { BookingService } from './booking.service.js'; import { BookingRepository } from './repository.js'; import { SpecService } from './spec.service.js'; import { TelegramService } from './telegram.service.js';
 import { getDefaultBotSettings } from './bot-settings.js';
 import { DEFAULT_KNOWLEDGE_BASE } from './default-knowledge-base.js';
@@ -17,6 +17,7 @@ export class TelegramController { constructor(private readonly telegram: Telegra
 export class AdminController {
   constructor(private readonly repository: BookingRepository, private readonly bookings: BookingService, private readonly availability: AvailabilityService, private readonly specService: SpecService, private readonly servicePhotos: ServicePhotoService, private readonly human: HumanAssistanceService, private readonly openAiBalance: OpenAiBalanceService) {}
   @Get('openai-balance') @Header('Cache-Control', 'no-store') openAiBalanceSummary() { return this.openAiBalance.getBalance(); }
+  @Put('openai-balance') async updateOpenAiBalance(@Body() body: unknown) { const { balance } = updateOpenAiBalanceSchema.parse(body); return openAiBalanceBaselineSchema.parse(await this.openAiBalance.setCurrentBalance(balance)); }
   @Get('spec') spec() { return this.specService.getSpec(); }
   @Get('prompt-catalog') promptCatalog() { return promptCatalogResponseSchema.parse({
     systemOne: [
