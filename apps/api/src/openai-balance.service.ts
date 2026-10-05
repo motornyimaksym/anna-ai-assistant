@@ -15,30 +15,46 @@ const costsPageSchema = z.object({
 }).passthrough();
 
 const unavailable = () => new ServiceUnavailableException('OpenAI balance is unavailable. Try again later.');
+const openAiApiStartTime = 1_591_833_600; // June 11, 2020: public OpenAI API launch.
+const costBucketPageSize = 180;
+const secondsPerDay = 86_400;
 
 @Injectable()
 export class OpenAiBalanceService {
   private cached?: { value: OpenAiBalanceResponse; expiresAt: number };
+  private inFlight?: Promise<OpenAiBalanceResponse>;
 
   async getBalance(): Promise<OpenAiBalanceResponse> {
     if (this.cached && this.cached.expiresAt > Date.now()) return this.cached.value;
+    if (this.inFlight) return this.inFlight;
 
+    const request = this.loadBalance();
+    this.inFlight = request;
+    try {
+      return await request;
+    } finally {
+      if (this.inFlight === request) this.inFlight = undefined;
+    }
+  }
+
+  private async loadBalance(): Promise<OpenAiBalanceResponse> {
     const adminKey = process.env.OPENAI_ADMIN_KEY?.trim();
     if (!adminKey) throw unavailable();
     const totalCredits = loadBackendRuntimeEnv(process.env).OPENAI_TOTAL_CREDITS ?? null;
     const endTime = Math.floor(Date.now() / 1000);
-    const deadline = AbortSignal.timeout(120_000);
+    const deadline = AbortSignal.timeout(60_000);
+    const maxPages = Math.ceil((endTime - openAiApiStartTime) / (costBucketPageSize * secondsPerDay)) + 1;
     const cursors = new Set<string>();
     let cursor: string | undefined;
     let used = 0;
     let complete = false;
 
-    for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
+    for (let pageNumber = 0; pageNumber < maxPages; pageNumber++) {
       const url = new URL('https://api.openai.com/v1/organization/costs');
-      url.searchParams.set('start_time', '1');
+      url.searchParams.set('start_time', String(openAiApiStartTime));
       url.searchParams.set('end_time', String(endTime));
       url.searchParams.set('bucket_width', '1d');
-      url.searchParams.set('limit', '180');
+      url.searchParams.set('limit', String(costBucketPageSize));
       if (cursor) url.searchParams.set('page', cursor);
 
       let response: Response;
@@ -46,7 +62,7 @@ export class OpenAiBalanceService {
         response = await fetchWithLinearBackoff(url, {
           headers: { authorization: `Bearer ${adminKey}`, 'content-type': 'application/json' },
           signal: deadline,
-        }, { timeoutMs: 15_000, rateLimitResetHeaders: true });
+        }, { timeoutMs: 15_000, rateLimitResetHeaders: true, retryDelaysMs: [1_000, 5_000, 15_000] });
       } catch {
         throw unavailable();
       }
