@@ -405,8 +405,7 @@ export function Page({
         {t(titleKey)}
       </Typography>
       <Typography color="text.secondary" sx={{ mb: 3.5, maxWidth: 760 }}>
-        {destination?.description ??
-          t("Inspect assistant activity and test your prompts.")}
+        {t(destination?.description ?? "Inspect assistant activity and test your prompts.")}
       </Typography>
       {titleKey === "Dashboard" ? (
         children
@@ -546,94 +545,6 @@ export function Dashboard() {
   return (
     <Page title={t("Dashboard")}>
       <Stack spacing={3}>
-        <Paper
-          variant="outlined"
-          sx={{
-            position: "relative",
-            overflow: "hidden",
-            p: { xs: 3, md: 4.5 },
-            background:
-              "linear-gradient(115deg, var(--admin-hero-start), var(--admin-hero-mid) 60%, var(--admin-hero-end))",
-            borderColor: "var(--admin-hero-border)",
-          }}
-        >
-          <Box
-            aria-hidden="true"
-            sx={{
-              position: "absolute",
-              inset: 0,
-              opacity: 0.16,
-              backgroundImage:
-                "linear-gradient(var(--admin-grid) 1px, transparent 1px), linear-gradient(90deg, var(--admin-grid) 1px, transparent 1px)",
-              backgroundSize: "36px 36px",
-              maskImage: "linear-gradient(90deg, transparent, black)",
-            }}
-          />
-          <Box
-            aria-hidden="true"
-            sx={{
-              display: { xs: "none", md: "block" },
-              position: "absolute",
-              right: "7%",
-              top: "15%",
-              width: 210,
-              height: 210,
-              border: "1px solid var(--admin-orbit)",
-              borderRadius: "50%",
-              boxShadow:
-                "0 0 80px var(--admin-active-wash), inset 0 0 60px var(--admin-active-wash)",
-              transform: "rotate(-25deg)",
-              "&::before": {
-                content: '""',
-                position: "absolute",
-                inset: "28px -28px",
-                border: "1px solid var(--admin-orbit-secondary)",
-                borderRadius: "50%",
-              },
-              "&::after": {
-                content: '"✦"',
-                position: "absolute",
-                inset: 0,
-                display: "grid",
-                placeItems: "center",
-                fontSize: 90,
-                color: "var(--admin-star)",
-                textShadow: "0 0 40px var(--admin-star-glow)",
-              },
-            }}
-          />
-          <Box sx={{ position: "relative", maxWidth: { md: "65%" } }}>
-            <Typography
-              variant="overline"
-              sx={{ color: "var(--admin-hero-label)" }}
-            >
-              {t("Human touch. Assisted by AI.")}</Typography>
-            <Typography
-              component="h2"
-              sx={{
-                fontSize: { xs: "2rem", md: "2.7rem" },
-                fontWeight: 650,
-                letterSpacing: "-0.055em",
-                lineHeight: 1.15,
-                mt: 2,
-                mb: 2,
-              }}
-            >
-              {t("More space for care.")}<br />
-              <Box component="span" sx={{ color: "primary.main" }}>
-                {t("Less time on admin.")}</Box>
-            </Typography>
-            <Typography color="text.secondary" sx={{ maxWidth: 460, mb: 3 }}>
-              {t("Your calendar, conversations and assistant — brought together in one thoughtful workspace.")}</Typography>
-            <Button
-              component={Link}
-              to="/bot-settings"
-              variant="contained"
-              endIcon={<ArrowForwardRounded />}
-            >
-              {t("Calendar settings")}</Button>
-          </Box>
-        </Paper>
         <OpenAiBalanceCard />
         <Stack
           direction="row"
@@ -746,6 +657,35 @@ export function Dashboard() {
             endIcon={<ArrowForwardRounded />}
           >
             {t("Knowledge Base")}</Button>
+        </Paper>
+        <Paper
+          variant="outlined"
+          sx={{
+            position: "relative",
+            overflow: "hidden",
+            px: { xs: 2, md: 2.5 },
+            py: { xs: 2, md: 2.25 },
+            background: "linear-gradient(115deg, var(--admin-hero-start), var(--admin-hero-mid) 60%, var(--admin-hero-end))",
+            borderColor: "var(--admin-hero-border)",
+          }}
+        >
+          <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "flex-start", sm: "center" }} spacing={2}>
+            <Box>
+              <Typography variant="overline" sx={{ color: "var(--admin-hero-label)" }}>
+                {t("Human touch. Assisted by AI.")}
+              </Typography>
+              <Typography component="h2" sx={{ fontSize: { xs: "1.25rem", md: "1.55rem" }, fontWeight: 650, letterSpacing: "-0.04em", lineHeight: 1.2, mt: 0.35, mb: 0.6 }}>
+                {t("More space for care.")}<br />
+                <Box component="span" sx={{ color: "primary.main" }}>{t("Less time on admin.")}</Box>
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 460 }}>
+                {t("Your calendar, conversations and assistant — brought together in one thoughtful workspace.")}
+              </Typography>
+            </Box>
+            <Button component={Link} to="/bot-settings" variant="outlined" size="small" endIcon={<ArrowForwardRounded />}>
+              {t("Calendar settings")}
+            </Button>
+          </Stack>
         </Paper>
       </Stack>
     </Page>
