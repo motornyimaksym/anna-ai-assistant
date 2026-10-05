@@ -1,6 +1,6 @@
 # Local development
 
-System One defaults to OpenAI using backend-only `OPENAI_API_KEY` and `OPENAI_MODEL`. Bot Settings can select TypeSafe AI; that option uses `TYPESAFE_AI_TOKEN` from the ignored root `.env` and falls back to OpenAI on provider failure. Valid negative decisions do not trigger fallback. Local secrets are never uploaded by a build.
+System One defaults to OpenAI using backend-only `OPENAI_API_KEY` and `OPENAI_MODEL`. The Dashboard's OpenAI balance card reads `OPENAI_ADMIN_KEY` only on the API server and uses `OPENAI_TOTAL_CREDITS` (USD) to estimate the remaining balance. Bot Settings can select TypeSafe AI; that option uses `TYPESAFE_AI_TOKEN` from the ignored root `.env` and falls back to OpenAI on provider failure. Valid negative decisions do not trigger fallback. Local secrets are never uploaded by a build.
 
 Create a root `.env` when needed and supply only the integrations you intend to exercise; the variable names are listed in `SPEC.md`. This file is ignored by Git. Start the API with `pnpm --filter api dev` and the admin UI with `pnpm --filter admin dev`. Use `pnpm firebase:emulators` for Firebase emulator services.
 

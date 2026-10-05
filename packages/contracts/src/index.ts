@@ -115,6 +115,7 @@ export * from './ai-chat.js';
 export * from './google-calendar.js';
 export * from './debug.js';
 export * from './prompt-test.js';
+export * from './openai-balance.js';
 
 export const systemOneSettingsSchema = z.object({ provider: z.enum(['openai', 'typesafe']) }).strict();
 export type SystemOneSettings = z.infer<typeof systemOneSettingsSchema>;

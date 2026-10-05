@@ -29,10 +29,12 @@ import {
   TuneRounded,
 } from "@mui/icons-material";
 import { Link, NavLink, useLocation } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { DebugLink } from "./DebugLogs.js";
 import { signIn } from "./auth.js";
 import { AdminAppearance, ThemeToggle } from "./AdminAppearance.js";
 import { LanguageToggle, useI18n } from "./i18n.js";
+import { adminApi } from "./api.js";
 
 const destinations = [
   {
@@ -438,6 +440,58 @@ const shortcuts = [
     color: "var(--admin-gold)",
   },
 ];
+function OpenAiBalanceCard() {
+  const { t, language } = useI18n();
+  const query = useQuery({
+    queryKey: ["openai-balance"],
+    queryFn: adminApi.openAiBalance,
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
+    retry: false,
+  });
+  const formatUsd = (amount: number | null) => amount === null
+    ? "—"
+    : new Intl.NumberFormat(language === "uk" ? "uk-UA" : "en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
+
+  return (
+    <Paper variant="outlined" sx={{ p: { xs: 2.5, md: 3 }, borderColor: "var(--admin-hero-border)" }}>
+      <Typography variant="overline" color="primary.main" sx={{ letterSpacing: "0.12em", fontWeight: 700 }}>
+        {t("OPENAI BALANCE")}
+      </Typography>
+      {query.isPending ? (
+        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ py: 2 }}>
+          <CircularProgress size={22} />
+          <Typography color="text.secondary">{t("Loading OpenAI balance…")}</Typography>
+        </Stack>
+      ) : query.isError ? (
+        <Alert severity="error" action={<Button color="inherit" size="small" onClick={() => void query.refetch()}>{t("Retry")}</Button>}>
+          {t("OpenAI balance is unavailable. Try again later.")}
+        </Alert>
+      ) : (
+        <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" alignItems={{ xs: "flex-start", md: "center" }} spacing={3} sx={{ mt: 1 }}>
+          <Box>
+            <Typography variant="body2" color="text.secondary">{t("Estimated remaining balance")}</Typography>
+            <Typography component="p" sx={{ fontSize: { xs: "2.8rem", md: "3.8rem" }, lineHeight: 1.1, fontWeight: 800, letterSpacing: "-0.055em", my: 0.5 }}>
+              {formatUsd(query.data.estimatedRemaining)}
+            </Typography>
+            {query.data.totalCredits === null && <Typography variant="body2" color="text.secondary">{t("Set OPENAI_TOTAL_CREDITS on the server to calculate the estimate.")}</Typography>}
+          </Box>
+          <Box sx={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(130px, 1fr))", gap: { xs: 2, md: 4 }, width: { xs: "100%", md: "auto" } }}>
+            <Box>
+              <Typography variant="caption" color="text.secondary">{t("Total credits")}</Typography>
+              <Typography variant="h6" fontWeight={700}>{formatUsd(query.data.totalCredits)}</Typography>
+            </Box>
+            <Box>
+              <Typography variant="caption" color="text.secondary">{t("Used")}</Typography>
+              <Typography variant="h6" fontWeight={700}>{formatUsd(query.data.used)}</Typography>
+            </Box>
+          </Box>
+        </Stack>
+      )}
+    </Paper>
+  );
+}
+
 export function Dashboard() {
   const { t } = useI18n();
   return (
@@ -531,6 +585,7 @@ export function Dashboard() {
               {t("Calendar settings")}</Button>
           </Box>
         </Paper>
+        <OpenAiBalanceCard />
         <Stack
           direction="row"
           justifyContent="space-between"

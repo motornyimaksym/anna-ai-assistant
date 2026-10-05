@@ -45,6 +45,7 @@ const routes: Record<string, RouteDoc> = {
   'GET /admin/admin-access': route('Read administrator access', C.adminAccessResponseSchema),
   'PUT /admin/admin-access': route('Update administrator access', C.adminAccessResponseSchema, C.updateAdminAccessSchema),
   'GET /admin/dashboard': route('Read dashboard statistics', dashboard),
+  'GET /admin/openai-balance': route('Read OpenAI credits, total costs, and estimated remaining balance', C.openAiBalanceResponseSchema),
   'GET /admin/services': route('List services', C.serviceSchema.array()),
   'POST /admin/services': route('Create a service', C.serviceSchema, C.serviceSchema),
   'PATCH /admin/services/{id}': route('Replace a service', C.serviceSchema, serviceUpdate, 'The path ID overrides any ID in the JSON body. Supply the complete service definition.'),

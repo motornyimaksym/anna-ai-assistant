@@ -8,13 +8,15 @@ import { ServicePhotoService } from './service-photo.service.js';
 import { HumanAssistanceService } from './human-assistance.service.js';
 import { assistantPromptIdSchema } from '@booking/contracts';
 import { promptDefinitions } from './prompt-settings.js';
+import { OpenAiBalanceService } from './openai-balance.service.js';
 @Controller()
 export class HealthController { @Get('health') health() { return { status: 'ok' }; } }
 @Controller('telegram')
 export class TelegramController { constructor(private readonly telegram: TelegramService) {} @Post('webhook') @HttpCode(200) async webhook(@Headers('x-telegram-bot-api-secret-token') secret: string | undefined, @Body() body: unknown) { await this.telegram.handle(secret, body); return { ok: true }; } }
 @UseGuards(AdminGuard) @Controller('admin')
 export class AdminController {
-  constructor(private readonly repository: BookingRepository, private readonly bookings: BookingService, private readonly availability: AvailabilityService, private readonly specService: SpecService, private readonly servicePhotos: ServicePhotoService, private readonly human: HumanAssistanceService) {}
+  constructor(private readonly repository: BookingRepository, private readonly bookings: BookingService, private readonly availability: AvailabilityService, private readonly specService: SpecService, private readonly servicePhotos: ServicePhotoService, private readonly human: HumanAssistanceService, private readonly openAiBalance: OpenAiBalanceService) {}
+  @Get('openai-balance') @Header('Cache-Control', 'no-store') openAiBalanceSummary() { return this.openAiBalance.getBalance(); }
   @Get('spec') spec() { return this.specService.getSpec(); }
   @Get('prompt-catalog') promptCatalog() { return promptCatalogResponseSchema.parse({
     systemOne: [

@@ -9,8 +9,9 @@ import { telegramAccountStatusSchema } from '@booking/contracts';
 import { telegramScheduleSlotsResponseSchema, telegramScheduleChatsSchema, telegramScheduleTopicsSchema } from '@booking/contracts';
 import { humanAssistanceSettingsResponseSchema, humanReleaseResponseSchema, humanRequestSchema, updateHumanAssistanceSettingsSchema, type HumanAssistanceSettings } from '@booking/contracts';
 import { adminAccessResponseSchema, assistantPromptResponseSchema, clearConversationContextResponseSchema, promptCatalogResponseSchema, availableSlotsResponseSchema, botSettingsResponseSchema, conversationSchema, serviceDeleteResponseSchema, servicePhotoUploadResponseSchema, servicePhotoUploadSchema, serviceSchema, specResponseSchema, updateAdminAccessSchema, type AssistantPromptId, type BotSettings, type ServiceDto } from '@booking/contracts';
+import { openAiBalanceResponseSchema } from '@booking/contracts';
 import { getAuth } from 'firebase/auth';
-const request = async <T>(path: string, schema: { parse(value: unknown): T }, init?: RequestInit): Promise<T> => { const user = getAuth().currentUser; const token = user ? await user.getIdToken() : undefined; const response = await fetchWithLinearBackoff(`/api${path}`, { ...init, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...init?.headers } }); if (!response.ok) { const body = (path.startsWith('/admin/telegram-account') || path.startsWith('/admin/media') || path.startsWith('/admin/ai-chat') || path.startsWith('/admin/schedule') || path.startsWith('/admin/google-calendar') || path.startsWith('/admin/debug')) ? await response.json().catch(() => ({})) as { message?: unknown } : {}; throw new Error(typeof body.message === 'string' ? body.message : `API request failed (${response.status})`); } return schema.parse(await response.json()); };
+const request = async <T>(path: string, schema: { parse(value: unknown): T }, init?: RequestInit): Promise<T> => { const user = getAuth().currentUser; const token = user ? await user.getIdToken() : undefined; const response = await fetchWithLinearBackoff(`/api${path}`, { ...init, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...init?.headers } }); if (!response.ok) { const body = (path.startsWith('/admin/telegram-account') || path.startsWith('/admin/media') || path.startsWith('/admin/ai-chat') || path.startsWith('/admin/schedule') || path.startsWith('/admin/google-calendar') || path.startsWith('/admin/debug') || path.startsWith('/admin/openai-balance')) ? await response.json().catch(() => ({})) as { message?: unknown } : {}; throw new Error(typeof body.message === 'string' ? body.message : `API request failed (${response.status})`); } return schema.parse(await response.json()); };
 const readMediaFile = async (file: File) => {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -21,6 +22,7 @@ const readMediaFile = async (file: File) => {
   return { filename: file.name, contentType: file.type, base64: dataUrl.slice(dataUrl.indexOf(',') + 1) };
 };
 export const adminApi = {
+  openAiBalance: () => request('/admin/openai-balance', openAiBalanceResponseSchema, { cache: 'no-store' }),
   googleCalendar: () => request('/admin/google-calendar', googleCalendarStatusSchema, { cache: 'no-store' }),
   startGoogleCalendar: () => request('/admin/google-calendar/start', googleCalendarStartSchema, { method: 'POST', body: '{}' }),
   completeGoogleCalendar: (input: { state: string; code?: string; denied?: boolean }) => request('/admin/google-calendar/complete', googleCalendarStatusSchema, { method: 'POST', body: JSON.stringify(input) }),
