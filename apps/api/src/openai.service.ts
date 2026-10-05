@@ -103,7 +103,7 @@ export class OpenAiService {
             if (mediaAttempted) result = { status: 'unavailable', reason: 'Only one media attempt per turn' };
             else { mediaAttempted = true; result = await this.assistantTools.execute(parsed, context); }
           } else result = await this.assistantTools.execute(parsed, { ...context, currentMessage: text });
-          if (parsed.name === 'request_human_assistance' && result && typeof result === 'object' && 'status' in result && result.status === 'human_requested') terminalReply = { text: '', fromOpenAI: false, needsHuman: true, humanContext: 'The client request requires human assistance; review the original client message and relevant business facts.' };
+          if (parsed.name === 'request_human_assistance' && result && typeof result === 'object' && 'status' in result && result.status === 'human_requested') terminalReply = { text: '', fromOpenAI: false, needsHuman: true, humanContext: 'Потрібна допомога людини. Перегляньте повідомлення клієнта й пов’язані факти про послуги.' };
         } catch (error) {
           let corrected = false;
           if (call.name === 'prepare_booking' && safeErrorDiagnostic(error).code === 'BOOKING_SERVICE_UNAVAILABLE' && !catalogCorrectionUsed && round < 4) {

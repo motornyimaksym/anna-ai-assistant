@@ -32,6 +32,7 @@ import { Link, NavLink, useLocation } from "react-router-dom";
 import { DebugLink } from "./DebugLogs.js";
 import { signIn } from "./auth.js";
 import { AdminAppearance, ThemeToggle } from "./AdminAppearance.js";
+import { LanguageToggle, useI18n } from "./i18n.js";
 
 const destinations = [
   {
@@ -100,6 +101,7 @@ const mono = {
 };
 
 function Brand() {
+  const { t } = useI18n();
   return (
     <Stack direction="row" alignItems="center" spacing={1.5}>
       <Box
@@ -121,15 +123,14 @@ function Brand() {
           fontWeight={750}
           sx={{ letterSpacing: "-0.04em", lineHeight: 1.3 }}
         >
-          Massage<span style={{ color: "var(--admin-accent)" }}> / AI</span>
+          {t("Massage")}<span style={{ color: "var(--admin-accent)" }}> {t(" ")}{t("/ AI")}</span>
         </Typography>
         <Typography
           variant="overline"
           color="text.secondary"
           sx={{ fontSize: "0.55rem" }}
         >
-          Assistant workspace
-        </Typography>
+          {t("Assistant workspace")}</Typography>
       </Box>
     </Stack>
   );
@@ -141,6 +142,7 @@ export function AdminShell({
   uid: string;
   children: ReactNode;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const location = useLocation();
   const current = destinations.find(
@@ -153,7 +155,7 @@ export function AdminShell({
       <Box sx={{ px: 0.5, pt: 1, pb: 4 }}>
         <Brand />
       </Box>
-      <Box component="nav" aria-label="Admin navigation" sx={{ flex: 1 }}>
+      <Box component="nav" aria-label={t("Admin navigation")} sx={{ flex: 1 }}>
         {["Workspace", "Intelligence", "Resources"].map((group) => (
           <Box key={group} sx={{ mb: 2.5 }}>
             <Typography
@@ -161,7 +163,7 @@ export function AdminShell({
               color="text.secondary"
               sx={{ px: 1.5, display: "block", mb: 1 }}
             >
-              {group}
+              {t(group)}
             </Typography>
             {destinations
               .filter((item) => item.group === group)
@@ -192,7 +194,7 @@ export function AdminShell({
                     },
                   }}
                 >
-                  {label}
+                  {t(label)}
                 </Button>
               ))}
           </Box>
@@ -227,15 +229,12 @@ export function AdminShell({
               fontSize: 12,
             }}
           >
-            AD
-          </Avatar>
+            {t("AD")}</Avatar>
           <Box>
             <Typography variant="body2" fontWeight={600}>
-              Admin workspace
-            </Typography>
+              {t("Admin workspace")}</Typography>
             <Typography variant="caption" color="text.secondary">
-              Europe/Kyiv
-            </Typography>
+              {t("Europe/Kyiv")}</Typography>
           </Box>
         </Stack>
       </Box>
@@ -264,8 +263,7 @@ export function AdminShell({
             "&:focus": { top: 12 },
           }}
         >
-          Skip to content
-        </Box>
+          {t("Skip to content")}</Box>
         <Box
           component="aside"
           sx={{
@@ -287,13 +285,13 @@ export function AdminShell({
           slotProps={{
             paper: {
               role: "dialog",
-              "aria-label": "Navigation menu",
+              "aria-label": t("Navigation menu"),
               sx: { width: 282, bgcolor: "var(--admin-sidebar)" },
             },
           }}
         >
           <IconButton
-            aria-label="Close navigation"
+            aria-label={t("Close navigation")}
             onClick={() => setOpen(false)}
             sx={{ position: "absolute", right: 5, top: 5 }}
           >
@@ -317,14 +315,14 @@ export function AdminShell({
           >
             <Stack direction="row" spacing={1.5} alignItems="center">
               <IconButton
-                aria-label="Open navigation"
+                aria-label={t("Open navigation")}
                 onClick={() => setOpen(true)}
                 sx={{ display: { lg: "none" } }}
               >
                 <MenuRounded />
               </IconButton>
               <Typography variant="body2" color="text.secondary">
-                Workspace{" "}
+                {t("Workspace")}{t(" ")}
                 <Box
                   component="span"
                   sx={{ px: 1.5, color: "var(--admin-muted)" }}
@@ -332,7 +330,7 @@ export function AdminShell({
                   /
                 </Box>
                 <Box component="span" sx={{ color: "text.primary" }}>
-                  {current?.label ?? "Debug"}
+                  {t(current?.label ?? "Debug")}
                 </Box>
               </Typography>
             </Stack>
@@ -340,7 +338,7 @@ export function AdminShell({
               <Chip
                 size="small"
                 variant="outlined"
-                label="ADMIN CONSOLE"
+                label={t("ADMIN CONSOLE")}
                 sx={{
                   ...mono,
                   fontSize: "0.6rem",
@@ -348,6 +346,7 @@ export function AdminShell({
                   borderColor: "var(--admin-line)",
                 }}
               />
+              <LanguageToggle />
               <ThemeToggle />
             </Stack>
           </Stack>
@@ -365,8 +364,8 @@ export function AdminShell({
             justifyContent="space-between"
             sx={{ px: { xs: 2, md: 4 }, pb: 3, color: "text.secondary" }}
           >
-            <Typography variant="overline">Massage / AI</Typography>
-            <Typography variant="caption">Built around your time.</Typography>
+            <Typography variant="overline">{t("Massage / AI")}</Typography>
+            <Typography variant="caption">{t("Built around your time.")}</Typography>
           </Stack>
         </Box>
       </Box>
@@ -380,24 +379,27 @@ export function Page({
   title: string;
   children: ReactNode;
 }) {
-  const destination = destinations.find((item) => item.label === title);
+  const { t } = useI18n();
+  const titleKey = destinations.find((item) => item.label === title || t(item.label) === title)?.label
+    ?? (["Dashboard", "Debug"].find((key) => key === title || t(key) === title) ?? title);
+  const destination = destinations.find((item) => item.label === titleKey);
   return (
     <Container
       maxWidth="xl"
       sx={{ pt: { xs: 3, md: 4.5 }, px: { xs: 2, md: 4 } }}
     >
       <Typography variant="overline" color="primary.main">
-        {destination?.group ?? "Diagnostics"} /{" "}
-        {title === "Dashboard" ? "Overview" : "Control panel"}
+        {t(destination?.group ?? "Diagnostics")} /{t(" ")}
+        {titleKey === "Dashboard" ? t("Overview") : t("Control panel")}
       </Typography>
       <Typography component="h1" variant="h4" sx={{ mt: 0.75, mb: 1 }}>
-        {title}
+        {t(titleKey)}
       </Typography>
       <Typography color="text.secondary" sx={{ mb: 3.5, maxWidth: 760 }}>
         {destination?.description ??
-          "Inspect assistant activity and test your prompts."}
+          t("Inspect assistant activity and test your prompts.")}
       </Typography>
-      {title === "Dashboard" ? (
+      {titleKey === "Dashboard" ? (
         children
       ) : (
         <Paper
@@ -437,8 +439,9 @@ const shortcuts = [
   },
 ];
 export function Dashboard() {
+  const { t } = useI18n();
   return (
-    <Page title="Dashboard">
+    <Page title={t("Dashboard")}>
       <Stack spacing={3}>
         <Paper
           variant="outlined"
@@ -501,8 +504,7 @@ export function Dashboard() {
               variant="overline"
               sx={{ color: "var(--admin-hero-label)" }}
             >
-              Human touch. Assisted by AI.
-            </Typography>
+              {t("Human touch. Assisted by AI.")}</Typography>
             <Typography
               component="h2"
               sx={{
@@ -514,24 +516,19 @@ export function Dashboard() {
                 mb: 2,
               }}
             >
-              More space for care.
-              <br />
+              {t("More space for care.")}<br />
               <Box component="span" sx={{ color: "primary.main" }}>
-                Less time on admin.
-              </Box>
+                {t("Less time on admin.")}</Box>
             </Typography>
             <Typography color="text.secondary" sx={{ maxWidth: 460, mb: 3 }}>
-              Your calendar, conversations and assistant — brought together in
-              one thoughtful workspace.
-            </Typography>
+              {t("Your calendar, conversations and assistant — brought together in one thoughtful workspace.")}</Typography>
             <Button
               component={Link}
               to="/bot-settings"
               variant="contained"
               endIcon={<ArrowForwardRounded />}
             >
-              Calendar settings
-            </Button>
+              {t("Calendar settings")}</Button>
           </Box>
         </Paper>
         <Stack
@@ -540,15 +537,13 @@ export function Dashboard() {
           alignItems="center"
         >
           <Typography component="h2" variant="h6">
-            Your daily workspace
-          </Typography>
+            {t("Your daily workspace")}</Typography>
           <Typography
             variant="overline"
             color="text.secondary"
             sx={{ display: { xs: "none", sm: "block" } }}
           >
-            Stay in control
-          </Typography>
+            {t("Stay in control")}</Typography>
         </Stack>
         <Box
           sx={{
@@ -571,7 +566,7 @@ export function Dashboard() {
                 <CardActionArea
                   component={Link}
                   to={`/${path}`}
-                  aria-label={`${destinations.find((item) => item.path === path)?.label}: ${title}`}
+                  aria-label={t(destinations.find((item) => item.path === path)?.label ?? "") + ": " + t(title)}
                   sx={{ p: 3, height: "100%" }}
                 >
                   <Stack
@@ -597,17 +592,17 @@ export function Dashboard() {
                     />
                   </Stack>
                   <Typography variant="overline" color="text.secondary">
-                    {eyebrow}
+                    {t(eyebrow)}
                   </Typography>
                   <Typography
                     component="h3"
                     variant="h6"
                     sx={{ fontSize: "1.05rem", my: 1 }}
                   >
-                    {title}
+                    {t(title)}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    {detail}
+                    {t(detail)}
                   </Typography>
                 </CardActionArea>
               </Paper>
@@ -629,12 +624,9 @@ export function Dashboard() {
           <AutoAwesomeRounded sx={{ color: "secondary.main", fontSize: 30 }} />
           <Box sx={{ flex: "1 1 260px" }}>
             <Typography component="h2" variant="h6">
-              Make it sound like you.
-            </Typography>
+              {t("Make it sound like you.")}</Typography>
             <Typography variant="body2" color="text.secondary">
-              Shape your assistant’s voice and give every answer the right
-              context.
-            </Typography>
+              {t("Shape your assistant’s voice and give every answer the right context.")}</Typography>
           </Box>
           <Button
             component={Link}
@@ -642,22 +634,21 @@ export function Dashboard() {
             variant="outlined"
             color="secondary"
           >
-            Assistant prompt
-          </Button>
+            {t("Assistant prompt")}</Button>
           <Button
             component={Link}
             to="/knowledge-base"
             color="secondary"
             endIcon={<ArrowForwardRounded />}
           >
-            Knowledge Base
-          </Button>
+            {t("Knowledge Base")}</Button>
         </Paper>
       </Stack>
     </Page>
   );
 }
 export function Login() {
+  const { t } = useI18n();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(false);
   const login = async () => {
@@ -693,6 +684,7 @@ export function Login() {
             alignItems="center"
           >
             <Brand />
+            <LanguageToggle />
             <ThemeToggle />
           </Stack>
           <Typography
@@ -700,20 +692,14 @@ export function Login() {
             color="primary.main"
             sx={{ display: "block", mt: 6 }}
           >
-            Welcome to your workspace
-          </Typography>
+            {t("Welcome to your workspace")}</Typography>
           <Typography component="h1" variant="h4" sx={{ mt: 1, mb: 2 }}>
-            A little intelligence.
-            <br />A lot more possibility.
-          </Typography>
+            {t("A little intelligence.")}<br />{t("A lot more possibility.")}</Typography>
           <Typography color="text.secondary" sx={{ mb: 4 }}>
-            Sign in to manage your bookings, care for your clients and make your
-            assistant your own.
-          </Typography>
+            {t("Sign in to manage your bookings, care for your clients and make your assistant your own.")}</Typography>
           {error && (
             <Alert severity="error" sx={{ mb: 2 }}>
-              Could not sign in. Please try again.
-            </Alert>
+              {t("Could not sign in. Please try again.")}</Alert>
           )}
           <Button
             fullWidth
@@ -726,15 +712,14 @@ export function Login() {
               ) : undefined
             }
           >
-            {pending ? "Signing in…" : "Sign in with Google"}
+            {pending ? t("Signing in…") : t("Sign in with Google")}
           </Button>
           <Typography
             variant="caption"
             color="text.secondary"
             sx={{ display: "block", textAlign: "center", mt: 3 }}
           >
-            Private workspace · Authorized administrators only
-          </Typography>
+            {t("Private workspace · Authorized administrators only")}</Typography>
         </Paper>
       </Box>
     </AdminAppearance>

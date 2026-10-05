@@ -33,9 +33,11 @@ import {
   ShieldOutlined,
 } from "@mui/icons-material";
 import { AdminAppearance, ThemeToggle } from "./AdminAppearance.js";
+import { LanguageToggle, useI18n } from "./i18n.js";
 
-const ChatBrand = () => (
-  <Stack direction="row" spacing={1.5} alignItems="center">
+const ChatBrand = () => {
+  const { t } = useI18n();
+  return <Stack direction="row" spacing={1.5} alignItems="center">
     <Box
       sx={{
         display: "grid",
@@ -52,16 +54,15 @@ const ChatBrand = () => (
     </Box>
     <Box>
       <Typography fontWeight={700} sx={{ letterSpacing: "-0.04em" }}>
-        AI workspace
-      </Typography>
+        {t("AI workspace")}</Typography>
       <Typography variant="overline" color="text.secondary">
-        Private intelligence
-      </Typography>
+        {t("Private intelligence")}</Typography>
     </Box>
-  </Stack>
-);
+  </Stack>;
+};
 
 export function AiChatEntry({ user }: { user: User | null }) {
+  const { t } = useI18n();
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const login = async () => {
@@ -99,6 +100,7 @@ export function AiChatEntry({ user }: { user: User | null }) {
             spacing={1}
           >
             <ChatBrand />
+            <LanguageToggle />
             <ThemeToggle />
           </Stack>
           <Typography
@@ -106,19 +108,14 @@ export function AiChatEntry({ user }: { user: User | null }) {
             color="primary.main"
             sx={{ display: "block", mt: 5 }}
           >
-            Space to think. Tools to act.
-          </Typography>
+            {t("Space to think. Tools to act.")}</Typography>
           <Typography component="h1" variant="h4" sx={{ mt: 1, mb: 2 }}>
-            Your ideas.
-            <br />A little more possibility.
-          </Typography>
+            {t("Your ideas.")}<br />{t("A little more possibility.")}</Typography>
           <Typography color="text.secondary" sx={{ mb: 4 }}>
-            A private place to think, search Telegram, and draft messages.
-            Access is managed by the owner.
-          </Typography>
+            {t("A private place to think, search Telegram, and draft messages. Access is managed by the owner.")}</Typography>
           {error && (
             <Alert severity="error" sx={{ mb: 2 }}>
-              {error}
+              {t(error)}
             </Alert>
           )}
           <Button
@@ -132,15 +129,14 @@ export function AiChatEntry({ user }: { user: User | null }) {
               ) : undefined
             }
           >
-            {pending ? "Signing in…" : "Sign in with Google"}
+            {pending ? t("Signing in…") : t("Sign in with Google")}
           </Button>
           <Typography
             variant="caption"
             color="text.secondary"
             sx={{ display: "block", mt: 3, textAlign: "center" }}
           >
-            Your workspace. Your conversations.
-          </Typography>
+            {t("Your workspace. Your conversations.")}</Typography>
         </Paper>
       </Box>
     </AdminAppearance>
@@ -156,6 +152,7 @@ export function AiChat({ uid }: { uid: string }) {
 }
 
 function AiChatWorkspace({ uid }: { uid: string }) {
+  const { t, language } = useI18n();
   const cache = useQueryClient();
   const [params, setParams] = useSearchParams();
   const id = params.get("thread") ?? "";
@@ -251,16 +248,13 @@ function AiChatWorkspace({ uid }: { uid: string }) {
         disabled={busy || !threads.isSuccess}
         onClick={() => create.mutate()}
       >
-        New chat
-      </Button>
+        {t("New chat")}</Button>
       <Typography variant="overline" color="text.secondary" sx={{ mt: 1 }}>
-        Your conversations
-      </Typography>
+        {t("Your conversations")}</Typography>
       <Box sx={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
         {threads.isSuccess && threads.data.length === 0 && (
           <Typography variant="body2" color="text.secondary" sx={{ px: 1 }}>
-            A fresh start. Your chats will appear here.
-          </Typography>
+            {t("A fresh start. Your chats will appear here.")}</Typography>
         )}
         {threads.data?.map((item) => (
           <Button
@@ -310,9 +304,8 @@ function AiChatWorkspace({ uid }: { uid: string }) {
             .catch(() => setSignOutError("Sign-out failed. Please try again."))
         }
       >
-        Sign out
-      </Button>
-      {signOutError && <Alert severity="error">{signOutError}</Alert>}
+        {t("Sign out")}</Button>
+      {signOutError && <Alert severity="error">{t(signOutError)}</Alert>}
     </Box>
   );
   return (
@@ -339,11 +332,10 @@ function AiChatWorkspace({ uid }: { uid: string }) {
           "&:focus": { top: 12 },
         }}
       >
-        Skip to conversation
-      </Box>
+        {t("Skip to conversation")}</Box>
       <Box
         component="aside"
-        aria-label="Chat history"
+        aria-label={t("Chat history")}
         sx={{
           display: { xs: "none", md: "block" },
           width: 280,
@@ -367,7 +359,7 @@ function AiChatWorkspace({ uid }: { uid: string }) {
         }}
       >
         <IconButton
-          aria-label="Close chat history"
+          aria-label={t("Close chat history")}
           onClick={() => setHistoryOpen(false)}
           sx={{ position: "absolute", right: 4, top: 4 }}
         >
@@ -401,7 +393,7 @@ function AiChatWorkspace({ uid }: { uid: string }) {
           }}
         >
           <IconButton
-            aria-label="Open chat history"
+            aria-label={t("Open chat history")}
             onClick={() => setHistoryOpen(true)}
             sx={{ display: { md: "none" } }}
           >
@@ -409,28 +401,25 @@ function AiChatWorkspace({ uid }: { uid: string }) {
           </IconButton>
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Typography component="h1" variant="h6" noWrap>
-              {thread.data?.title ?? "Private AI chat"}
+              {thread.data?.title ?? t("Private AI chat")}
             </Typography>
             <Typography
               variant="caption"
               color="text.secondary"
               sx={{ display: { xs: "none", sm: "block" } }}
             >
-              Connected owner’s Telegram account · Reads automatic · Sends
-              require confirmation
-            </Typography>
+              {t("Connected owner’s Telegram account · Reads automatic · Sends require confirmation")}</Typography>
           </Box>
+          <LanguageToggle />
           <ThemeToggle />
         </Stack>
         <Container maxWidth="md" sx={{ flex: 1, overflowY: "auto", py: 3 }}>
           {threads.isLoading && (
-            <CircularProgress aria-label="Checking access" />
+            <CircularProgress aria-label={t("Checking access")} />
           )}
           {threads.isError && (
             <Alert severity="error">
-              Workspace unavailable. Sign in with the owner account or a
-              verified email listed in stakeholder settings, then retry.
-              <Button onClick={() => void threads.refetch()}>Retry</Button>
+              {t("Workspace unavailable. Sign in with the owner account or a verified email listed in stakeholder settings, then retry.")}<Button onClick={() => void threads.refetch()}>{t("Retry")}</Button>
             </Alert>
           )}
           {threads.isSuccess && !id && (
@@ -459,23 +448,18 @@ function AiChatWorkspace({ uid }: { uid: string }) {
                 <AutoAwesomeRounded sx={{ fontSize: 32 }} />
               </Box>
               <Typography variant="overline" color="primary.main">
-                Your private thinking space
-              </Typography>
+                {t("Your private thinking space")}</Typography>
               <Typography component="h2" variant="h4" sx={{ mt: 1 }}>
-                What would you like to work on?
-              </Typography>
+                {t("What would you like to work on?")}</Typography>
               <Typography color="text.secondary" sx={{ mt: 2, mb: 3 }}>
-                Start a new chat to search Telegram, summarize a conversation,
-                or draft a reply.
-              </Typography>
+                {t("Start a new chat to search Telegram, summarize a conversation, or draft a reply.")}</Typography>
               <Button
                 variant="contained"
                 startIcon={<AddRounded />}
                 disabled={busy}
                 onClick={() => create.mutate()}
               >
-                Start a conversation
-              </Button>
+                {t("Start a conversation")}</Button>
               <Stack
                 direction={{ xs: "column", sm: "row" }}
                 spacing={2}
@@ -513,12 +497,11 @@ function AiChatWorkspace({ uid }: { uid: string }) {
             </Box>
           )}
           {thread.isLoading && id && (
-            <CircularProgress aria-label="Loading conversation" />
+            <CircularProgress aria-label={t("Loading conversation")} />
           )}
           {thread.isError && (
             <Alert severity="error">
-              Could not load this chat.
-              <Button onClick={() => void thread.refetch()}>Retry</Button>
+              {t("Could not load this chat.")}<Button onClick={() => void thread.refetch()}>{t("Retry")}</Button>
             </Alert>
           )}
           <Stack spacing={3}>
@@ -533,7 +516,7 @@ function AiChatWorkspace({ uid }: { uid: string }) {
                 }}
               >
                 <Typography variant="caption" color="text.secondary">
-                  {message.role === "user" ? "You" : "Assistant"}
+                  {message.role === "user" ? t("You") : t("Assistant")}
                 </Typography>
                 <Box
                   sx={{
@@ -628,18 +611,17 @@ function AiChatWorkspace({ uid }: { uid: string }) {
               }}
             >
               <Typography variant="overline" color="secondary.main">
-                Review before sending
-              </Typography>
+                {t("Review before sending")}</Typography>
               <Typography variant="h6">
                 {proposal.tool === "reply_to_message"
-                  ? "Reply preview"
-                  : "Message preview"}
+                  ? t("Reply preview")
+                  : t("Message preview")}
               </Typography>
               <Typography>
-                To: {proposal.chatTitle} ({proposal.chatId})
+                {t("To:")}{proposal.chatTitle} ({proposal.chatId})
               </Typography>
               {proposal.messageId && (
-                <Typography>Reply to message: {proposal.messageId}</Typography>
+                <Typography>{t("Reply to message:")}{t(" ")}{proposal.messageId}</Typography>
               )}
               <Divider sx={{ my: 1 }} />
               <Typography
@@ -649,8 +631,8 @@ function AiChatWorkspace({ uid }: { uid: string }) {
               </Typography>
               <Divider sx={{ my: 1 }} />
               <Typography variant="caption">
-                Status: {proposal.status} · Expires:{" "}
-                {new Date(proposal.expiresAt).toLocaleString()}
+                {t("Status:")}{t(proposal.status)} {t(" ")}{t("· Expires:")}{t(" ")}
+                {new Date(proposal.expiresAt).toLocaleString(language === "uk" ? "uk-UA" : "en-US")}
               </Typography>
               {proposal.status === "pending" && (
                 <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
@@ -667,8 +649,7 @@ function AiChatWorkspace({ uid }: { uid: string }) {
                       })
                     }
                   >
-                    Confirm send
-                  </Button>
+                    {t("Confirm send")}</Button>
                   <Button
                     disabled={busy}
                     onClick={() =>
@@ -679,22 +660,19 @@ function AiChatWorkspace({ uid }: { uid: string }) {
                       })
                     }
                   >
-                    Cancel
-                  </Button>
+                    {t("Cancel")}</Button>
                 </Stack>
               )}
               {(proposal.status === "uncertain" ||
                 proposal.status === "sending") && (
                 <Alert severity="warning" sx={{ mt: 1 }}>
-                  Delivery is not confirmed. Check Telegram before creating
-                  another send.
-                </Alert>
+                  {t("Delivery is not confirmed. Check Telegram before creating another send.")}</Alert>
               )}
             </Paper>
           )}
           {busy && (
             <Typography role="status" sx={{ mt: 2 }}>
-              {action.isPending ? "Processing your choice…" : "Working…"}
+              {action.isPending ? t("Processing your choice…") : t("Working…")}
             </Typography>
           )}
           {error && (
@@ -731,7 +709,7 @@ function AiChatWorkspace({ uid }: { uid: string }) {
                   fullWidth
                   multiline
                   maxRows={6}
-                  label="Message your assistant"
+                  label={t("Message your assistant")}
                   value={draft}
                   disabled={busy}
                   slotProps={{ htmlInput: { maxLength: 4000 } }}
@@ -754,14 +732,11 @@ function AiChatWorkspace({ uid }: { uid: string }) {
                   sx={{ flexShrink: 0 }}
                   disabled={busy || !draft.trim()}
                 >
-                  Send prompt
-                </Button>
+                  {t("Send prompt")}</Button>
               </Box>
             </Paper>
             <Typography variant="caption" color="text.secondary">
-              AI can make mistakes. Review recipients and message text before
-              confirming. A new prompt replaces any pending proposal.
-            </Typography>
+              {t("AI can make mistakes. Review recipients and message text before confirming. A new prompt replaces any pending proposal.")}</Typography>
           </Container>
         )}
       </Box>

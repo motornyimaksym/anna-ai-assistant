@@ -3,14 +3,16 @@ import { useQuery } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { adminApi } from './api.js';
+import { useI18n } from "./i18n.js";
 
 export const Specs = () => {
+  const { t } = useI18n();
   const query = useQuery({ queryKey: ['spec'], queryFn: adminApi.spec });
-  if (query.isPending) return <Typography>Loading project spec…</Typography>;
-  if (query.isError) return <Alert severity="error">Could not load the project spec. Try refreshing.</Alert>;
+  if (query.isPending) return <Typography>{t("Loading project spec…")}</Typography>;
+  if (query.isError) return <Alert severity="error">{t("Could not load the project spec. Try refreshing.")}</Alert>;
 
   return <Paper variant="outlined" sx={{ p: { xs: 2, md: 4 } }}>
-    <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>Repository specification packaged with this release.</Typography>
+    <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>{t("Repository specification packaged with this release.")}</Typography>
     <Box sx={{
       overflowWrap: 'anywhere',
       '& h1, & h2, & h3, & h4': { mt: 3, mb: 1.5 },

@@ -8,6 +8,7 @@ import {
 import { CssBaseline, IconButton, ThemeProvider, Tooltip } from "@mui/material";
 import { DarkModeOutlined, LightModeOutlined } from "@mui/icons-material";
 import { createAdminTheme } from "./adminTheme.js";
+import { useI18n } from "./i18n.js";
 
 type Mode = "light" | "dark";
 const storageKey = "massage-admin-theme";
@@ -48,8 +49,9 @@ export function AdminAppearance({ children }: { children: ReactNode }) {
 
 export function ThemeToggle() {
   const { mode, toggle } = useContext(ThemeModeContext);
+  const { t } = useI18n();
   const label =
-    mode === "dark" ? "Switch to day theme" : "Switch to night theme";
+    mode === "dark" ? t("Switch to day theme") : t("Switch to night theme");
   return (
     <Tooltip title={label}>
       <IconButton

@@ -13,6 +13,7 @@ import { onAuthStateChanged, onIdTokenChanged, type User } from "firebase/auth";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { auth } from "./auth.js";
+import { LocaleProvider, useI18n } from "./i18n.js";
 const GoogleCalendarCallback = lazy(() =>
   import("./GoogleCalendarCallback.js").then((module) => ({
     default: module.GoogleCalendarCallback,
@@ -25,7 +26,10 @@ const Specs = lazy(() =>
   import("./Specs.js").then((module) => ({ default: module.Specs })),
 );
 const queryClient = new QueryClient();
-const Loading = () => <Typography>Loading…</Typography>;
+const Loading = () => {
+  const { t } = useI18n();
+  return <Typography>{t("Loading…")}</Typography>;
+};
 const Protected = ({ user }: { user: User | null }) =>
   user ? (
     <AdminShell uid={user.uid}>
@@ -174,10 +178,12 @@ const App = () => {
   );
 };
 createRoot(document.getElementById("root")!).render(
-  <QueryClientProvider client={queryClient}>
-    <BrowserRouter>
-      <CssBaseline />
-      <App />
-    </BrowserRouter>
-  </QueryClientProvider>,
+  <LocaleProvider>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <CssBaseline />
+        <App />
+      </BrowserRouter>
+    </QueryClientProvider>
+  </LocaleProvider>,
 );

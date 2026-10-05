@@ -7,6 +7,7 @@ import { botSettingsSchema, updateAdminAccessSchema, type BotSettings as BotSett
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { adminApi } from './api.js';
+import { useI18n } from "./i18n.js";
 
 const queryKey = ['bot-settings'];
 const adminAccessQueryKey = ['admin-access'];
@@ -16,6 +17,7 @@ const millisecondsToSeconds = (milliseconds: number) => String(Number((milliseco
 const toDraft = (settings: BotSettingsDto): Draft => ({ maxReadDelaySeconds: millisecondsToSeconds(settings.maxReadDelayMs), typingDelayPerSymbolMs: String(settings.typingDelayPerSymbolMs) });
 
 export const BotSettings = () => {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey, queryFn: adminApi.botSettings });
   const accessQuery = useQuery({ queryKey: adminAccessQueryKey, queryFn: adminApi.adminAccess });
@@ -58,8 +60,8 @@ export const BotSettings = () => {
     },
   });
 
-  if (query.isPending) return <Typography>Loading bot settings…</Typography>;
-  if (query.isError) return <Alert severity="error">Could not load bot settings. {errorText(query.error)}</Alert>;
+  if (query.isPending) return <Typography>{t("Loading bot settings…")}</Typography>;
+  if (query.isError) return <Alert severity="error">{t("Could not load bot settings.")}{t(" ")}{t(errorText(query.error))}</Alert>;
 
   const dirty = draft.maxReadDelaySeconds !== millisecondsToSeconds(query.data.maxReadDelayMs) || draft.typingDelayPerSymbolMs !== String(query.data.typingDelayPerSymbolMs) || JSON.stringify(testerUsernames) !== JSON.stringify(query.data.testerUsernames);
   const canSave = dirty && parsed.success && !save.isPending;
@@ -90,88 +92,88 @@ export const BotSettings = () => {
     <HumanAssistanceSettings />
     <Divider />
     <Stack direction="row" alignItems="center" spacing={1}>
-      <Chip size="small" color={query.data.isCustom ? 'primary' : 'default'} label={query.data.isCustom ? 'Custom settings' : 'Default settings'} />
-      <Typography variant="body2" color="text.secondary">Changes apply to the next incoming message.</Typography>
+      <Chip size="small" color={query.data.isCustom ? 'primary' : 'default'} label={query.data.isCustom ? t("Custom settings") : t("Default settings")} />
+      <Typography variant="body2" color="text.secondary">{t("Changes apply to the next incoming message.")}</Typography>
     </Stack>
     <TextField
-      label="Maximum read delay (seconds)"
+      label={t("Maximum read delay (seconds)")}
       type="number"
       onWheel={(event) => { if (event.target instanceof HTMLInputElement) event.target.blur(); }}
       value={draft.maxReadDelaySeconds}
       onChange={(event) => { setDraft((current) => ({ ...current, maxReadDelaySeconds: event.target.value })); setMessage(''); }}
       inputProps={{ min: 0, max: 3540, step: 0.001, 'aria-label': 'Maximum read delay (seconds)' }}
-      helperText="Random delay before reading a Business message: 0–3,540 seconds (up to 59 minutes)."
+      helperText={t("Random delay before reading a Business message: 0–3,540 seconds (up to 59 minutes).")}
       error={draft.maxReadDelaySeconds !== '' && !readDelayValid}
       disabled={save.isPending}
     />
     <TextField
-      label="Typing delay per symbol (ms)"
+      label={t("Typing delay per symbol (ms)")}
       type="number"
       onWheel={(event) => { if (event.target instanceof HTMLInputElement) event.target.blur(); }}
       value={draft.typingDelayPerSymbolMs}
       onChange={(event) => { setDraft((current) => ({ ...current, typingDelayPerSymbolMs: event.target.value })); setMessage(''); }}
       inputProps={{ min: 0, max: 800, step: 1, 'aria-label': 'Typing delay per symbol (ms)' }}
-      helperText="Wait per Unicode symbol before sending an OpenAI answer: 0–800 ms."
+      helperText={t("Wait per Unicode symbol before sending an OpenAI answer: 0–800 ms.")}
       error={draft.typingDelayPerSymbolMs !== '' && !botSettingsSchema.shape.typingDelayPerSymbolMs.safeParse(Number(draft.typingDelayPerSymbolMs)).success}
       disabled={save.isPending}
     />
     <Divider />
     <Stack spacing={1.5}>
-      <Typography variant="h6">Telegram testers</Typography>
-      <Typography variant="body2" color="text.secondary">Only these usernames can use the assistant in Business messages or private bot chats. Add up to 20 usernames.</Typography>
+      <Typography variant="h6">{t("Telegram testers")}</Typography>
+      <Typography variant="body2" color="text.secondary">{t("Only these usernames can use the assistant in Business messages or private bot chats. Add up to 20 usernames.")}</Typography>
       <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
         {testerUsernames.map((username) => <Chip key={username} label={username} onDelete={!save.isPending ? () => { setTesterUsernames((current) => current.filter((item) => item !== username)); setTesterError(''); setMessage(''); } : undefined} />)}
-        {testerUsernames.length === 0 && <Typography variant="body2" color="text.secondary">No testers configured.</Typography>}
+        {testerUsernames.length === 0 && <Typography variant="body2" color="text.secondary">{t("No testers configured.")}</Typography>}
       </Stack>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'flex-start' }}>
         <TextField
-          label="Tester username"
+          label={t("Tester username")}
           value={newTester}
           onChange={(event) => { setNewTester(event.target.value); setTesterError(''); }}
           disabled={save.isPending || testerUsernames.length >= 20}
-          helperText="Enter username with or without @. Usernames are saved lowercase."
+          helperText={t("Enter username with or without @. Usernames are saved lowercase.")}
           size="small"
         />
-        <Button variant="outlined" onClick={addTester} disabled={save.isPending || testerUsernames.length >= 20 || !newTester.trim()}>Add tester</Button>
+        <Button variant="outlined" onClick={addTester} disabled={save.isPending || testerUsernames.length >= 20 || !newTester.trim()}>{t("Add tester")}</Button>
       </Stack>
-      {testerError && <Alert severity="error">{testerError}</Alert>}
+      {testerError && <Alert severity="error">{t(testerError)}</Alert>}
     </Stack>
-    {message && <Alert severity="success">{message}</Alert>}
-    {save.isError && <Alert severity="error">Could not save bot settings. {errorText(save.error)}</Alert>}
+    {message && <Alert severity="success">{t(message)}</Alert>}
+    {save.isError && <Alert severity="error">{t("Could not save bot settings.")}{t(" ")}{t(errorText(save.error))}</Alert>}
     <Box display="flex" gap={1}>
-      <Button variant="contained" onClick={saveDraft} disabled={!canSave}>Save</Button>
+      <Button variant="contained" onClick={saveDraft} disabled={!canSave}>{t("Save")}</Button>
     </Box>
     <Divider />
     <Stack spacing={1.5}>
-      <Typography variant="h6">Admin access</Typography>
-      <Typography variant="body2" color="text.secondary">Grant admin panel access to stakeholders by email. They must sign in with a verified email address.</Typography>
-      {accessQuery.isPending && <Typography>Loading stakeholder access…</Typography>}
-      {accessQuery.isError && <Alert severity="error">Could not load stakeholder access. {errorText(accessQuery.error)}</Alert>}
+      <Typography variant="h6">{t("Admin access")}</Typography>
+      <Typography variant="body2" color="text.secondary">{t("Grant admin panel access to stakeholders by email. They must sign in with a verified email address.")}</Typography>
+      {accessQuery.isPending && <Typography>{t("Loading stakeholder access…")}</Typography>}
+      {accessQuery.isError && <Alert severity="error">{t("Could not load stakeholder access.")}{t(" ")}{t(errorText(accessQuery.error))}</Alert>}
       {accessQuery.data && <>
         <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
           {emails.map((email) => <Chip key={email} label={email} onDelete={accessQuery.data.canManage && !saveAccess.isPending ? () => { setEmails((current) => current.filter((item) => item !== email)); setAccessMessage(''); } : undefined} />)}
-          {emails.length === 0 && <Typography variant="body2" color="text.secondary">No stakeholder emails added yet.</Typography>}
+          {emails.length === 0 && <Typography variant="body2" color="text.secondary">{t("No stakeholder emails added yet.")}</Typography>}
         </Stack>
         {accessQuery.data.canManage ? <>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'flex-start' }}>
             <TextField
-              label="Stakeholder email"
+              label={t("Stakeholder email")}
               type="email"
               value={newEmail}
               onChange={(event) => { setNewEmail(event.target.value); setAccessError(''); }}
               disabled={saveAccess.isPending || emails.length >= 100}
-              helperText="Up to 100 verified email addresses."
+              helperText={t("Up to 100 verified email addresses.")}
               size="small"
             />
-            <Button variant="outlined" onClick={addEmail} disabled={saveAccess.isPending || !newEmail.trim()}>Add email</Button>
+            <Button variant="outlined" onClick={addEmail} disabled={saveAccess.isPending || !newEmail.trim()}>{t("Add email")}</Button>
           </Stack>
-          {accessError && <Alert severity="error">{accessError}</Alert>}
-          {accessMessage && <Alert severity="success">{accessMessage}</Alert>}
-          {saveAccess.isError && <Alert severity="error">Could not save stakeholder access. {errorText(saveAccess.error)}</Alert>}
+          {accessError && <Alert severity="error">{t(accessError)}</Alert>}
+          {accessMessage && <Alert severity="success">{t(accessMessage)}</Alert>}
+          {saveAccess.isError && <Alert severity="error">{t("Could not save stakeholder access.")}{t(" ")}{t(errorText(saveAccess.error))}</Alert>}
           <Box display="flex" gap={1}>
-            <Button variant="contained" onClick={() => { if (accessParsed.success) { setAccessMessage(''); saveAccess.mutate(accessParsed.data.emails); } }} disabled={!accessDirty || !accessParsed.success || saveAccess.isPending}>Save stakeholder access</Button>
+            <Button variant="contained" onClick={() => { if (accessParsed.success) { setAccessMessage(''); saveAccess.mutate(accessParsed.data.emails); } }} disabled={!accessDirty || !accessParsed.success || saveAccess.isPending}>{t("Save stakeholder access")}</Button>
           </Box>
-        </> : <Typography variant="body2" color="text.secondary">Only the owner can change stakeholder access.</Typography>}
+        </> : <Typography variant="body2" color="text.secondary">{t("Only the owner can change stakeholder access.")}</Typography>}
       </>}
     </Stack>
   </Stack>;

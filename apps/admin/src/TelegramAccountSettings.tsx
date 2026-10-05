@@ -4,9 +4,11 @@ import { telegramAccountCodeSchema, telegramAccountPasswordSchema, telegramAccou
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { adminApi } from './api.js';
+import { useI18n } from "./i18n.js";
 const queryKey = ['telegram-account'];
 
 export function TelegramAccountSettings() {
+  const { t } = useI18n();
   const client = useQueryClient();
   const query = useQuery({ queryKey, queryFn: adminApi.telegramAccount, retry: false, staleTime: 0, gcTime: 0 });
   const [phone, setPhone] = useState('');
@@ -33,32 +35,32 @@ export function TelegramAccountSettings() {
     } finally { setBusy(false); }
   };
   return <Stack spacing={1.5}>
-    <Typography variant="h6">Telegram account</Typography>
-    <Typography variant="body2">Connect your account for a read-only schedule import. On incoming Telegram messages, the app reads the five newest text messages from the selected schedule chat at most once every five minutes. This is separate from the Business bot; it never sends messages or marks chats read.</Typography>
-    {query.isPending && <Typography>Loading Telegram connection…</Typography>}
-    {query.isError && <Alert severity="error">Could not load Telegram connection. <Button onClick={() => void query.refetch()}>Retry</Button></Alert>}
+    <Typography variant="h6">{t("Telegram account")}</Typography>
+    <Typography variant="body2">{t("Connect your account for a read-only schedule import. On incoming Telegram messages, the app reads the five newest text messages from the selected schedule chat at most once every five minutes. This is separate from the Business bot; it never sends messages or marks chats read.")}</Typography>
+    {query.isPending && <Typography>{t("Loading Telegram connection…")}</Typography>}
+    {query.isError && <Alert severity="error">{t("Could not load Telegram connection.")}{t(" ")}<Button onClick={() => void query.refetch()}>{t("Retry")}</Button></Alert>}
     {query.data && <>
-      {!query.data.configured && <Alert severity="warning">Telegram account connection is not configured. Contact the administrator.</Alert>}
-      <Typography>Status: {query.data.phase}{query.data.maskedPhone ? ` · ${query.data.maskedPhone}` : ''}{query.data.username ? ` · @${query.data.username}` : ''}</Typography>
+      {!query.data.configured && <Alert severity="warning">{t("Telegram account connection is not configured. Contact the administrator.")}</Alert>}
+      <Typography>{t("Status:")}{t(" ")}{t(query.data.phase)}{query.data.maskedPhone ? ` · ${query.data.maskedPhone}` : t("")}{query.data.username ? ` · @${query.data.username}` : t("")}</Typography>
       {query.data.configured && query.data.phase === 'disconnected' && <>
-        <TextField label="Telegram phone number" type="tel" autoComplete="tel" placeholder="+380…" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={busy} />
-        <FormControlLabel control={<Checkbox checked={consent} onChange={(e) => setConsent(e.target.checked)} disabled={busy} />} label="I authorize read-only access to the schedule chat's latest five text messages. Refresh runs at most once every five minutes. This app never sends messages or marks chats read. I can revoke the session here or in Telegram Settings → Devices." />
-        <Button variant="contained" disabled={busy || !consent || !telegramAccountStartSchema.safeParse({ phone }).success} onClick={() => void act('start')}>Send login code</Button>
+        <TextField label={t("Telegram phone number")} type="tel" autoComplete="tel" placeholder={t("+380…")} value={phone} onChange={(e) => setPhone(e.target.value)} disabled={busy} />
+        <FormControlLabel control={<Checkbox checked={consent} onChange={(e) => setConsent(e.target.checked)} disabled={busy} />} label={t("I authorize read-only access to the schedule chat's latest five text messages. Refresh runs at most once every five minutes. This app never sends messages or marks chats read. I can revoke the session here or in Telegram Settings → Devices.")} />
+        <Button variant="contained" disabled={busy || !consent || !telegramAccountStartSchema.safeParse({ phone }).success} onClick={() => void act('start')}>{t("Send login code")}</Button>
       </>}
       {query.data.configured && query.data.phase === 'code' && <>
-        <TextField label="Telegram login code" value={code} inputProps={{ inputMode: 'numeric', maxLength: 8 }} autoComplete="one-time-code" helperText="Check Telegram or SMS for the code. Login expires after 10 minutes." onChange={(e) => setCode(e.target.value)} disabled={busy} />
-        <Button variant="contained" disabled={busy || !telegramAccountCodeSchema.safeParse({ code }).success} onClick={() => void act('code')}>Verify code</Button>
+        <TextField label={t("Telegram login code")} value={code} inputProps={{ inputMode: 'numeric', maxLength: 8 }} autoComplete="one-time-code" helperText={t("Check Telegram or SMS for the code. Login expires after 10 minutes.")} onChange={(e) => setCode(e.target.value)} disabled={busy} />
+        <Button variant="contained" disabled={busy || !telegramAccountCodeSchema.safeParse({ code }).success} onClick={() => void act('code')}>{t("Verify code")}</Button>
       </>}
       {query.data.configured && query.data.phase === 'password' && <>
-        <TextField label="Telegram account password" type="password" autoComplete="off" value={password} onChange={(e) => setPassword(e.target.value)} disabled={busy} helperText="Enter your personal Telegram account password set for two-step verification, not the one-time login code. Used only for this login; never saved." />
-        <Button variant="contained" disabled={busy || !telegramAccountPasswordSchema.safeParse({ password }).success} onClick={() => void act('password')}>Authorize account</Button>
+        <TextField label={t("Telegram account password")} type="password" autoComplete="off" value={password} onChange={(e) => setPassword(e.target.value)} disabled={busy} helperText={t("Enter your personal Telegram account password set for two-step verification, not the one-time login code. Used only for this login; never saved.")} />
+        <Button variant="contained" disabled={busy || !telegramAccountPasswordSchema.safeParse({ password }).success} onClick={() => void act('password')}>{t("Authorize account")}</Button>
       </>}
-      {query.data.configured && query.data.phase === 'connected' && <Button disabled={busy} onClick={() => void act('check')}>Check connection</Button>}
-      {query.data.configured && query.data.phase !== 'disconnected' && <Button color="warning" disabled={busy} onClick={() => void act('disconnect')}>{query.data.phase === 'connected' ? 'Disconnect Telegram account' : 'Cancel login'}</Button>}
+      {query.data.configured && query.data.phase === 'connected' && <Button disabled={busy} onClick={() => void act('check')}>{t("Check connection")}</Button>}
+      {query.data.configured && query.data.phase !== 'disconnected' && <Button color="warning" disabled={busy} onClick={() => void act('disconnect')}>{query.data.phase === 'connected' ? t("Disconnect Telegram account") : t("Cancel login")}</Button>}
     </>}
     {query.data?.phase === 'connected' && <ScheduleSourceSettings />}
-    {busy && <Typography>Contacting Telegram…</Typography>}
-    {error && <Alert severity="error">{error}</Alert>}
-    {notice && <Alert severity="success">{notice}</Alert>}
+    {busy && <Typography>{t("Contacting Telegram…")}</Typography>}
+    {error && <Alert severity="error">{t(error)}</Alert>}
+    {notice && <Alert severity="success">{t(notice)}</Alert>}
   </Stack>;
 }

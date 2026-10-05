@@ -120,7 +120,7 @@ export class HumanAssistanceService {
       this.logger.warn('Handoff assessment failed; withholding automatic reply');
     }
     if (probability !== undefined && probability < 1 && probability * 100 <= thresholdPercent) return true;
-    const context = `Client question: ${question.slice(0, 1000)}\nUnsent draft: ${draft.slice(0, 2500)}${errorDetails ? `\n${errorDetails}` : ''}\nAutomatic reply withheld; inspect the conversation and Calendar before replying.`;
+    const context = `Питання клієнта: ${question.slice(0, 1000)}\nЧернетка відповіді: ${draft.slice(0, 2500)}${errorDetails ? `\n${errorDetails}` : ''}\nАвтоматичну відповідь не надіслано. Перед відповіддю перевірте розмову й календар.`;
     await this.escalate(chatId, businessConnectionId, updateId, context, {
       reason: probability === undefined ? 'probability_unavailable' : 'handoff_probability',
       ...(probability === undefined ? {} : { probability }), thresholdPercent,
@@ -177,10 +177,10 @@ export class HumanAssistanceService {
     const notification = formatResponderNotification(transcript, contact);
     const replyMarkup: AnswerReplyMarkup = { inline_keyboard: [[
       { text: 'Копіювати /answer', copy_text: { text: `/answer ${requestId} ` } },
-      { text: 'Копіювати resume', copy_text: { text: `/resume ${requestId}` } },
+      { text: 'Копіювати /resume', copy_text: { text: `/resume ${requestId}` } },
     ]] };
     const approveCommand = `/answer ${requestId} ${transcript.unsentMessage ?? ''}`;
-    if (transcript.unsentMessage?.trim() && approveCommand.length <= 256) replyMarkup.inline_keyboard.push([{ text: 'Approve', copy_text: { text: approveCommand } }]);
+    if (transcript.unsentMessage?.trim() && approveCommand.length <= 256) replyMarkup.inline_keyboard.push([{ text: 'Підтвердити відповідь', copy_text: { text: approveCommand } }]);
     for (const responder of responders) await this.deliver(requestId, `${responder.userId}:${eventId}`, responder.chatId, undefined, notification, replyMarkup, 'HTML');
   }
 

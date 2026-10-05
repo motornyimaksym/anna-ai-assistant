@@ -153,7 +153,7 @@ export class TelegramService {
     } catch (error) {
       await this.debug.record(trace, 'reply_failed', { reason: 'delivery_or_persistence_uncertain', errorCategory: safeErrorCategory(error) }, 'error');
       this.logger.error(`Telegram reply failed or is uncertain update=${update.update_id} trace=${trace.traceId}: ${JSON.stringify(safeErrorDiagnostic(error, [message.text, reply]))}`);
-      await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, `Client reply delivery or persistence is uncertain. Check before resending. ${humanErrorContext(error, 'Telegram delivery', [message.text, reply])}`);
+      await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, `Результат доставки відповіді клієнту або її збереження невідомий. Звірте чат і стан запиту перед повторним надсиланням, щоб не створити дубль. ${humanErrorContext(error, 'Telegram delivery', [message.text, reply])}`);
     }
   }
   private async startTyping(chatId: string, businessConnectionId: string | undefined): Promise<() => void> {

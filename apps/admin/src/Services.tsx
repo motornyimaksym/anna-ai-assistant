@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState, type ReactNode } from 'react';
 import { defaultServiceCaption, serviceDurationOptions, serviceSchema, telegramCaptionSchema, type ServiceDto, type TelegramMessageEntityDto, type TelegramUrlButtonDto } from '@booking/contracts';
 import { adminApi } from './api.js';
+import { useI18n } from "./i18n.js";
 
 type FormState = {
   id: string; name: string; description: string; options: { durationMinutes: string; price: string }[]; bufferMinutes: string; currency: string; enabled: boolean;
@@ -40,8 +41,8 @@ const shiftEntities = (oldText: string, newText: string, entities: TelegramMessa
     return [];
   });
 };
-const addPreviewStyles = (text: string, entities: TelegramMessageEntityDto[]): ReactNode => {
-  if (!text) return <Typography color="text.secondary">Telegram caption preview appears here.</Typography>;
+const addPreviewStyles = (text: string, entities: TelegramMessageEntityDto[], emptyText: string): ReactNode => {
+  if (!text) return <Typography color="text.secondary">{emptyText}</Typography>;
   const boundaries = [...new Set([0, text.length, ...entities.flatMap((entity) => [entity.offset, entity.offset + entity.length])])].sort((a, b) => a - b);
   return boundaries.slice(0, -1).map((start, index) => {
     const end = boundaries[index + 1]!;
@@ -62,6 +63,7 @@ const addPreviewStyles = (text: string, entities: TelegramMessageEntityDto[]): R
 };
 
 export const Services = () => {
+  const { t, language } = useI18n();
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey, queryFn: adminApi.services });
   const [form, setForm] = useState<FormState | null>(null);
@@ -83,7 +85,7 @@ export const Services = () => {
     },
     onSuccess: (saved, variables) => {
       queryClient.setQueryData<ServiceDto[]>(queryKey, (current = []) => variables.creating ? [...current, saved] : current.map((item) => item.id === saved.id ? saved : item));
-      setForm(null); setPhotoFile(null); setPhotoPreview(''); setFormError(''); setNotice(`${saved.name} saved.`); if (photoInput.current) photoInput.current.value = '';
+      setForm(null); setPhotoFile(null); setPhotoPreview(''); setFormError(''); setNotice('Service saved.'); if (photoInput.current) photoInput.current.value = '';
     },
     onError: (error) => { setFormError(errorText(error)); void queryClient.invalidateQueries({ queryKey }); },
   });
@@ -92,8 +94,8 @@ export const Services = () => {
     onSuccess: (saved) => queryClient.setQueryData<ServiceDto[]>(queryKey, (current = []) => current.map((item) => item.id === saved.id ? saved : item)),
   });
 
-  if (query.isPending) return <Typography>Loading services…</Typography>;
-  if (query.isError) return <Alert severity="error">Could not load services. {errorText(query.error)}</Alert>;
+  if (query.isPending) return <Typography>{t("Loading services…")}</Typography>;
+  if (query.isError) return <Alert severity="error">{t("Could not load services.")}{t(" ")}{t(errorText(query.error))}</Alert>;
 
   const update = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((current) => current ? { ...current, [key]: value } : current);
   const parsed = form ? serviceSchema.safeParse(toService(form)) : undefined;
@@ -135,107 +137,107 @@ export const Services = () => {
 
   return <Stack spacing={2}>
     <Stack direction="row" justifyContent="space-between" alignItems="center">
-      <Typography color="text.secondary">Service details drive booking. Telegram content controls the customer-facing card.</Typography>
-      <Button variant="contained" onClick={() => open()} disabled={save.isPending}>Add service</Button>
+      <Typography color="text.secondary">{t("Service details drive booking. Telegram content controls the customer-facing card.")}</Typography>
+      <Button variant="contained" onClick={() => open()} disabled={save.isPending}>{t("Add service")}</Button>
     </Stack>
-    {notice && <Alert severity="success" onClose={() => setNotice('')}>{notice}</Alert>}
-    {toggle.isError && <Alert severity="error">Could not change service status. {errorText(toggle.error)}</Alert>}
-    {!query.data.length ? <Alert severity="info">No services yet. Add a service to let the assistant quote real prices and durations.</Alert> :
+    {notice && <Alert severity="success" onClose={() => setNotice('')}>{t(notice)}</Alert>}
+    {toggle.isError && <Alert severity="error">{t("Could not change service status.")}{t(" ")}{t(errorText(toggle.error))}</Alert>}
+    {!query.data.length ? <Alert severity="info">{t("No services yet. Add a service to let the assistant quote real prices and durations.")}</Alert> :
       <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 2 }}>
         {query.data.map((service) => <Card key={service.id} variant="outlined">
           {service.photoUrl && <CardMedia component="img" height="156" image={service.photoUrl} alt={service.name} />}
           <CardContent>
-            <Stack direction="row" justifyContent="space-between" alignItems="start" gap={1}><Typography variant="h6">{service.name}</Typography><Chip size="small" color={service.enabled ? 'success' : 'default'} label={service.enabled ? 'Active' : 'Disabled'} /></Stack>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>{service.description || 'No assistant description.'}</Typography>
-            <Stack spacing={0.5} sx={{ mt: 1 }}>{serviceDurationOptions(service).map((option) => <Typography key={option.durationMinutes}>{option.durationMinutes} min · {option.price} {service.currency}</Typography>)}</Stack>
-            <Typography variant="caption" color="text.secondary">Buffer {service.bufferMinutes} min</Typography>
+            <Stack direction="row" justifyContent="space-between" alignItems="start" gap={1}><Typography variant="h6">{service.name}</Typography><Chip size="small" color={service.enabled ? 'success' : 'default'} label={service.enabled ? t("Active") : t("Disabled")} /></Stack>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>{service.description || t("No assistant description.")}</Typography>
+            <Stack spacing={0.5} sx={{ mt: 1 }}>{serviceDurationOptions(service).map((option) => <Typography key={option.durationMinutes}>{option.durationMinutes} {t(" ")}{t("min ·")}{t(" ")}{option.price.toLocaleString(language === "uk" ? "uk-UA" : "en-US")} {service.currency}</Typography>)}</Stack>
+            <Typography variant="caption" color="text.secondary">{t("Buffer")}{t(" ")}{service.bufferMinutes} {t(" ")}{t("min")}</Typography>
           </CardContent>
           <CardActions>
-            <Button size="small" onClick={() => open(service)} aria-label={`Edit ${service.name}`}>Edit</Button>
-            <Button size="small" onClick={() => toggle.mutate(service)} disabled={toggle.isPending} aria-label={`${service.enabled ? 'Disable' : 'Enable'} ${service.name}`}>{service.enabled ? 'Disable' : 'Enable'}</Button>
+            <Button size="small" onClick={() => open(service)} aria-label={t("Edit {name}", { name: service.name })}>{t("Edit")}</Button>
+            <Button size="small" onClick={() => toggle.mutate(service)} disabled={toggle.isPending} aria-label={t("{action} {name}", { action: t(service.enabled ? "Disable" : "Enable"), name: service.name })}>{service.enabled ? t("Disable") : t("Enable")}</Button>
           </CardActions>
         </Card>)}
       </Box>}
 
     <Dialog open={Boolean(form)} onClose={close} fullWidth maxWidth="xl" scroll="paper">
-      <DialogTitle>{isNew ? 'Add service' : `Edit ${form?.name || 'service'}`}</DialogTitle>
+      <DialogTitle>{isNew ? t("Add service") : t("Edit {name}", { name: form?.name || t("service") })}</DialogTitle>
       {form && <>
         <DialogContent dividers>
           <Stack spacing={3}>
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 3 }}>
               <Stack spacing={2}>
-                <Typography variant="h6">Booking details</Typography>
-                <TextField label="Service name" value={form.name} onChange={(event) => update('name', event.target.value)} required fullWidth />
-                <TextField label="Description for assistant" value={form.description} onChange={(event) => update('description', event.target.value)} multiline minRows={3} inputProps={{ maxLength: 2000 }} helperText={`${form.description.length}/2,000. Used by assistant when explaining this service.`} fullWidth />
-                <Typography variant="subtitle1">Duration and price options</Typography>
-                <Typography variant="body2" color="text.secondary">Offer different session lengths under this service. Each duration needs its own price; currency and buffer apply to every option.</Typography>
+                <Typography variant="h6">{t("Booking details")}</Typography>
+                <TextField label={t("Service name")} value={form.name} onChange={(event) => update('name', event.target.value)} required fullWidth />
+                <TextField label={t("Description for assistant")} value={form.description} onChange={(event) => update('description', event.target.value)} multiline minRows={3} inputProps={{ maxLength: 2000 }} helperText={`${form.description.length.toLocaleString(language === "uk" ? "uk-UA" : "en-US")}/2,000. ${t("Used by assistant when explaining this service.")}`} fullWidth />
+                <Typography variant="subtitle1">{t("Duration and price options")}</Typography>
+                <Typography variant="body2" color="text.secondary">{t("Offer different session lengths under this service. Each duration needs its own price; currency and buffer apply to every option.")}</Typography>
                 {form.options.map((option, index) => <Paper key={index} variant="outlined" sx={{ p: 1.5 }}>
                   <Stack direction="row" spacing={1} alignItems="center">
-                    <TextField label={index === 0 ? 'Duration (minutes)' : `Option ${index + 1} duration (minutes)`} type="number" onWheel={(event) => { if (event.target instanceof HTMLInputElement) event.target.blur(); }} required value={option.durationMinutes} onChange={(event) => update('options', form.options.map((item, position) => position === index ? { ...item, durationMinutes: event.target.value } : item))} inputProps={{ min: 15, max: 480, step: 1 }} fullWidth />
-                    <TextField label={index === 0 ? 'Price' : `Option ${index + 1} price`} type="number" onWheel={(event) => { if (event.target instanceof HTMLInputElement) event.target.blur(); }} required value={option.price} onChange={(event) => update('options', form.options.map((item, position) => position === index ? { ...item, price: event.target.value } : item))} inputProps={{ min: 0, step: 'any' }} fullWidth />
-                    <IconButton aria-label={`Remove duration option ${index + 1}`} disabled={form.options.length === 1} onClick={() => update('options', form.options.filter((_, position) => position !== index))}>×</IconButton>
+                    <TextField label={index === 0 ? t("Duration (minutes)") : t("Option {number} duration (minutes)", { number: index + 1 })} type="number" onWheel={(event) => { if (event.target instanceof HTMLInputElement) event.target.blur(); }} required value={option.durationMinutes} onChange={(event) => update('options', form.options.map((item, position) => position === index ? { ...item, durationMinutes: event.target.value } : item))} inputProps={{ min: 15, max: 480, step: 1 }} fullWidth />
+                    <TextField label={index === 0 ? t("Price") : t("Option {number} price", { number: index + 1 })} type="number" onWheel={(event) => { if (event.target instanceof HTMLInputElement) event.target.blur(); }} required value={option.price} onChange={(event) => update('options', form.options.map((item, position) => position === index ? { ...item, price: event.target.value } : item))} inputProps={{ min: 0, step: 'any' }} fullWidth />
+                    <IconButton aria-label={t("Remove option {number}", { number: index + 1 })} disabled={form.options.length === 1} onClick={() => update('options', form.options.filter((_, position) => position !== index))}>×</IconButton>
                   </Stack>
                 </Paper>)}
-                <Button variant="outlined" onClick={() => update('options', [...form.options, { durationMinutes: '', price: '' }])} disabled={form.options.length >= 10}>Add duration option</Button>
+                <Button variant="outlined" onClick={() => update('options', [...form.options, { durationMinutes: '', price: '' }])} disabled={form.options.length >= 10}>{t("Add duration option")}</Button>
                 <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                  <TextField label="Buffer (minutes)" type="number" onWheel={(event) => { if (event.target instanceof HTMLInputElement) event.target.blur(); }} required value={form.bufferMinutes} onChange={(event) => update('bufferMinutes', event.target.value)} inputProps={{ min: 0, max: 120, step: 5 }} />
-                  <TextField label="Currency" required value={form.currency} onChange={(event) => update('currency', event.target.value)} inputProps={{ maxLength: 3 }} />
+                  <TextField label={t("Buffer (minutes)")} type="number" onWheel={(event) => { if (event.target instanceof HTMLInputElement) event.target.blur(); }} required value={form.bufferMinutes} onChange={(event) => update('bufferMinutes', event.target.value)} inputProps={{ min: 0, max: 120, step: 5 }} />
+                  <TextField label={t("Currency")} required value={form.currency} onChange={(event) => update('currency', event.target.value)} inputProps={{ maxLength: 3 }} />
                 </Box>
-                <FormControlLabel control={<Switch checked={form.enabled} onChange={(event) => update('enabled', event.target.checked)} />} label="Offer this service in Telegram" />
+                <FormControlLabel control={<Switch checked={form.enabled} onChange={(event) => update('enabled', event.target.checked)} />} label={t("Offer this service in Telegram")} />
               </Stack>
 
               <Stack spacing={2}>
-                <Typography variant="h6">Photo</Typography>
-                {photoPreview ? <Box component="img" src={photoPreview} alt="Service photo preview" sx={{ width: '100%', maxHeight: 280, objectFit: 'cover', borderRadius: 1 }} /> : <Paper variant="outlined" sx={{ minHeight: 140, display: 'grid', placeItems: 'center', color: 'text.secondary' }}>No photo attached</Paper>}
+                <Typography variant="h6">{t("Photo")}</Typography>
+                {photoPreview ? <Box component="img" src={photoPreview} alt={t("Service photo preview")} sx={{ width: '100%', maxHeight: 280, objectFit: 'cover', borderRadius: 1 }} /> : <Paper variant="outlined" sx={{ minHeight: 140, display: 'grid', placeItems: 'center', color: 'text.secondary' }}>{t("No photo attached")}</Paper>}
                 <Stack direction="row" spacing={1} alignItems="center">
-                  <Button component="label" variant="outlined">Attach photo<input ref={photoInput} aria-label="Service photo" hidden type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => handlePhoto(event.target.files?.[0])} /></Button>
-                  {(form.photoUrl || photoFile) && <Button color="inherit" onClick={() => { setPhotoFile(null); setPhotoPreview(''); update('photoUrl', ''); if (photoInput.current) photoInput.current.value = ''; }}>Remove photo</Button>}
-                  <Typography variant="caption" color="text.secondary">JPEG, PNG, WebP · max 5 MiB</Typography>
+                  <Button component="label" variant="outlined">{t("Attach photo")}<input ref={photoInput} aria-label={t("Service photo")} hidden type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => handlePhoto(event.target.files?.[0])} /></Button>
+                  {(form.photoUrl || photoFile) && <Button color="inherit" onClick={() => { setPhotoFile(null); setPhotoPreview(''); update('photoUrl', ''); if (photoInput.current) photoInput.current.value = ''; }}>{t("Remove photo")}</Button>}
+                  <Typography variant="caption" color="text.secondary">{t("JPEG, PNG, WebP · max 5 MiB")}</Typography>
                 </Stack>
               </Stack>
             </Box>
 
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 3 }}>
               <Stack spacing={1.5}>
-                <Typography variant="h6">Telegram caption</Typography>
-                <Typography variant="body2" color="text.secondary">Select text, then format it. Telegram supports nested formatting and links. Leave blank for an automatic service summary.</Typography>
+                <Typography variant="h6">{t("Telegram caption")}</Typography>
+                <Typography variant="body2" color="text.secondary">{t("Select text, then format it. Telegram supports nested formatting and links. Leave blank for an automatic service summary.")}</Typography>
                 <Stack direction="row" flexWrap="wrap" gap={0.5}>
-                  {([['bold', 'Bold'], ['italic', 'Italic'], ['underline', 'Underline'], ['strikethrough', 'Strike'], ['spoiler', 'Spoiler'], ['code', 'Code'], ['blockquote', 'Quote'], ['expandable_blockquote', 'Expandable quote']] as const).map(([type, label]) => <Button key={type} size="small" variant="outlined" onClick={() => addEntity(type)}>{label}</Button>)}
-                  <Button size="small" variant="outlined" onClick={() => addEntity('pre')}>Preformatted</Button>
+                  {([['bold', 'Bold'], ['italic', 'Italic'], ['underline', 'Underline'], ['strikethrough', 'Strike'], ['spoiler', 'Spoiler'], ['code', 'Code'], ['blockquote', 'Quote'], ['expandable_blockquote', 'Expandable quote']] as const).map(([type, label]) => <Button key={type} size="small" variant="outlined" onClick={() => addEntity(type)}>{t(label)}</Button>)}
+                  <Button size="small" variant="outlined" onClick={() => addEntity('pre')}>{t("Preformatted")}</Button>
                 </Stack>
                 <Stack direction="row" spacing={1}>
-                  <TextField label="Link URL" value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} size="small" fullWidth placeholder="https://example.com" />
-                  <Button onClick={() => addEntity('text_link')} disabled={!linkUrl}>Add link</Button>
+                  <TextField label={t("Link URL")} value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} size="small" fullWidth placeholder={t("https://example.com")} />
+                  <Button onClick={() => addEntity('text_link')} disabled={!linkUrl}>{t("Add link")}</Button>
                 </Stack>
-                <TextField label="Telegram caption" value={form.captionText} onChange={(event) => { update('entities', shiftEntities(form.captionText, event.target.value, form.entities)); update('captionText', event.target.value); }} inputRef={captionInput} onSelect={() => { if (captionInput.current) setSelection({ start: captionInput.current.selectionStart, end: captionInput.current.selectionEnd }); }} multiline minRows={5} inputProps={{ maxLength: 4096, 'aria-label': 'Telegram caption' }} helperText={`${form.captionText.length}/4,096 characters · photo caption max 1,024`} fullWidth />
-                {form.entities.length > 0 && <Button size="small" color="inherit" onClick={() => update('entities', [])}>Clear formatting</Button>}
-                <Typography variant="subtitle2">Inline URL buttons</Typography>
+                <TextField label={t("Telegram caption")} value={form.captionText} onChange={(event) => { update('entities', shiftEntities(form.captionText, event.target.value, form.entities)); update('captionText', event.target.value); }} inputRef={captionInput} onSelect={() => { if (captionInput.current) setSelection({ start: captionInput.current.selectionStart, end: captionInput.current.selectionEnd }); }} multiline minRows={5} inputProps={{ maxLength: 4096, 'aria-label': t("Telegram caption") }} helperText={`${form.captionText.length.toLocaleString(language === "uk" ? "uk-UA" : "en-US")}/4,096 ${t("characters")} · ${t("photo caption max 1,024")}`} fullWidth />
+                {form.entities.length > 0 && <Button size="small" color="inherit" onClick={() => update('entities', [])}>{t("Clear formatting")}</Button>}
+                <Typography variant="subtitle2">{t("Inline URL buttons")}</Typography>
                 {form.buttons.flatMap((row, rowIndex) => row.map((button, buttonIndex) => <Stack direction="row" spacing={1} key={`${rowIndex}-${buttonIndex}`}>
-                  <TextField size="small" label={`Button ${rowIndex + 1}.${buttonIndex + 1} text`} required value={button.text} onChange={(event) => updateButton(rowIndex, buttonIndex, 'text', event.target.value)} inputProps={{ maxLength: 64 }} />
-                  <TextField size="small" label={`Button ${rowIndex + 1}.${buttonIndex + 1} URL`} required value={button.url} onChange={(event) => updateButton(rowIndex, buttonIndex, 'url', event.target.value)} fullWidth />
-                  <IconButton aria-label={`Remove button ${rowIndex + 1}.${buttonIndex + 1}`} onClick={() => update('buttons', form.buttons.map((items, index) => index === rowIndex ? items.filter((_, position) => position !== buttonIndex) : items).filter((items) => items.length))}>×</IconButton>
+                  <TextField size="small" label={t("Button {row}.{column} text", { row: rowIndex + 1, column: buttonIndex + 1 })} required value={button.text} onChange={(event) => updateButton(rowIndex, buttonIndex, 'text', event.target.value)} inputProps={{ maxLength: 64 }} />
+                  <TextField size="small" label={t("Button {row}.{column} URL", { row: rowIndex + 1, column: buttonIndex + 1 })} required value={button.url} onChange={(event) => updateButton(rowIndex, buttonIndex, 'url', event.target.value)} fullWidth />
+                  <IconButton aria-label={t("Remove button {row}.{column}", { row: rowIndex + 1, column: buttonIndex + 1 })} onClick={() => update('buttons', form.buttons.map((items, index) => index === rowIndex ? items.filter((_, position) => position !== buttonIndex) : items).filter((items) => items.length))}>×</IconButton>
                 </Stack>))}
-                <Button size="small" onClick={addButton} disabled={form.buttons.reduce((sum, row) => sum + row.length, 0) >= 16}>Add URL button</Button>
+                <Button size="small" onClick={addButton} disabled={form.buttons.reduce((sum, row) => sum + row.length, 0) >= 16}>{t("Add URL button")}</Button>
               </Stack>
 
               <Stack spacing={1.5}>
-                <Typography variant="h6">Telegram preview</Typography>
+                <Typography variant="h6">{t("Telegram preview")}</Typography>
                 <Paper variant="outlined" sx={{ p: 2, bgcolor: '#e6f3e7', borderRadius: 2, minHeight: 220 }}>
                   <Stack spacing={1.5}>
-                    {(photoPreview || form.photoUrl) && <Box component="img" src={photoPreview || form.photoUrl} alt="Telegram service card" sx={{ width: '100%', maxHeight: 250, objectFit: 'cover', borderRadius: 1 }} />}
-                    <Typography component="div" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{form.captionText ? addPreviewStyles(form.captionText, form.entities) : previewCaption}</Typography>
-                    {form.buttons.length > 0 && <Stack spacing={0.5}>{form.buttons.flatMap((row, rowIndex) => <Stack direction="row" gap={0.5} key={rowIndex}>{row.map((button, index) => <Chip key={index} size="small" color="primary" label={button.text || 'Button'} />)}</Stack>)}</Stack>}
+                    {(photoPreview || form.photoUrl) && <Box component="img" src={photoPreview || form.photoUrl} alt={t("Telegram service card")} sx={{ width: '100%', maxHeight: 250, objectFit: 'cover', borderRadius: 1 }} />}
+                    <Typography component="div" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{form.captionText ? addPreviewStyles(form.captionText, form.entities, t("Telegram caption preview appears here.")) : previewCaption}</Typography>
+                    {form.buttons.length > 0 && <Stack spacing={0.5}>{form.buttons.flatMap((row, rowIndex) => <Stack direction="row" gap={0.5} key={rowIndex}>{row.map((button, index) => <Chip key={index} size="small" color="primary" label={button.text || t("Button")} />)}</Stack>)}</Stack>}
                   </Stack>
                 </Paper>
-                <Typography variant="caption" color="text.secondary">Cards are sent when the assistant looks up the service catalog.</Typography>
+                <Typography variant="caption" color="text.secondary">{t("Cards are sent when the assistant looks up the service catalog.")}</Typography>
               </Stack>
             </Box>
-            {formError && <Alert severity="error">{formError}</Alert>}
-            {save.isError && <Alert severity="error">Could not save service. {errorText(save.error)}</Alert>}
-            {parsed && !parsed.success && <Alert severity="warning">{parsed.error.issues[0]?.message ?? 'Check the service fields, caption formatting, and button links.'}</Alert>}
+            {formError && <Alert severity="error">{t(formError)}</Alert>}
+            {save.isError && <Alert severity="error">{t("Could not save service.")}{t(" ")}{t(errorText(save.error))}</Alert>}
+            {parsed && !parsed.success && <Alert severity="warning">{t(parsed.error.issues[0]?.message ?? "Check the service fields, caption formatting, and button links.")}</Alert>}
           </Stack>
         </DialogContent>
-        <DialogActions sx={{ p: 2 }}><Button onClick={close} disabled={save.isPending}>Cancel</Button><Button variant="contained" onClick={() => { if (parsed?.success) save.mutate({ service: parsed.data, creating: isNew, photo: photoFile }); }} disabled={!canSave}>{save.isPending ? 'Saving…' : 'Save service'}</Button></DialogActions>
+        <DialogActions sx={{ p: 2 }}><Button onClick={close} disabled={save.isPending}>{t("Cancel")}</Button><Button variant="contained" onClick={() => { if (parsed?.success) save.mutate({ service: parsed.data, creating: isNew, photo: photoFile }); }} disabled={!canSave}>{save.isPending ? t("Saving…") : t("Save service")}</Button></DialogActions>
       </>}
     </Dialog>
   </Stack>;
