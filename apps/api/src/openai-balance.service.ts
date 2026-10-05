@@ -35,7 +35,7 @@ export class OpenAiBalanceService {
 
     for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
       const url = new URL('https://api.openai.com/v1/organization/costs');
-      url.searchParams.set('start_time', '0');
+      url.searchParams.set('start_time', '1');
       url.searchParams.set('end_time', String(endTime));
       url.searchParams.set('bucket_width', '1d');
       url.searchParams.set('limit', '180');
