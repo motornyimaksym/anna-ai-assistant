@@ -6,9 +6,16 @@ import { KnowledgeBase } from "./KnowledgeBase.js";
 import { BotSettings } from "./BotSettings.js";
 import { Conversations } from "./Conversations.js";
 import { Schedule } from "./Schedule.js";
+import { PrivacyPolicy, TermsAndConditions } from "./LegalPages.js";
 import { CssBaseline, Box, Typography } from "@mui/material";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+} from "react-router-dom";
 import { onAuthStateChanged, onIdTokenChanged, type User } from "firebase/auth";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -109,17 +116,24 @@ const Protected = ({ user }: { user: User | null }) =>
   ) : (
     <Navigate to="/login" replace />
   );
-const App = () => {
+export const App = () => {
   const [user, setUser] = useState<User | null | undefined>(undefined);
+  const location = useLocation();
+  const isPolicyRoute =
+    location.pathname === "/privacy-policy" ||
+    location.pathname === "/terms-and-conditions";
   useEffect(
-    () =>
-      onAuthStateChanged(auth, (next) => {
+    () => {
+      if (isPolicyRoute) return;
+      return onAuthStateChanged(auth, (next) => {
         queryClient.clear();
         setUser(next);
-      }),
-    [],
+      });
+    },
+    [isPolicyRoute],
   );
   useEffect(() => {
+    if (isPolicyRoute) return;
     let generation = 0;
     let sessionSync = Promise.resolve();
     return onIdTokenChanged(auth, (next) => {
@@ -147,7 +161,9 @@ const App = () => {
         }
       });
     });
-  }, []);
+  }, [isPolicyRoute]);
+  if (location.pathname === "/privacy-policy") return <PrivacyPolicy />;
+  if (location.pathname === "/terms-and-conditions") return <TermsAndConditions />;
   if (user === undefined) return <Loading />;
   return (
     <Box>
@@ -177,13 +193,16 @@ const App = () => {
     </Box>
   );
 };
-createRoot(document.getElementById("root")!).render(
-  <LocaleProvider>
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <CssBaseline />
-        <App />
-      </BrowserRouter>
-    </QueryClientProvider>
-  </LocaleProvider>,
-);
+const rootElement = document.getElementById("root");
+if (rootElement) {
+  createRoot(rootElement).render(
+    <LocaleProvider>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <CssBaseline />
+          <App />
+        </BrowserRouter>
+      </QueryClientProvider>
+    </LocaleProvider>,
+  );
+}

@@ -28,9 +28,11 @@ import {
   DashboardRounded,
   DescriptionOutlined,
   EditOutlined,
+  GavelRounded,
   HubOutlined,
   MenuBookRounded,
   MenuRounded,
+  PrivacyTipOutlined,
   PermMediaOutlined,
   SettingsOutlined,
   TuneRounded,
@@ -692,7 +694,7 @@ export function Dashboard() {
   );
 }
 export function Login() {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(false);
   const login = async () => {
@@ -764,6 +766,53 @@ export function Login() {
             sx={{ display: "block", textAlign: "center", mt: 3 }}
           >
             {t("Private workspace · Authorized administrators only")}</Typography>
+          <Box
+            component="nav"
+            aria-label={language === "uk" ? "Правова інформація" : "Legal information"}
+            sx={{ mt: 3, pt: 2.5, borderTop: "1px solid", borderColor: "divider" }}
+          >
+            <Typography
+              variant="overline"
+              color="text.secondary"
+              sx={{ display: "block", mb: 1, textAlign: "center" }}
+            >
+              {language === "uk" ? "Політики сервісу" : "Service policies"}
+            </Typography>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}>
+              <Button
+                component={Link}
+                to="/privacy-policy"
+                variant="outlined"
+                size="large"
+                fullWidth
+                startIcon={<PrivacyTipOutlined />}
+                sx={{
+                  minHeight: 56,
+                  fontWeight: 700,
+                  borderWidth: 1.5,
+                  "&:hover": { borderWidth: 1.5 },
+                }}
+              >
+                {language === "uk" ? "Політика конфіденційності" : "Privacy Policy"}
+              </Button>
+              <Button
+                component={Link}
+                to="/terms-and-conditions"
+                variant="outlined"
+                size="large"
+                fullWidth
+                startIcon={<GavelRounded />}
+                sx={{
+                  minHeight: 56,
+                  fontWeight: 700,
+                  borderWidth: 1.5,
+                  "&:hover": { borderWidth: 1.5 },
+                }}
+              >
+                {language === "uk" ? "Умови використання" : "Terms and Conditions"}
+              </Button>
+            </Stack>
+          </Box>
         </Paper>
       </Box>
     </AdminAppearance>

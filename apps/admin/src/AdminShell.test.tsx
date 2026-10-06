@@ -73,7 +73,11 @@ describe("admin experience", () => {
   });
   it("reports login failure and allows retry", async () => {
     vi.mocked(signIn).mockRejectedValue(new Error("Popup blocked"));
-    render(<Login />);
+    render(
+      <MemoryRouter>
+        <Login />
+      </MemoryRouter>,
+    );
     fireEvent.click(
       screen.getByRole("button", { name: "Sign in with Google" }),
     );
@@ -83,6 +87,21 @@ describe("admin experience", () => {
         .getByRole("button", { name: "Sign in with Google" })
         .hasAttribute("disabled"),
     ).toBe(false);
+  });
+  it("shows prominent links to both public legal pages on login", () => {
+    render(
+      <MemoryRouter>
+        <Login />
+      </MemoryRouter>,
+    );
+    const privacyLink = document.querySelector<HTMLAnchorElement>(
+      'a[href="/privacy-policy"]',
+    );
+    const termsLink = document.querySelector<HTMLAnchorElement>(
+      'a[href="/terms-and-conditions"]',
+    );
+    expect(privacyLink).toBeTruthy();
+    expect(termsLink).toBeTruthy();
   });
 });
 
@@ -113,14 +132,22 @@ describe("admin theme preference", () => {
   });
   it("restores day theme on login", () => {
     localStorage.setItem("massage-admin-theme", "light");
-    render(<Login />);
+    render(
+      <MemoryRouter>
+        <Login />
+      </MemoryRouter>,
+    );
     expect(
       screen.getByRole("button", { name: "Switch to night theme" }),
     ).toBeTruthy();
   });
   it("defaults invalid preferences to night", () => {
     localStorage.setItem("massage-admin-theme", "invalid");
-    render(<Login />);
+    render(
+      <MemoryRouter>
+        <Login />
+      </MemoryRouter>,
+    );
     expect(
       screen.getByRole("button", { name: "Switch to day theme" }),
     ).toBeTruthy();
@@ -132,7 +159,11 @@ describe("admin theme preference", () => {
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new Error("Blocked");
     });
-    render(<Login />);
+    render(
+      <MemoryRouter>
+        <Login />
+      </MemoryRouter>,
+    );
     fireEvent.click(
       screen.getByRole("button", { name: "Switch to day theme" }),
     );

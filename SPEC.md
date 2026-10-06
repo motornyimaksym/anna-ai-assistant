@@ -1753,3 +1753,13 @@ The default knowledge base owns the address `вул. Юнаківа, 9В` in its
 ## 72. Copy withheld reply for responder approval
 
 Responder notifications with a nonempty withheld reply add a separate bottom-row `Approve` copy button containing `/answer <requestId> <full readable unsent message>`. Clicking only copies text; the responder must send the command through the existing authorized answer flow. Preserve newlines and readable text without HTML escaping the clipboard payload. Add the button only when the complete command fits Telegram’s 256-character copy-text limit (conservatively measured in UTF-16 code units); never truncate the reply. Notifications without a draft or with an oversized command retain the existing answer/resume buttons. No persisted-data or authorization changes.
+
+## 73. Public privacy and terms pages
+
+Provide public, login-free routes `/privacy-policy` and `/terms-and-conditions`, linked with prominent, keyboard-accessible links on `/login`. Both pages use the existing theme and language controls, include a clear return-to-login link, and work on mobile.
+
+The Privacy Policy identifies the service and support contact (`yazon2006@gmail.com`) and accurately explains data handled by Google sign-in, Firebase Authentication, Telegram booking conversations, Calendar integration, Firestore/Cloud Storage, OpenAI, and optional TypeSafe AI when selected. Disclose purposes, access/sharing, retention and user choices. State that Calendar busy intervals may be sent to the AI provider with relevant booking context; existing Calendar event titles, descriptions and attendees are not used for that availability context. Disclose that created booking events may include client and booking details, and owner-only diagnostics may retain sanitized model request/response context. Do not claim a fixed universal deletion period or zero provider retention. State that data is not sold or used for advertising. Provide links to relevant provider policies and a contact path for privacy requests.
+
+Terms explain the authorized-admin purpose, acceptable use, third-party dependencies, AI limitations, and that a booking is confirmed only after the service confirms successful Calendar creation. State that the assistant is not a medical service and its output is not medical advice. Do not invent fees, warranty commitments, governing-law terms or business details.
+
+Pages are available in English and Ukrainian, matching the saved interface language. Tests cover public routes, policy links from login and expected page structure without exact-substring assertions on policy prose. No API, persisted data or access policy changes. No production deployment.
