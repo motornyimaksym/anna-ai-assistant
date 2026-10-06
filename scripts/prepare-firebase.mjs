@@ -2,6 +2,7 @@ import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { getFirebaseRuntimeConfig } from './firebase-runtime-config.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const destination = join(root, 'firebase', 'functions');
@@ -42,8 +43,11 @@ for (const name of workspacePackages) {
   await writeFile(join(target, 'package.json'), `${JSON.stringify(productionManifest(manifest), null, 2)}\n`);
 }
 
-const publicRuntimeVariables = ['TELEGRAM_MCP_BRIDGE_URL', 'DEFAULT_TIMEZONE', 'OPENAI_MODEL', 'OPENAI_TOTAL_CREDITS', 'OPENAI_CREDITS_START_TIME', 'DEBUG_OWNER_UID', 'TELEGRAM_ALLOWED_USERNAME', 'GOOGLE_CLIENT_ID', 'GOOGLE_CALENDAR_REDIRECT_URI', 'GOOGLE_CALENDAR_ACCOUNT_EMAIL', 'GOOGLE_CALENDAR_ID'];
-const runtimeLines = publicRuntimeVariables.filter((name) => process.env[name]).map((name) => `${name}=${JSON.stringify(process.env[name])}`);
+let rootEnvSource = '';
+try { rootEnvSource = await readFile(join(root, '.env'), 'utf8'); }
+catch (error) { if (error.code !== 'ENOENT') throw error; }
+const runtimeConfig = getFirebaseRuntimeConfig(process.env, rootEnvSource);
+const runtimeLines = Object.entries(runtimeConfig).map(([name, value]) => `${name}=${JSON.stringify(value)}`);
 if (runtimeLines.length) await writeFile(join(destination, '.env'), `${runtimeLines.join('\n')}\n`);
 
 execFileSync('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], {

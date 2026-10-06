@@ -255,9 +255,12 @@ TYPESAFE_AI_TOKEN
 OPENAI_MODEL
 
 GOOGLE_CLIENT_ID
+GOOGLE_CALENDAR_REDIRECT_URI
+GOOGLE_CALENDAR_ACCOUNT_EMAIL (optional)
 GOOGLE_CLIENT_SECRET
 GOOGLE_REFRESH_TOKEN
 GOOGLE_CALENDAR_ID
+GOOGLE_CALENDAR_ENCRYPTION_KEY (Secret Manager)
 
 FIREBASE_PROJECT_ID
 
@@ -289,6 +292,8 @@ VITE_FIREBASE_APP_ID
 For local API development, load the repository-root ignored `.env` before validating backend runtime configuration. Existing process environment values take precedence.
 
 Before building Firebase release artifacts, validate any locally supplied `GOOGLE_CALENDAR_ENCRYPTION_KEY` and `TELEGRAM_SESSION_ENCRYPTION_KEY` from the shell or repository-root ignored `.env` (shell takes precedence). Each must be canonical base64 encoding of exactly 32 bytes; reject malformed values with the variable name and generation instructions, never the value. Missing local keys are allowed because production may already supply them through Secret Manager. This preflight does not upload secrets or change production secret versions; runtime validation remains strict. A corrected local key must also be provisioned in Secret Manager and the affected function explicitly redeployed before production uses it.
+
+`firebase:prepare` reads only the allowlisted nonsecret Google Calendar runtime values `GOOGLE_CLIENT_ID`, `GOOGLE_CALENDAR_REDIRECT_URI`, and `GOOGLE_CALENDAR_ACCOUNT_EMAIL` from the repository-root ignored `.env` when shell variables are absent; shell values take precedence. It writes only those values to the generated function `.env`. Other nonsecret runtime values continue to require explicit shell configuration. OAuth secrets and encryption keys remain Secret Manager-only and are never copied from `.env` into release artifacts.
 
 У Firebase Functions ідентифікатор проєкту визначається SDK з середовища виконання; `FIREBASE_PROJECT_ID` є необов'язковим явним перевизначенням. Production-збірка admin потребує чотири публічні `VITE_FIREBASE_*` значення. Backend secrets передаються лише через Secret Manager і не повинні з'являтися у build logs.
 
@@ -1431,7 +1436,7 @@ After connection, show calendars with owner/writer access. Selecting a calendar 
 
 If no managed Calendar document exists, retain legacy GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN/CALENDAR_ID configuration. Once the owner starts managing the connection, persisted state takes precedence, including disabled/disconnected state. Booking services load the current connection dynamically. Disabled integration returns no external busy intervals; configured but failed/revoked authorization must report failure rather than treating an unreadable calendar as free. FreeBusy per-calendar errors are failures. Persist `googleCalendarId` alongside newly created event IDs; reschedule/cancel use that original calendar even after selection changes. Legacy bookings without a stored calendar ID use the currently selected calendar. Missing event IDs are never reported as successfully updated.
 
-The callback has a dedicated page with progress, denial/error, owner sign-in recovery, and a return-to-settings action. No general AI-calendar tools are added; section 47 defines booking from Telegram windows. Configuration documentation must include the exact production redirect URL, scopes, Secret Manager key provisioning, and Google's testing-mode refresh-token lifetime limitation. Tests cover state replay/expiry/UID/nonce/scopes, encrypted storage, stale updates, owner guards, safe errors, selection/disconnect, legacy fallback, original-calendar routing, and callback/Settings UI. Deployment and interactive Google consent require their respective user actions; no deployment is part of implementation.
+The callback has a dedicated responsive page styled to the active admin theme, with progress, denial/error, owner sign-in recovery, and a return-to-settings action. After a successful connection, show a five-second countdown and automatically return to Bot Settings; the user can return immediately using the visible action. Cancellation and errors do not auto-redirect. No general AI-calendar tools are added; section 47 defines booking from Telegram windows. Configuration documentation must include the exact production redirect URL, scopes, Secret Manager key provisioning, and Google's testing-mode refresh-token lifetime limitation. Tests cover state replay/expiry/UID/nonce/scopes, encrypted storage, stale updates, owner guards, safe errors, selection/disconnect, legacy fallback, original-calendar routing, and callback/Settings UI. Deployment and interactive Google consent require their respective user actions; no deployment is part of implementation.
 
 
 ## 47. Raw schedule context, Calendar conflicts and human recovery
