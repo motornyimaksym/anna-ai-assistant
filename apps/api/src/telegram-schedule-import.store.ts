@@ -12,7 +12,6 @@ export type ScheduleSyncStatus = NonNullable<TelegramScheduleSlotsResponse['stat
 export type ScheduleSyncClaim = { allowed: boolean; sourcePeerId?: string; sourceTopicId?: number; attemptId?: string };
 export type ManualScheduleSyncClaim = ScheduleSyncClaim & { runId?: string };
 const manualRetryable = new Set<ScheduleSyncStatus>(['account_busy', 'connection_failed', 'timeout']);
-const failureStatuses = new Set<ScheduleSyncStatus>(['source_not_found', 'disconnected', 'account_busy', 'connection_failed', 'timeout']);
 const syncClaim = (attemptId: string, now: number) => ({
   nextAttemptAt: now + 5 * 60_000,
   lastAttemptAt: new Date(now).toISOString(),
@@ -45,9 +44,7 @@ export class TelegramScheduleImportStore {
       const runActive = typeof data.manualRetryRunId === 'string' && data.manualRetryRunId.length > 0 && typeof data.manualRetryUntil === 'number' && data.manualRetryUntil > now;
       if (runActive) return { allowed: false, sourcePeerId, ...topic };
       const staleSync = data.status === 'syncing' && typeof data.lastAttemptAt === 'string' && Date.parse(data.lastAttemptAt) + 60_000 <= now;
-      const failed = failureStatuses.has(data.status as ScheduleSyncStatus) || staleSync;
       if (data.status === 'syncing' && !staleSync) return { allowed: false, sourcePeerId, ...topic };
-      if (!failed && typeof data.nextAttemptAt === 'number' && data.nextAttemptAt > now) return { allowed: false, sourcePeerId, ...topic };
       const runId = randomUUID();
       const attemptId = randomUUID();
       transaction.set(this.ref, { ...syncClaim(attemptId, now), manualRetryRunId: runId, manualRetryUntil: now + 5 * 60_000 }, { merge: true });

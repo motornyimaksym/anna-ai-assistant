@@ -97,7 +97,7 @@ describe("standalone AI workspace", () => {
     });
     show();
     expect(await screen.findByText("Hello team")).toBeTruthy();
-    expect(screen.getByText("To: Team (-10042)")).toBeTruthy();
+    expect(screen.getByText(/Team \(-10042\)/)).toBeTruthy();
     expect(screen.getByText("Reply to message: 7")).toBeTruthy();
     expect(aiChatApi.action).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Confirm send" }));

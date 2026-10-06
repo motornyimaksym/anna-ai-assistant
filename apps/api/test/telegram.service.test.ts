@@ -15,7 +15,7 @@ const update = (username?: string) => ({
   },
 });
 
-const setup = (settings: { maxReadDelayMs: number; typingDelayPerSymbolMs: number; testerUsernames?: string[]; updatedAt?: string } = { maxReadDelayMs: 0, typingDelayPerSymbolMs: 600, updatedAt: '2026-09-24T10:00:00.000Z' }) => {
+const setup = (settings: { maxReadDelayMs: number; typingDelayPerSymbolMs: number; testerUsernames?: string[]; allUsersEnabled?: boolean; updatedAt?: string } = { maxReadDelayMs: 0, typingDelayPerSymbolMs: 600, allUsersEnabled: false, updatedAt: '2026-09-24T10:00:00.000Z' }) => {
   const order: string[] = [];
   const repository = {
     appendMessage: vi.fn(),
@@ -159,13 +159,26 @@ describe('Telegram private test restriction', () => {
     expect(repository.claimTelegramUpdate).not.toHaveBeenCalled();
     expect(assistant.respond).not.toHaveBeenCalled();
   });
+
+  it('replies to any eligible sender when all-users mode is enabled, including users without usernames', async () => {
+    vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
+    vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-bot-token');
+    vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+    const { service, repository, assistant } = setup({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0, testerUsernames: ['tester'], allUsersEnabled: true });
+
+    await service.handle('webhook-secret', { ...update(), update_id: 201 });
+
+    expect(repository.claimTelegramUpdate).toHaveBeenCalledWith(201);
+    expect(assistant.respond).toHaveBeenCalledOnce();
+    expect(assistant.respond).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ clientId: '456' }), 'Hello');
+  });
 });
 
 it('supports allowed private DMs but ignores groups and duplicate updates', async () => {
   vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
   vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
   vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
-  const { service, repository, assistant, send } = setup();
+  const { service, repository, assistant, send } = setup({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0, testerUsernames: [], allUsersEnabled: true });
   const message = { ...update('user61785').business_message, chat: { id: 123, type: 'group' } };
   await service.handle('webhook-secret', { update_id: 1, message });
   expect(assistant.respond).not.toHaveBeenCalled();

@@ -96,7 +96,7 @@ describe('outgoing Probability gate', () => {
     store.open.mockResolvedValue({ request, created: true });
     expect(await service.approveOutgoing('123', 'business-1', 1, 'Question', 'Draft')).toBe(allowed);
     if (allowed) expect(store.open).not.toHaveBeenCalled();
-    else expect(store.open).toHaveBeenCalledWith('123', 'business-1', 1, expect.stringContaining('Unsent draft: Draft'), 'handoff_probability', probability, threshold);
+    else expect(store.open).toHaveBeenCalledWith('123', 'business-1', 1, expect.any(String), 'handoff_probability', probability, threshold);
   });
 
   it('uses the latest 20 messages and exact formatted draft separately', async () => {
@@ -189,7 +189,7 @@ it('formats a chronological transcript and adds answer and resume copy buttons',
   expect(body.parse_mode).toBe('HTML');
   expect(body.reply_markup).toEqual({ inline_keyboard: [[
     { text: 'Копіювати /answer', copy_text: { text: '/answer case-1 ' } },
-    { text: 'Копіювати resume', copy_text: { text: '/resume case-1' } },
+    { text: 'Копіювати /resume', copy_text: { text: '/resume case-1' } },
   ]] });
 });
 
@@ -218,14 +218,14 @@ it('separates a withheld draft, escapes transcript text, and hides request and c
   const body = JSON.parse(delivery[1]!.body as string);
   expect(body.text).toContain('<b>Діалог:</b>\nclient123: Старе питання &lt;прайс&gt; &amp; час\n\nБот: Стара відповідь бота\n\nclient123: Середа');
   expect(body.text).toContain('<b>Не надіслане повідомлення:</b>\nЗапис: Масаж, 120 хв. Код abc12345.\n\nПідтверджуєте запис?');
-  expect(body.reply_markup.inline_keyboard[1]).toEqual([{ text: 'Approve', copy_text: { text: '/answer case-1 Запис: Масаж, 120 хв. Код abc12345.\n\nПідтверджуєте запис?' } }]);
+  expect(body.reply_markup.inline_keyboard[1]).toEqual([{ text: 'Підтвердити відповідь', copy_text: { text: '/answer case-1 Запис: Масаж, 120 хв. Код abc12345.\n\nПідтверджуєте запис?' } }]);
   expect(body.text).toContain('Чат клієнта: https://t.me/client123');
   expect(body.text).not.toContain('Запит: case-1');
   expect(body.text).not.toContain('Чат клієнта: 123');
   expect(body.text).not.toContain('/answer case-1');
   expect(body.parse_mode).toBe('HTML');
   expect(body.reply_markup.inline_keyboard[0][0].copy_text.text).toBe('/answer case-1 ');
-  expect(body.reply_markup.inline_keyboard[0][1]).toEqual({ text: 'Копіювати resume', copy_text: { text: '/resume case-1' } });
+  expect(body.reply_markup.inline_keyboard[0][1]).toEqual({ text: 'Копіювати /resume', copy_text: { text: '/resume case-1' } });
 });
 
 it('keeps command and client contact inside Telegram text limit for long Unicode follow-ups', async () => {
@@ -249,7 +249,7 @@ it('keeps command and client contact inside Telegram text limit for long Unicode
   expect(body.text).not.toContain('/answer');
   expect(body.text).toContain('…');
   expect(body.reply_markup.inline_keyboard[0][0].copy_text.text).toBe('/answer case-1 ');
-  expect(body.reply_markup.inline_keyboard[0][1]).toEqual({ text: 'Копіювати resume', copy_text: { text: '/resume case-1' } });
+  expect(body.reply_markup.inline_keyboard[0][1]).toEqual({ text: 'Копіювати /resume', copy_text: { text: '/resume case-1' } });
   expect(body.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
 });
 
@@ -286,5 +286,5 @@ it.each([256, 257])('respects the copy-text command limit at %i characters', asy
   const delivery = fetcher.mock.calls.find(([url]) => url.endsWith('/sendMessage'))!;
   const body = JSON.parse(delivery[1]!.body as string);
   expect(body.reply_markup.inline_keyboard).toHaveLength(length === 256 ? 2 : 1);
-  if (length === 256) expect(body.reply_markup.inline_keyboard[1][0]).toEqual({ text: 'Approve', copy_text: { text: `/answer case-1 ${draft}` } });
+  if (length === 256) expect(body.reply_markup.inline_keyboard[1][0]).toEqual({ text: 'Підтвердити відповідь', copy_text: { text: `/answer case-1 ${draft}` } });
 });

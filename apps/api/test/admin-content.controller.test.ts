@@ -17,7 +17,7 @@ const setup = () => {
     getAdminAccessOverride: vi.fn(async () => ({ emails: ['partner@example.com'], updatedAt: '2026-09-24T10:00:00.000Z' })),
     saveAdminAccessOverride: vi.fn(async (emails: string[]) => ({ emails, updatedAt: '2026-09-24T10:00:00.000Z' })),
     getBotSettingsOverride: vi.fn(async () => undefined),
-    saveBotSettingsOverride: vi.fn(async (settings: { maxReadDelayMs: number; typingDelayPerSymbolMs: number; testerUsernames: string[] }) => ({ ...settings, updatedAt: '2026-09-24T10:00:00.000Z' })),
+    saveBotSettingsOverride: vi.fn(async (settings: { maxReadDelayMs: number; typingDelayPerSymbolMs: number; testerUsernames: string[]; allUsersEnabled?: boolean }) => ({ ...settings, allUsersEnabled: settings.allUsersEnabled ?? false, updatedAt: '2026-09-24T10:00:00.000Z' })),
     getPromptOverride: vi.fn(async () => undefined as { prompt: string; updatedAt: string } | undefined),
     savePromptOverride: vi.fn(async (_id: string, prompt: string) => ({ prompt, updatedAt: '2026-09-24T10:00:00.000Z' })),
     deletePromptOverride: vi.fn(async () => undefined),
@@ -88,9 +88,11 @@ describe('admin content endpoints', () => {
   it('returns default bot settings and saves valid overrides', async () => {
     vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', undefined);
     const { controller, repository } = setup();
-    expect(await controller.botSettings()).toMatchObject({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [], isCustom: false });
-    expect(await controller.updateBotSettings({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, testerUsernames: [' @Tester1 ', 'Tester_2'] })).toEqual({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, testerUsernames: ['tester1', 'tester_2'], isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z' });
+    expect(await controller.botSettings()).toMatchObject({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [], allUsersEnabled: false, isCustom: false });
+    expect(await controller.updateBotSettings({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, testerUsernames: [' @Tester1 ', 'Tester_2'] })).toEqual({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, testerUsernames: ['tester1', 'tester_2'], allUsersEnabled: false, isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z' });
     expect(repository.saveBotSettingsOverride).toHaveBeenCalledWith({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, testerUsernames: ['tester1', 'tester_2'] });
+    await controller.updateBotSettings({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, testerUsernames: ['tester1'], allUsersEnabled: true });
+    expect(repository.saveBotSettingsOverride).toHaveBeenLastCalledWith({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, testerUsernames: ['tester1'], allUsersEnabled: true });
     await controller.updateBotSettings({ maxReadDelayMs: 3_540_000, typingDelayPerSymbolMs: 400, testerUsernames: [] });
     expect(repository.saveBotSettingsOverride).toHaveBeenLastCalledWith({ maxReadDelayMs: 3_540_000, typingDelayPerSymbolMs: 400, testerUsernames: [] });
   });

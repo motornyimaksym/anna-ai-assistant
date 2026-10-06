@@ -2,7 +2,7 @@ import { SystemOneSettings } from './SystemOneSettings.js';
 import { GoogleCalendarSettings } from './GoogleCalendarSettings.js';
 import { TelegramAccountSettings } from './TelegramAccountSettings.js';
 import { HumanAssistanceSettings } from './HumanAssistanceSettings.js';
-import { Alert, Box, Button, Chip, Divider, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Chip, Divider, FormControlLabel, Stack, Switch, TextField, Typography } from '@mui/material';
 import { botSettingsSchema, updateAdminAccessSchema, type BotSettings as BotSettingsDto } from '@booking/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
@@ -23,6 +23,7 @@ export const BotSettings = () => {
   const accessQuery = useQuery({ queryKey: adminAccessQueryKey, queryFn: adminApi.adminAccess });
   const [draft, setDraft] = useState<Draft>({ maxReadDelaySeconds: '', typingDelayPerSymbolMs: '' });
   const [testerUsernames, setTesterUsernames] = useState<string[]>([]);
+  const [allUsersEnabled, setAllUsersEnabled] = useState(false);
   const [newTester, setNewTester] = useState('');
   const [testerError, setTesterError] = useState('');
   const [emails, setEmails] = useState<string[]>([]);
@@ -30,7 +31,7 @@ export const BotSettings = () => {
   const [message, setMessage] = useState('');
   const [accessMessage, setAccessMessage] = useState('');
   const [accessError, setAccessError] = useState('');
-  useEffect(() => { if (query.data) { setDraft(toDraft(query.data)); setTesterUsernames(query.data.testerUsernames); } }, [query.data]);
+  useEffect(() => { if (query.data) { setDraft(toDraft(query.data)); setTesterUsernames(query.data.testerUsernames); setAllUsersEnabled(query.data.allUsersEnabled); } }, [query.data]);
   useEffect(() => { if (accessQuery.data) setEmails(accessQuery.data.emails); }, [accessQuery.data]);
 
   const readDelaySeconds = draft.maxReadDelaySeconds.trim() === '' ? Number.NaN : Number(draft.maxReadDelaySeconds);
@@ -40,6 +41,7 @@ export const BotSettings = () => {
     maxReadDelayMs: Number.isInteger(readDelayMs) ? readDelayMs : Number.NaN,
     typingDelayPerSymbolMs: draft.typingDelayPerSymbolMs.trim() === '' ? Number.NaN : Number(draft.typingDelayPerSymbolMs),
     testerUsernames,
+    allUsersEnabled,
   });
   const save = useMutation({
     mutationFn: (settings: BotSettingsDto) => adminApi.saveBotSettings(settings),
@@ -47,6 +49,7 @@ export const BotSettings = () => {
       queryClient.setQueryData(queryKey, value);
       setDraft(toDraft(value));
       setTesterUsernames(value.testerUsernames);
+      setAllUsersEnabled(value.allUsersEnabled);
       setMessage('Saved. Changes apply to the next incoming message.');
     },
   });
@@ -63,7 +66,7 @@ export const BotSettings = () => {
   if (query.isPending) return <Typography>{t("Loading bot settings…")}</Typography>;
   if (query.isError) return <Alert severity="error">{t("Could not load bot settings.")}{t(" ")}{t(errorText(query.error))}</Alert>;
 
-  const dirty = draft.maxReadDelaySeconds !== millisecondsToSeconds(query.data.maxReadDelayMs) || draft.typingDelayPerSymbolMs !== String(query.data.typingDelayPerSymbolMs) || JSON.stringify(testerUsernames) !== JSON.stringify(query.data.testerUsernames);
+  const dirty = draft.maxReadDelaySeconds !== millisecondsToSeconds(query.data.maxReadDelayMs) || draft.typingDelayPerSymbolMs !== String(query.data.typingDelayPerSymbolMs) || JSON.stringify(testerUsernames) !== JSON.stringify(query.data.testerUsernames) || allUsersEnabled !== query.data.allUsersEnabled;
   const canSave = dirty && parsed.success && !save.isPending;
   const saveDraft = () => { if (parsed.success) { setMessage(''); save.mutate(parsed.data); } };
   const addTester = () => {
@@ -118,9 +121,17 @@ export const BotSettings = () => {
       disabled={save.isPending}
     />
     <Divider />
+    <Stack spacing={0.5}>
+      <FormControlLabel
+        control={<Switch checked={allUsersEnabled} onChange={(_event, checked) => { setAllUsersEnabled(checked); setMessage(''); }} disabled={save.isPending} />}
+        label={t("Reply to all users")}
+      />
+      <Typography variant="body2" color="text.secondary">{t("When enabled, the assistant replies to eligible messages from everyone. When disabled, only testers below can use it.")}</Typography>
+    </Stack>
+    <Divider />
     <Stack spacing={1.5}>
       <Typography variant="h6">{t("Telegram testers")}</Typography>
-      <Typography variant="body2" color="text.secondary">{t("Only these usernames can use the assistant in Business messages or private bot chats. Add up to 20 usernames.")}</Typography>
+      <Typography variant="body2" color="text.secondary">{t("This list applies when all-users mode is disabled. Add up to 20 usernames.")}</Typography>
       <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
         {testerUsernames.map((username) => <Chip key={username} label={username} onDelete={!save.isPending ? () => { setTesterUsernames((current) => current.filter((item) => item !== username)); setTesterError(''); setMessage(''); } : undefined} />)}
         {testerUsernames.length === 0 && <Typography variant="body2" color="text.secondary">{t("No testers configured.")}</Typography>}

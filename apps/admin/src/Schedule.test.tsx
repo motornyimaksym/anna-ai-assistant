@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Schedule } from './Schedule.js';
 import { adminApi } from './api.js';
+import { LocaleProvider } from './i18n.js';
 
-vi.mock('./api.js', () => ({ adminApi: { telegramScheduleSlots: vi.fn() } }));
+vi.mock('./api.js', () => ({ adminApi: { telegramScheduleSlots: vi.fn(), refreshSchedule: vi.fn() } }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
-const show = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}><Schedule /></QueryClientProvider>);
+const show = () => render(<LocaleProvider><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}><Schedule /></QueryClientProvider></LocaleProvider>);
 
 describe('imported schedule slots', () => {
   it('shows recent chat messages as read-only slots', async () => {
@@ -29,10 +30,15 @@ describe('imported schedule slots', () => {
     expect(await screen.findByText(/No imported free slots yet/)).toBeTruthy();
   });
 
-  it('explains when a Calendar refresh is still on cooldown', async () => {
+  it('allows manual refresh during automatic cooldown', async () => {
     vi.mocked(adminApi.telegramScheduleSlots).mockResolvedValue({ slots: [], status: 'idle', nextAttemptAt: '2099-09-25T10:00:00.000Z' });
+    vi.mocked(adminApi.refreshSchedule).mockResolvedValue({ slots: [], status: 'success', syncedAt: new Date().toISOString() });
     show();
-    expect(await screen.findByText(/Refresh did not start a new import/)).toBeTruthy();
+    expect(await screen.findByText(/The next automatic refresh is/)).toBeTruthy();
+    const button = screen.getByRole('button', { name: 'Refresh now' });
+    expect(button.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(button);
+    await waitFor(() => expect(adminApi.refreshSchedule).toHaveBeenCalledWith(true));
   });
 
   it('points to the sync diagnostic after a failed import', async () => {
@@ -50,7 +56,7 @@ describe('imported schedule slots', () => {
     });
     show();
     expect(await screen.findByText(/Calendar busy times/)).toBeTruthy();
-    expect(screen.getByText(/26.09.2026.*13:00.*14:00/)).toBeTruthy();
+    expect(screen.getByText(/9\/26\/2026, 1:00:00 PM – 9\/26\/2026, 2:00:00 PM/)).toBeTruthy();
   });
 
   it('shows when Calendar was unavailable during sync', async () => {

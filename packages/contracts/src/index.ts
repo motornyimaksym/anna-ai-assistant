@@ -80,9 +80,9 @@ const testerUsernameSchema = z.string().trim().transform((value) => value.replac
 const testerUsernamesSchema = z.array(testerUsernameSchema).max(20).superRefine((usernames, ctx) => {
   if (new Set(usernames).size !== usernames.length) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Telegram usernames must be unique' });
 });
-export const botSettingsSchema = z.object({ maxReadDelayMs: z.number().int().min(0).max(3_540_000), typingDelayPerSymbolMs: z.number().int().min(0).max(800), testerUsernames: testerUsernamesSchema });
+export const botSettingsSchema = z.object({ maxReadDelayMs: z.number().int().min(0).max(3_540_000), typingDelayPerSymbolMs: z.number().int().min(0).max(800), testerUsernames: testerUsernamesSchema, allUsersEnabled: z.boolean() });
 export const botSettingsResponseSchema = botSettingsSchema.extend({ isCustom: z.boolean(), updatedAt: z.string().datetime().optional() });
-export const updateBotSettingsSchema = botSettingsSchema;
+export const updateBotSettingsSchema = botSettingsSchema.extend({ allUsersEnabled: z.boolean().optional() });
 const adminAccessEmailSchema = z.string().trim().email().max(254).transform((email) => email.toLowerCase());
 const adminAccessEmailsSchema = z.object({ emails: z.array(adminAccessEmailSchema).max(100) });
 const uniqueAdminEmails = ({ emails }: { emails: string[] }, ctx: z.RefinementCtx) => {

@@ -92,10 +92,11 @@ export class TelegramService {
       }
     }
     if (isAnswerCommand || isResumeCommand) return;
-    if (message?.from?.is_bot || (message?.chat.type && message.chat.type !== 'private') || !message?.from?.username || !message.text) { await this.debug.record(trace, 'ignored', { reason: 'sender_or_message_not_eligible' }); return; }
+    if (message?.from?.is_bot || (message?.chat.type && message.chat.type !== 'private') || !message?.from || !message.text) { await this.debug.record(trace, 'ignored', { reason: 'sender_or_message_not_eligible' }); return; }
     const settings = await this.repository.getBotSettingsOverride() ?? getDefaultBotSettings();
     const testerUsernames = settings.testerUsernames ?? getLegacyTesterUsernames();
-    if (!testerUsernames.includes(message.from.username.toLowerCase())) { await this.debug.record(trace, 'ignored', { reason: 'sender_or_message_not_eligible' }); return; }
+    const username = message.from.username?.toLowerCase();
+    if (!settings.allUsersEnabled && (!username || !testerUsernames.includes(username))) { await this.debug.record(trace, 'ignored', { reason: 'sender_or_message_not_eligible' }); return; }
     if (!await this.repository.claimTelegramUpdate(update.update_id)) { await this.debug.record(trace, 'ignored', { reason: 'duplicate_update' }); return; }
     await this.debug.record(trace, 'received');
     const chatId = String(message.chat.id); const now = new Date().toISOString();

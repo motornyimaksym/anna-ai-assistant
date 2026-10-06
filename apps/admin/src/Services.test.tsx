@@ -48,9 +48,9 @@ describe('admin service catalog editor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save service' }));
     await waitFor(() => expect(adminApi.saveService).toHaveBeenCalledWith(expect.objectContaining({ durationMinutes: 60, price: 1500, durationOptions: [{ durationMinutes: 90, price: 2000 }] }), false));
     fireEvent.click(await screen.findByRole('button', { name: 'Edit Massage 60 min' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Remove duration option 1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove option 1' }));
     expect((screen.getByRole('spinbutton', { name: 'Duration (minutes)' }) as HTMLInputElement).value).toBe('90');
-    expect(screen.getByRole('button', { name: 'Remove duration option 1' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Remove option 1' }).hasAttribute('disabled')).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Save service' }));
     await waitFor(() => expect(adminApi.saveService).toHaveBeenLastCalledWith(expect.objectContaining({ durationMinutes: 90, price: 2000, durationOptions: [] }), false));
   });

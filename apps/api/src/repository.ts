@@ -4,8 +4,8 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { FieldValue, getFirestore, type DocumentData, type Firestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import {
-  debugEventsSchema, debugEventSchema, debugPayloadSchema, type BookingConfirmationFacts, type DebugEvent, type DebugPayload, type AssistantPromptId, availabilityRuleSchema, bookingSchema, botSettingsSchema, conversationSchema, pendingActionSchema, scheduleExceptionSchema, serviceSchema, updateAdminAccessSchema,
-  type AvailabilityRuleDto, type BookingDto, type BotSettings, type ConversationDto, type ScheduleExceptionDto, type ServiceDto,
+  debugEventsSchema, debugEventSchema, debugPayloadSchema, type BookingConfirmationFacts, type DebugEvent, type DebugPayload, type AssistantPromptId, availabilityRuleSchema, bookingSchema, botSettingsSchema, conversationSchema, pendingActionSchema, scheduleExceptionSchema, serviceSchema, updateAdminAccessSchema, updateBotSettingsSchema,
+  type AvailabilityRuleDto, type BookingDto, type BotSettings, type ConversationDto, type ScheduleExceptionDto, type ServiceDto, type UpdateBotSettingsRequest,
 } from '@booking/contracts';
 import { BookingConflictError, BookingNotFoundError, lockedSlotKeys, serviceEndAt } from '@booking/domain';
 import { FirebaseAdminService } from './firebase-admin.js';
@@ -478,11 +478,13 @@ export class BookingRepository {
     if (!doc.exists) return undefined;
     const data = doc.data();
     if (typeof data?.updatedAt !== 'string') return undefined;
-    const settings = botSettingsSchema.parse({ ...data, testerUsernames: data.testerUsernames ?? getLegacyTesterUsernames() });
+    const settings = botSettingsSchema.parse({ ...data, testerUsernames: data.testerUsernames ?? getLegacyTesterUsernames(), allUsersEnabled: data.allUsersEnabled ?? false });
     return { ...settings, updatedAt: data.updatedAt };
   }
-  async saveBotSettingsOverride(settings: BotSettings): Promise<BotSettings & { updatedAt: string }> {
-    const value = { ...botSettingsSchema.parse(settings), updatedAt: new Date().toISOString() };
+  async saveBotSettingsOverride(settings: UpdateBotSettingsRequest): Promise<BotSettings & { updatedAt: string }> {
+    const parsed = updateBotSettingsSchema.parse(settings);
+    const existing = await this.getBotSettingsOverride();
+    const value = { ...botSettingsSchema.parse({ ...parsed, allUsersEnabled: parsed.allUsersEnabled ?? existing?.allUsersEnabled ?? false }), updatedAt: new Date().toISOString() };
     await this.db.collection('assistantSettings').doc('behavior').set(withoutUndefined(value));
     return value;
   }

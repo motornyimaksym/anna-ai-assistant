@@ -41,6 +41,6 @@ export function ScheduleSourceSettings() {
     {save.isError && <Alert severity="error">{save.error.message}</Alert>}
     {save.isSuccess && <Alert severity="success">{t("Source saved. Use Refresh now to import it; transient failures retry automatically.")}</Alert>}
     {snapshot.isError && <Alert severity="error">{t("Could not load sync status.")}</Alert>}
-    {snapshot.data && <ScheduleSyncStatus data={snapshot.data} enableManualRetries />}
+    {snapshot.data && <ScheduleSyncStatus data={snapshot.data} />}
   </Stack>;
 }

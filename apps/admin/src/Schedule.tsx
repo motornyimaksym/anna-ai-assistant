@@ -13,7 +13,7 @@ export function Schedule() {
   return <Box>
     <Typography variant="h6" gutterBottom>{t("Imported free slots")}</Typography>
     <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-      {t("Read-only messages from the connected Telegram account. Refresh runs on incoming messages, at most once every five minutes.")}</Typography>
+      {t("Read-only messages from the connected Telegram account. Automatic refresh runs on incoming messages at most once every five minutes. Manual refresh can run whenever no sync is in progress.")}</Typography>
     {query.isPending ? <Typography>{t("Loading imported slots…")}</Typography> : query.isError ? <Alert severity="error">{t("Could not load imported schedule slots.")}</Alert> : <Stack spacing={2}>
       <ScheduleSyncStatus data={query.data} />
 
@@ -21,11 +21,11 @@ export function Schedule() {
         {query.data.slots.map((slot) => <ListItem key={slot.messageId} divider alignItems="flex-start" disableGutters>
           <ListItemText primary={slot.text} secondary={`${t("Telegram message")} · ${formatKyiv(slot.createdAt)} (${t("Europe/Kyiv")})`} />
         </ListItem>)}
-      </List> : <Alert severity="info">{t("No imported free slots yet. Select the source chat in Bot Settings, then refresh when the cooldown allows.")}</Alert>}
+      </List> : <Alert severity="info">{t("No imported free slots yet. Select the source chat in Bot Settings, then use Refresh now.")}</Alert>}
       <Typography variant="h6">{t("Calendar busy times")}</Typography>
       {!query.data.calendarAvailability ? <Alert severity={failedSync.has(query.data.status ?? '') ? 'warning' : 'info'}>
-        {failedSync.has(query.data.status ?? '') ? t("Calendar snapshot needs a successful sync. See the diagnostic above and retry when permitted.")
-          : query.data.nextAttemptAt && Date.parse(query.data.nextAttemptAt) > Date.now() ? `${t("No Calendar snapshot yet. Refresh did not start a new import during the five-minute cooldown. Next permitted refresh:")} ${formatKyiv(query.data.nextAttemptAt)} (${t("Europe/Kyiv")}).`
+        {failedSync.has(query.data.status ?? '') ? t("Calendar snapshot needs a successful sync. See the diagnostic above, then use Refresh now to retry.")
+          : query.data.nextAttemptAt && Date.parse(query.data.nextAttemptAt) > Date.now() ? `${t("No Calendar snapshot yet. The next automatic refresh is:")} ${formatKyiv(query.data.nextAttemptAt)} (${t("Europe/Kyiv")}).`
             : t("No Calendar snapshot yet. Refresh the schedule to load it.")}
       </Alert>
         : query.data.calendarAvailability.status === 'unavailable' ? <Alert severity="warning">{t("Calendar was unavailable during the last sync (")}{formatKyiv(query.data.calendarAvailability.checkedAt)}{t("). Refresh to try again.")}</Alert>

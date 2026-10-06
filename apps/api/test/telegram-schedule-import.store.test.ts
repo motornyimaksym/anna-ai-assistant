@@ -90,7 +90,7 @@ it('binds topics, invalidates same-group stale results, and removes topics for w
   expect(get()).not.toHaveProperty('sourceTopicTitle');
 });
 
-it('allows manual refresh after failure during cooldown, while serializing runs and retaining cooldown after success', async () => {
+it('allows repeated manual refreshes despite automatic cooldown, while serializing runs and retaining automatic throttle', async () => {
   const { store, get, set } = fixture();
   set({ status: 'connection_failed', nextAttemptAt: 301_000, sourcePeerId: '42' });
   const claim = await store.claimManualSync(2_000);
@@ -103,15 +103,21 @@ it('allows manual refresh after failure during cooldown, while serializing runs 
   await store.complete(retry.attemptId!, 'success', { sourcePeerId: '42', sourceChatTitle: 'Calendar', slots: [], syncedAt: new Date(12_000).toISOString() });
   await store.finishManualRetryRun(claim.runId!, 13_000);
   expect(get()).toMatchObject({ status: 'success', nextAttemptAt: 312_000, manualRetryRunId: '', manualRetryUntil: 13_000 });
-  expect((await store.claimManualSync(13_001)).allowed).toBe(false);
+  expect((await store.claimManualSync(13_001)).allowed).toBe(true);
 });
 
-it('keeps successful refreshes on cooldown and rejects retry claims after a run ends or source changes', async () => {
-  const { store, set } = fixture();
+it('starts unlimited sequential manual refreshes after success but rejects overlapping runs and stale retries', async () => {
+  const { store, get, set } = fixture();
   set({ status: 'success', nextAttemptAt: 300_000, sourcePeerId: '42' });
-  expect((await store.claimManualSync(1_000)).allowed).toBe(false);
-  set({ status: 'timeout', nextAttemptAt: 300_000, sourcePeerId: '42' });
-  const claim = await store.claimManualSync(1_000);
+  const first = await store.claimManualSync(1_000);
+  expect(first).toMatchObject({ allowed: true, sourcePeerId: '42', runId: expect.any(String) });
+  expect((await store.claimManualSync(1_001)).allowed).toBe(false);
+  await store.complete(first.attemptId!, 'success');
+  await store.finishManualRetryRun(first.runId!, 1_500);
+  const claim = await store.claimManualSync(1_501);
+  expect(claim).toMatchObject({ allowed: true, runId: expect.any(String) });
+  await store.complete(claim.attemptId!, 'timeout');
   await store.selectSource('99', 'New source');
   expect((await store.claimManualRetry(claim.runId!, 2_000)).allowed).toBe(false);
+  expect(get()).toMatchObject({ sourcePeerId: '99', status: 'idle', nextAttemptAt: 301_501 });
 });

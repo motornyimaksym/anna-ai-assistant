@@ -4,15 +4,16 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BotSettings } from './BotSettings.js';
 import { adminApi } from './api.js';
+import { LocaleProvider } from './i18n.js';
 
 vi.mock('./api.js', () => ({ adminApi: { systemOneSettings: vi.fn(async () => ({ provider: 'openai' })), botSettings: vi.fn(), saveBotSettings: vi.fn(), humanAssistanceSettings: vi.fn(), saveHumanAssistanceSettings: vi.fn(), adminAccess: vi.fn(), saveAdminAccess: vi.fn(), telegramAccount: vi.fn(), telegramAccountAction: vi.fn() } }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 beforeEach(() => { vi.mocked(adminApi.adminAccess).mockResolvedValue({ emails: [], canManage: false }); vi.mocked(adminApi.humanAssistanceSettings).mockResolvedValue({ thresholdPercent: 60, responders: [] }); vi.mocked(adminApi.telegramAccount).mockResolvedValue({ configured: false, phase: 'disconnected' }); });
-const show = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } })}><BotSettings /></QueryClientProvider>);
+const show = () => render(<LocaleProvider><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } })}><BotSettings /></QueryClientProvider></LocaleProvider>);
 
 describe('admin bot settings page', () => {
   it('prevents pointer-wheel changes to timing fields', async () => {
-    vi.mocked(adminApi.botSettings).mockResolvedValue({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [], isCustom: false });
+    vi.mocked(adminApi.botSettings).mockResolvedValue({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [], allUsersEnabled: false, isCustom: false });
     show();
     await screen.findByRole('spinbutton', { name: 'Maximum read delay (seconds)' });
     for (const name of ['Maximum read delay (seconds)', 'Typing delay per symbol (ms)']) {
@@ -26,8 +27,8 @@ describe('admin bot settings page', () => {
   });
 
   it('loads current values and saves timing changes', async () => {
-    vi.mocked(adminApi.botSettings).mockResolvedValue({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [], isCustom: false });
-    vi.mocked(adminApi.saveBotSettings).mockResolvedValue({ maxReadDelayMs: 900, typingDelayPerSymbolMs: 350, testerUsernames: [], isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z' });
+    vi.mocked(adminApi.botSettings).mockResolvedValue({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [], allUsersEnabled: false, isCustom: false });
+    vi.mocked(adminApi.saveBotSettings).mockResolvedValue({ maxReadDelayMs: 900, typingDelayPerSymbolMs: 350, testerUsernames: [], allUsersEnabled: false, isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z' });
     show();
     const readDelay = await screen.findByRole('spinbutton', { name: 'Maximum read delay (seconds)' });
     const typingDelay = screen.getByRole('spinbutton', { name: 'Typing delay per symbol (ms)' });
@@ -40,12 +41,12 @@ describe('admin bot settings page', () => {
     fireEvent.change(readDelay, { target: { value: '3540' } });
     fireEvent.change(typingDelay, { target: { value: '350' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(adminApi.saveBotSettings).toHaveBeenCalledWith({ maxReadDelayMs: 3540000, typingDelayPerSymbolMs: 350, testerUsernames: [] }));
+    await waitFor(() => expect(adminApi.saveBotSettings).toHaveBeenCalledWith({ maxReadDelayMs: 3540000, typingDelayPerSymbolMs: 350, testerUsernames: [], allUsersEnabled: false }));
     expect(await screen.findByText('Saved. Changes apply to the next incoming message.')).toBeTruthy();
   });
 
   it('prevents saving values beyond documented limits', async () => {
-    vi.mocked(adminApi.botSettings).mockResolvedValue({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [], isCustom: false });
+    vi.mocked(adminApi.botSettings).mockResolvedValue({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [], allUsersEnabled: false, isCustom: false });
     show();
     const readDelay = await screen.findByRole('spinbutton', { name: 'Maximum read delay (seconds)' });
     fireEvent.change(readDelay, { target: { value: '3541' } });
@@ -53,17 +54,17 @@ describe('admin bot settings page', () => {
   });
 
   it('converts fractional seconds to milliseconds', async () => {
-    vi.mocked(adminApi.botSettings).mockResolvedValue({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [], isCustom: false });
-    vi.mocked(adminApi.saveBotSettings).mockResolvedValue({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 600, testerUsernames: [], isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z' });
+    vi.mocked(adminApi.botSettings).mockResolvedValue({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [], allUsersEnabled: false, isCustom: false });
+    vi.mocked(adminApi.saveBotSettings).mockResolvedValue({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 600, testerUsernames: [], allUsersEnabled: false, isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z' });
     show();
     const readDelay = await screen.findByRole('spinbutton', { name: 'Maximum read delay (seconds)' });
     fireEvent.change(readDelay, { target: { value: '0.75' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(adminApi.saveBotSettings).toHaveBeenCalledWith({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 600, testerUsernames: [] }));
+    await waitFor(() => expect(adminApi.saveBotSettings).toHaveBeenCalledWith({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 600, testerUsernames: [], allUsersEnabled: false }));
   });
 
   it('adds and removes Telegram testers and saves normalized usernames', async () => {
-    vi.mocked(adminApi.botSettings).mockResolvedValue({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: ['user61785'], isCustom: false });
+    vi.mocked(adminApi.botSettings).mockResolvedValue({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: ['user61785'], allUsersEnabled: false, isCustom: false });
     vi.mocked(adminApi.saveBotSettings).mockImplementation(async (settings) => ({ ...settings, isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z' }));
     show();
     expect(await screen.findByText('user61785')).toBeTruthy();
@@ -74,11 +75,11 @@ describe('admin bot settings page', () => {
     expect(removeTester).not.toBeNull();
     fireEvent.click(removeTester!);
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(adminApi.saveBotSettings).toHaveBeenCalledWith({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: ['anotheruser'] }));
+    await waitFor(() => expect(adminApi.saveBotSettings).toHaveBeenCalledWith({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: ['anotheruser'], allUsersEnabled: false }));
   });
 
   it('shows validation error and blocks duplicate tester usernames', async () => {
-    vi.mocked(adminApi.botSettings).mockResolvedValue({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: ['user61785'], isCustom: false });
+    vi.mocked(adminApi.botSettings).mockResolvedValue({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: ['user61785'], allUsersEnabled: false, isCustom: false });
     show();
     await screen.findByText('user61785');
     fireEvent.change(screen.getByRole('textbox', { name: 'Tester username' }), { target: { value: '@USER61785' } });
@@ -88,7 +89,7 @@ describe('admin bot settings page', () => {
   });
 
   it('lets the owner add and save stakeholder email grants', async () => {
-    vi.mocked(adminApi.botSettings).mockResolvedValue({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [], isCustom: false });
+    vi.mocked(adminApi.botSettings).mockResolvedValue({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [], allUsersEnabled: false, isCustom: false });
     vi.mocked(adminApi.adminAccess).mockResolvedValue({ emails: ['existing@example.com'], canManage: true });
     vi.mocked(adminApi.saveAdminAccess).mockResolvedValue({ emails: ['existing@example.com', 'partner@example.com'], canManage: true, updatedAt: '2026-09-24T10:00:00.000Z' });
     show();
@@ -101,13 +102,22 @@ describe('admin bot settings page', () => {
   });
 
   it('shows the granted list without edit controls for stakeholders', async () => {
-    vi.mocked(adminApi.botSettings).mockResolvedValue({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [], isCustom: false });
+    vi.mocked(adminApi.botSettings).mockResolvedValue({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [], allUsersEnabled: false, isCustom: false });
     vi.mocked(adminApi.adminAccess).mockResolvedValue({ emails: ['stakeholder@example.com'], canManage: false });
     show();
     expect(await screen.findByText('stakeholder@example.com')).toBeTruthy();
     expect(screen.getByText('Only the owner can change stakeholder access.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Add email' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Save stakeholder access' })).toBeNull();
+  });
+
+  it('saves all-users mode alongside existing bot settings', async () => {
+    vi.mocked(adminApi.botSettings).mockResolvedValue({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: ['user61785'], allUsersEnabled: false, isCustom: true });
+    vi.mocked(adminApi.saveBotSettings).mockImplementation(async (settings) => ({ ...settings, isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z' }));
+    show();
+    fireEvent.click(await screen.findByRole('switch', { name: 'Reply to all users' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(adminApi.saveBotSettings).toHaveBeenCalledWith({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: ['user61785'], allUsersEnabled: true }));
   });
 });
 

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ScheduleSourceSettings } from './ScheduleSourceSettings.js';
 import { ScheduleSyncStatus } from './ScheduleSyncStatus.js';
 import { adminApi } from './api.js';
+import { LocaleProvider } from './i18n.js';
 vi.mock('./api.js', () => ({ adminApi: { telegramScheduleSlots: vi.fn(), telegramScheduleChats: vi.fn(), telegramScheduleTopics: vi.fn(), selectScheduleSource: vi.fn(), refreshSchedule: vi.fn() } }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 beforeEach(() => {
@@ -13,7 +14,7 @@ beforeEach(() => {
   vi.mocked(adminApi.selectScheduleSource).mockResolvedValue({ slots: [], status: 'idle', sourcePeerId: '99', sourceChatTitle: 'My calendar' });
   vi.mocked(adminApi.refreshSchedule).mockResolvedValue({ slots: [], status: 'success', syncedAt: new Date().toISOString() });
 });
-const show = (node: React.ReactNode) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}>{node}</QueryClientProvider>);
+const show = (node: React.ReactNode) => render(<LocaleProvider><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}>{node}</QueryClientProvider></LocaleProvider>);
 describe('schedule source and diagnostics', () => {
   it('lists private chats on demand and saves only the chosen ID', async () => {
     show(<ScheduleSourceSettings />);
@@ -28,33 +29,30 @@ describe('schedule source and diagnostics', () => {
     expect(await screen.findByText(/Source saved/)).toBeTruthy();
   });
   it('shows failure and enables manual retry despite the automatic cooldown', () => {
-    show(<ScheduleSyncStatus data={{ slots: [], status: 'account_busy', lastAttemptAt: new Date().toISOString(), nextAttemptAt: new Date(Date.now() + 300000).toISOString() }} enableManualRetries />);
+    show(<ScheduleSyncStatus data={{ slots: [], status: 'account_busy', lastAttemptAt: new Date().toISOString(), nextAttemptAt: new Date(Date.now() + 300000).toISOString() }} />);
     expect(screen.getByText(/Telegram account is busy/)).toBeTruthy();
     expect(screen.getByText(/Last attempt/)).toBeTruthy(); expect(screen.getByText(/Last synced: Never/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Retry now' }).hasAttribute('disabled')).toBe(false);
     expect(adminApi.refreshSchedule).not.toHaveBeenCalled();
   });
-  it('requests retry mode only from the Settings refresh button', async () => {
-    show(<ScheduleSyncStatus data={{ slots: [], status: 'idle' }} enableManualRetries />);
+  it('uses unlimited manual retry mode from admin refresh buttons', async () => {
+    show(<ScheduleSyncStatus data={{ slots: [], status: 'idle' }} />);
     fireEvent.click(screen.getByRole('button', { name: 'Refresh now' }));
     await waitFor(() => expect(adminApi.refreshSchedule).toHaveBeenCalledWith(true));
   });
 
-  it('leaves retry mode off for the /schedule refresh button', async () => {
-    show(<ScheduleSyncStatus data={{ slots: [], status: 'idle' }} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh now' }));
-    await waitFor(() => expect(adminApi.refreshSchedule).toHaveBeenCalledWith(false));
-  });
-
-  it('keeps the schedule page refresh on its existing cooldown', () => {
-    show(<ScheduleSyncStatus data={{ slots: [], status: 'connection_failed', nextAttemptAt: new Date(Date.now() + 300_000).toISOString() }} />);
-    expect(screen.getByRole('button', { name: 'Refresh now' }).hasAttribute('disabled')).toBe(true);
+  it('allows a completed manual refresh to run again during automatic cooldown', async () => {
+    show(<ScheduleSyncStatus data={{ slots: [], status: 'success', nextAttemptAt: new Date(Date.now() + 300_000).toISOString() }} />);
+    const button = screen.getByRole('button', { name: 'Refresh now' });
+    expect(button.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(button);
+    await waitFor(() => expect(adminApi.refreshSchedule).toHaveBeenCalledWith(true));
   });
 
   it('shows manual retry backoff while the refresh request runs', async () => {
     let finish!: (value: { slots: []; status: 'success' }) => void;
     vi.mocked(adminApi.refreshSchedule).mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
-    show(<ScheduleSyncStatus data={{ slots: [], status: 'connection_failed', nextAttemptAt: new Date(Date.now() + 300_000).toISOString() }} enableManualRetries />);
+    show(<ScheduleSyncStatus data={{ slots: [], status: 'connection_failed', nextAttemptAt: new Date(Date.now() + 300_000).toISOString() }} />);
     fireEvent.click(screen.getByRole('button', { name: 'Retry now' }));
     expect(await screen.findByText(/up to 5 attempts with 10, 20, 30, then 40 second waits/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Refreshing…' }).hasAttribute('disabled')).toBe(true);
