@@ -78,6 +78,12 @@ describe("public massage FAQ", () => {
     render(<FaqPage />);
     await waitFor(() => expect(document.documentElement.lang).toBe("en"));
     expect(screen.getAllByRole("article")).toHaveLength(21);
+    const bookingAnswer = within(
+      document.getElementById("faq-booking")!,
+    ).getByRole("link", { name: "tell me" });
+    expect(bookingAnswer.getAttribute("href")).toBe(
+      "http://t.me/Anna_lush_Massage",
+    );
     expect(
       screen.getByRole("textbox", { name: "Search questions and answers" }),
     ).toBeTruthy();
@@ -109,14 +115,25 @@ describe("public massage FAQ", () => {
     expect(localStorage.getItem("faq-locale")).toBe("uk");
   });
 
-  it("unifies premium formats in one visible section with a first-visit contact invitation", () => {
+  it("links the booking phrase and premium first-visit invitation directly to Telegram", () => {
     render(<FaqPage />);
+    const bookingAnswer = within(
+      document.getElementById("faq-booking")!,
+    ).getByRole("link", { name: "напишіть мені" });
+    expect(bookingAnswer.getAttribute("href")).toBe(
+      "http://t.me/Anna_lush_Massage",
+    );
+    expect(bookingAnswer.getAttribute("target")).toBe("_blank");
     const premium = document.getElementById("faq-premium")!;
     expect(premium).toBeTruthy();
     expect(document.getElementById("faq-body")).toBeNull();
     expect(document.getElementById("faq-spa")).toBeNull();
     const invitation = within(premium).getByRole("link");
-    expect(invitation.getAttribute("href")).toBe("#faq-contacts");
+    expect(invitation.getAttribute("href")).toBe(
+      "http://t.me/Anna_lush_Massage",
+    );
+    expect(invitation.getAttribute("target")).toBe("_blank");
+    expect(invitation.getAttribute("rel")).toBe("noreferrer");
     expect(document.querySelectorAll("#faq-contacts")).toHaveLength(1);
     expect(
       within(document.getElementById("faq-contacts")!).getAllByRole("link"),

@@ -537,7 +537,29 @@ function FaqContent({
                 >
                   <span className="faq-category-label">{item.category}</span>
                   <h2 id={`faq-${item.topic}-title`}>{item.question}</h2>
-                  <p>{item.answer}</p>
+                  <p>
+                    {item.topic === "booking"
+                      ? (() => {
+                          const phrase = en ? "tell me" : "напишіть мені";
+                          const index = item.answer.indexOf(phrase);
+                          return index < 0 ? (
+                            item.answer
+                          ) : (
+                            <>
+                              {item.answer.slice(0, index)}
+                              <a
+                                href={telegram}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                {phrase}
+                              </a>
+                              {item.answer.slice(index + phrase.length)}
+                            </>
+                          );
+                        })()
+                      : item.answer}
+                  </p>
                   {item.topic === "prices" && (
                     <div aria-live="polite" data-testid="faq-price-state">
                       {catalog.isPending && (
@@ -575,7 +597,12 @@ function FaqContent({
                   )}
                   {item.note && <p className="faq-note">{item.note}</p>}
                   {item.topic === "premium" && (
-                    <a className="faq-inline-link" href="#faq-contacts">
+                    <a
+                      className="faq-inline-link"
+                      href={telegram}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
                       {copy("Запитати про перший візит", englishUi.premiumCta)}{" "}
                       ↗
                     </a>
