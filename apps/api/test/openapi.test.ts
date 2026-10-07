@@ -34,6 +34,14 @@ beforeAll(async () => {
 afterAll(async () => { await app?.close(); vi.unstubAllEnvs(); });
 
 describe('Swagger documentation', () => {
+  it('documents the public price catalog without admin security or internal fields', () => {
+    expect(operation('/public/services', 'get').security).toEqual([]);
+    const response = schema('/public/services', 'get', '200');
+    expect(response.type).toBe('array');
+    const item = response.items as SchemaObject;
+    expect(Object.keys(item.properties ?? {}).sort()).toEqual(['currency', 'durationMinutes', 'durationOptions', 'id', 'name', 'price']);
+  });
+
   it('blocks UI, JSON and UI assets without administrator auth', async () => {
     const paths = ['/docs', '/docs/', '/docs/openapi.json', '/docs/swagger-ui.css', '/docs/swagger-ui-init.js'];
     const responses = await Promise.all(paths.map((path) => fetch(`${origin}${path}`, { redirect: 'manual' })));

@@ -47,6 +47,7 @@ const routes: Record<string, RouteDoc> = {
   'GET /admin/dashboard': route('Read dashboard statistics', dashboard),
   'GET /admin/openai-balance': route('Read OpenAI credits, total costs, and estimated remaining balance', C.openAiBalanceResponseSchema),
   'PUT /admin/openai-balance': route('Set the current OpenAI balance baseline', C.openAiBalanceBaselineSchema, C.updateOpenAiBalanceSchema),
+  'GET /public/services': route('Read enabled public service prices', C.publicServiceSchema.array(), undefined, 'Read-only public catalog; only names, IDs, durations, prices and currencies. No authentication required.'),
   'GET /admin/services': route('List services', C.serviceSchema.array()),
   'POST /admin/services': route('Create a service', C.serviceSchema, C.serviceSchema),
   'PATCH /admin/services/{id}': route('Replace a service', C.serviceSchema, serviceUpdate, 'The path ID overrides any ID in the JSON body. Supply the complete service definition.'),
@@ -112,7 +113,7 @@ const tagFor = (path: string): string => {
   if (path.startsWith('/admin/schedule/')) return 'Schedule import';
   if (path.startsWith('/admin/debug/')) return 'Diagnostics';
   if (path.startsWith('/admin/media')) return 'Media';
-  if (path.startsWith('/admin/services')) return 'Services';
+  if (path === '/public/services' || path.startsWith('/admin/services')) return 'Services';
   if (path.startsWith('/admin/schedule')) return 'Schedule';
   if (path.startsWith('/admin/conversations') || path.startsWith('/admin/human-')) return 'Conversations';
   if (path.startsWith('/admin/prompts') || path.startsWith('/admin/prompt-') || path.startsWith('/admin/knowledge-base')) return 'Assistant content';

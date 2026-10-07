@@ -38,6 +38,11 @@ export const serviceSchema = z.object({
   if (new Set(durations).size !== durations.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['durationOptions'], message: 'Each duration must be unique' });
   if (service.photoUrl && service.telegramCaption && service.telegramCaption.text.length > 1024) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['telegramCaption', 'text'], message: 'Photo captions may be at most 1,024 characters' });
 });
+export const publicServiceSchema = serviceSchema.innerType().pick({ id: true, name: true, durationMinutes: true, durationOptions: true, price: true, currency: true }).superRefine((service, ctx) => {
+  const durations = [service.durationMinutes, ...(service.durationOptions ?? []).map((option) => option.durationMinutes)];
+  if (new Set(durations).size !== durations.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['durationOptions'], message: 'Each duration must be unique' });
+});
+export type PublicServiceDto = z.infer<typeof publicServiceSchema>;
 export const servicePhotoUploadSchema = z.object({ contentType: z.enum(['image/jpeg', 'image/png', 'image/webp']), base64: z.string().min(1).max(7_000_000) });
 export const servicePhotoUploadResponseSchema = z.object({ photoUrl: z.string().url() });
 export const serviceDeleteResponseSchema = z.object({ ok: z.literal(true) }).strict();

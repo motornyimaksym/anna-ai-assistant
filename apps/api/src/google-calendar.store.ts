@@ -6,7 +6,7 @@ export type CalendarEnvelope = { version: 1; iv: string; tag: string; ciphertext
 export type CalendarConnection = {
   revision: string; phase: 'disconnected' | 'pending' | 'connected';
   grantedScopes?: string[]; conflictCalendarIds?: string[];
-  email?: string; calendarId?: string; calendarTitle?: string; checkedAt?: string; encryptedToken?: CalendarEnvelope;
+  email?: string; calendarId?: string; calendarTitle?: string; checkedAt?: string; refreshTokenExpiresAt?: string; encryptedToken?: CalendarEnvelope;
   expiresAt?: number; pending?: { ownerUid: string; stateHash: string; encryptedProof: CalendarEnvelope };
 };
 export const stateHash = (value: string) => createHash('sha256').update(value).digest('hex');

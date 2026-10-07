@@ -35,7 +35,8 @@ export class GoogleCalendarConnection {
     const record = await this.store.read();
     if (!record) { const legacy = this.legacy(); return { configured: !!this.config(), phase: legacy ? 'connected' : 'disconnected', legacy: !!legacy, ...(legacy?.calendarId ? { calendarId: legacy.calendarId } : {}) }; }
     return { writePermission: record.grantedScopes ? (record.grantedScopes.includes(calendarScopes[0]!) ? 'granted' : 'missing') : 'unknown', conflictCalendarIds: record.conflictCalendarIds ?? (record.calendarId ? [record.calendarId] : []), configured: !!this.config(), phase: record.phase === 'pending' && (record.expiresAt ?? 0) <= Date.now() ? 'disconnected' : record.phase, legacy: false,
-      ...(record.email ? { email: record.email } : {}), ...(record.calendarId ? { calendarId: record.calendarId, calendarTitle: record.calendarTitle } : {}), ...(record.checkedAt ? { checkedAt: record.checkedAt } : {}) };
+      ...(record.email ? { email: record.email } : {}), ...(record.calendarId ? { calendarId: record.calendarId, calendarTitle: record.calendarTitle } : {}), ...(record.checkedAt ? { checkedAt: record.checkedAt } : {}),
+      ...(record.phase === 'connected' && record.refreshTokenExpiresAt ? { refreshTokenExpiresAt: record.refreshTokenExpiresAt } : {}) };
   }
   async start(uid: string) {
     const config = this.config(); if (!config) throw new ServiceUnavailableException('Google authorization is not configured. Ask the administrator to set up the OAuth client, callback URL and encryption key.');
@@ -53,7 +54,9 @@ export class GoogleCalendarConnection {
       const proof = z.object({ verifier: z.string(), nonce: z.string() }).parse(JSON.parse(openCalendar(pending.proof, 'proof')));
       const response = await fetchWithLinearBackoff('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, signal: AbortSignal.timeout(15000), body: new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret, redirect_uri: config.redirect, grant_type: 'authorization_code', code: input.code!, code_verifier: proof.verifier }) });
       if (!response.ok) throw fail(response);
-      const tokens = z.object({ refresh_token: z.string().min(1), id_token: z.string().min(1), scope: z.string() }).parse(await response.json());
+      const tokens = z.object({ refresh_token: z.string().min(1), id_token: z.string().min(1), scope: z.string(), refresh_token_expires_in: z.number().int().positive().optional().catch(undefined) }).parse(await response.json());
+      const expiration = tokens.refresh_token_expires_in === undefined ? undefined : new Date(Date.now() + tokens.refresh_token_expires_in * 1000);
+      const refreshTokenExpiresAt = expiration && Number.isFinite(expiration.getTime()) ? expiration.toISOString() : undefined;
       if (!calendarScopes.every((scope) => tokens.scope.split(' ').includes(scope))) throw new BadRequestException('Required Calendar permissions were not granted. Connect again and allow the requested permissions.');
       const client = new OAuth2Client({ clientId: config.clientId, transporterOptions: { timeout: 15000, retryConfig: {
         retry: 3, httpMethodsToRetry: ['GET', 'HEAD', 'OPTIONS'], statusCodesToRetry: [[408, 408], [425, 425], [429, 429], [500, 599]], noResponseRetries: 3,
@@ -63,7 +66,7 @@ export class GoogleCalendarConnection {
       const identity = ticket.getPayload();
       const expected = process.env.GOOGLE_CALENDAR_ACCOUNT_EMAIL?.trim().toLowerCase();
       if (!identity?.email || !identity.email_verified || (identity as { nonce?: string }).nonce !== proof.nonce || (expected && identity.email.toLowerCase() !== expected)) throw new BadRequestException('Google account did not match the expected verified account. Connect again using the correct account.');
-      await this.store.replace(pending.revision, { phase: 'connected', grantedScopes: tokens.scope.split(' '), email: identity.email, encryptedToken: sealCalendar(tokens.refresh_token, 'token') });
+      await this.store.replace(pending.revision, { phase: 'connected', grantedScopes: tokens.scope.split(' '), email: identity.email, encryptedToken: sealCalendar(tokens.refresh_token, 'token'), ...(refreshTokenExpiresAt ? { refreshTokenExpiresAt } : {}) });
       return this.status();
     } catch (error) {
       this.logger.error(`Google authorization exchange failed: ${JSON.stringify(safeErrorDiagnostic(error, [input.code ?? '', input.state, config.clientSecret]))}`);

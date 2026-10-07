@@ -37,6 +37,7 @@ export function GoogleCalendarSettings() {
       {status.data.phase === 'pending' && <Typography>{t("Authorization is pending. Finish Google consent or start again; the link expires after ten minutes.")}</Typography>}
       {status.data.calendarId && <Typography>{t("Selected calendar:")}{t(" ")}{status.data.calendarTitle ?? status.data.calendarId} ({status.data.calendarId})</Typography>}
       {status.data.checkedAt && <Typography variant="body2">{t("Last verified:")}{t(" ")}{new Date(status.data.checkedAt).toLocaleString(language === "uk" ? "uk-UA" : "en-US")}</Typography>}
+      {status.data.refreshTokenExpiresAt && <Typography variant="body2">{t("Expected refresh token expiration:")}{t(" ")}{new Date(status.data.refreshTokenExpiresAt).toLocaleString(language === "uk" ? "uk-UA" : "en-US")}</Typography>}
       {status.data.phase === 'connected' && !status.data.legacy && <>
         {calendars.isPending && <Typography>{t("Loading calendars…")}</Typography>}
         {calendars.isError && <Alert severity="error">{t("Could not load calendars. Check permissions or reconnect.")}{t(" ")}<Button onClick={() => void calendars.refetch()}>{t("Retry")}</Button></Alert>}

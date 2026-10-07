@@ -20,6 +20,17 @@ afterEach(() => {
 });
 
 describe("public entry routes", () => {
+  it("serves the FAQ with visible answers while authentication is unresolved", () => {
+    render(
+      <MemoryRouter initialEntries={["/faq"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("heading", { level: 1 })).toBeTruthy();
+    expect(screen.getAllByRole("article")).toHaveLength(21);
+    expect(document.getElementById("faq-booking")).toBeTruthy();
+  });
+
   it("serves both policy pages while authentication is unresolved", async () => {
     const privacy = render(
       <MemoryRouter initialEntries={["/privacy-policy"]}>

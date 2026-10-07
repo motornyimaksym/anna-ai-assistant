@@ -24,10 +24,10 @@ beforeEach(() => {
   vi.stubEnv('GOOGLE_REFRESH_TOKEN', ''); vi.stubEnv('GOOGLE_CALENDAR_ID', '');
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
-async function authorized() {
+async function authorized(tokenFields: Record<string, unknown> = {}) {
   const f = fixture(); const { url } = await f.service.start('owner'); const params = new URL(url).searchParams;
   verify.mockResolvedValue({ getPayload: () => ({ email: 'anna.lush.massage@gmail.com', email_verified: true, nonce: params.get('nonce') }) });
-  f.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ refresh_token: 'refresh-secret', id_token: 'id-token', scope: scopes })));
+  f.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ refresh_token: 'refresh-secret', id_token: 'id-token', scope: scopes, ...tokenFields })));
   return { ...f, params };
 }
 describe('owner Calendar OAuth', () => {
@@ -38,11 +38,28 @@ describe('owner Calendar OAuth', () => {
     const result = await f.service.complete('owner', { state: f.params.get('state')!, code: 'code' });
     expect(result).toMatchObject({ phase: 'connected', email: 'anna.lush.massage@gmail.com' });
     expect(JSON.stringify(result)).not.toContain('refresh-secret');
+    expect(result).not.toHaveProperty('refreshTokenExpiresAt');
     expect(openCalendar(f.get()!.encryptedToken!, 'token')).toBe('refresh-secret');
     expect(f.store.consume).toHaveBeenCalledWith('owner', f.params.get('state'));
     const body = f.fetch.mock.calls[0]![1]!.body as URLSearchParams;
     expect(body.get('code_verifier')).toHaveLength(43);
     expect(verify).toHaveBeenCalledWith({ idToken: 'id-token', audience: 'client' });
+  });
+  it('persists and returns Google-provided refresh-token expiration', async () => {
+    const f = await authorized({ refresh_token_expires_in: 3600 });
+    const before = Date.now();
+    const result = await f.service.complete('owner', { state: f.params.get('state')!, code: 'code' });
+    const expiresAt = Date.parse(result.refreshTokenExpiresAt!);
+    expect(expiresAt).toBeGreaterThanOrEqual(before + 3_600_000);
+    expect(expiresAt).toBeLessThanOrEqual(Date.now() + 3_600_000);
+    expect(f.get()!.refreshTokenExpiresAt).toBe(result.refreshTokenExpiresAt);
+    expect(JSON.stringify(result)).not.toContain('refresh-secret');
+  });
+  it('ignores a malformed optional expiration field without failing Calendar authorization', async () => {
+    const f = await authorized({ refresh_token_expires_in: '3600' });
+    const result = await f.service.complete('owner', { state: f.params.get('state')!, code: 'code' });
+    expect(result.phase).toBe('connected');
+    expect(result).not.toHaveProperty('refreshTokenExpiresAt');
   });
   it('rejects wrong nonce, account, unverified identity and missing grants', async () => {
     for (const identity of [{ email: 'other@example.com', email_verified: true }, { email: 'anna.lush.massage@gmail.com', email_verified: false }, { email: 'anna.lush.massage@gmail.com', email_verified: true, nonce: 'wrong' }]) {

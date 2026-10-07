@@ -24,6 +24,7 @@ describe('Calendar Settings', () => {
   });
   it('shows the account and calendar, allows selection and checks without creating an event', async () => {
     show(); expect(await screen.findByText(/Status: connected/)).toBeTruthy();
+    expect(screen.queryByText(/Expected refresh token expiration:/)).toBeNull();
     fireEvent.mouseDown(await screen.findByRole('combobox', { name: 'Google calendar' }));
     fireEvent.click(await screen.findByRole('option', { name: 'Anna (primary) · anna.lush.massage@gmail.com' }));
     fireEvent.click(screen.getByRole('button', { name: 'Use selected calendar' }));
@@ -40,6 +41,13 @@ describe('Calendar Settings', () => {
     expect(await screen.findByText('Connection retained; try again.')).toBeTruthy();
     expect(screen.getByText(/Status: connected/)).toBeTruthy();
   });
+});
+
+it('shows the expected refresh-token expiration date when Google supplied one', async () => {
+  vi.mocked(adminApi.googleCalendar).mockResolvedValue({ ...connected, refreshTokenExpiresAt: '2030-01-02T03:04:05.000Z' });
+  show();
+  expect(await screen.findByText(/Expected refresh token expiration:/)).toBeTruthy();
+  expect(screen.getByText(/Expected refresh token expiration:/).textContent).toContain('2030');
 });
 
 it('shows permission diagnostics and saves personal conflict calendars', async () => {

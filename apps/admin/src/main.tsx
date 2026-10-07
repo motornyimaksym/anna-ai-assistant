@@ -1,4 +1,3 @@
-import { AdminShell, Dashboard, Login, Page } from "./AdminShell.js";
 import { DebugLogs } from "./DebugLogs.js";
 import { MediaStore } from "./MediaStore.js";
 import { AssistantPrompt } from "./AssistantPrompt.js";
@@ -7,6 +6,7 @@ import { BotSettings } from "./BotSettings.js";
 import { Conversations } from "./Conversations.js";
 import { Schedule } from "./Schedule.js";
 import { PrivacyPolicy, TermsAndConditions } from "./LegalPages.js";
+import { FaqPage } from "./Faq.js";
 import { CssBaseline, Box, Typography } from "@mui/material";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -19,8 +19,19 @@ import {
 import { onAuthStateChanged, onIdTokenChanged, type User } from "firebase/auth";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { auth } from "./auth.js";
 import { LocaleProvider, useI18n } from "./i18n.js";
+const AdminShell = lazy(() =>
+  import("./AdminShell.js").then((module) => ({ default: module.AdminShell })),
+);
+const Dashboard = lazy(() =>
+  import("./AdminShell.js").then((module) => ({ default: module.Dashboard })),
+);
+const Login = lazy(() =>
+  import("./AdminShell.js").then((module) => ({ default: module.Login })),
+);
+const Page = lazy(() =>
+  import("./AdminShell.js").then((module) => ({ default: module.Page })),
+);
 const GoogleCalendarCallback = lazy(() =>
   import("./GoogleCalendarCallback.js").then((module) => ({
     default: module.GoogleCalendarCallback,
@@ -119,77 +130,93 @@ const Protected = ({ user }: { user: User | null }) =>
 export const App = () => {
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const location = useLocation();
-  const isPolicyRoute =
+  const isPublicRoute =
     location.pathname === "/privacy-policy" ||
-    location.pathname === "/terms-and-conditions";
+    location.pathname === "/terms-and-conditions" ||
+    location.pathname === "/faq";
   useEffect(
     () => {
-      if (isPolicyRoute) return;
-      return onAuthStateChanged(auth, (next) => {
-        queryClient.clear();
-        setUser(next);
+      if (isPublicRoute) return;
+      let active = true;
+      let unsubscribe = () => {};
+      void import("./auth.js").then(({ auth }) => {
+        if (!active) return;
+        unsubscribe = onAuthStateChanged(auth, (next) => {
+          queryClient.clear();
+          setUser(next);
+        });
+      }).catch(() => {
+        if (active) setUser(null);
       });
+      return () => {
+        active = false;
+        unsubscribe();
+      };
     },
-    [isPolicyRoute],
+    [isPublicRoute],
   );
   useEffect(() => {
-    if (isPolicyRoute) return;
+    if (isPublicRoute) return;
     let generation = 0;
+    let active = true;
+    let unsubscribe = () => {};
     let sessionSync = Promise.resolve();
-    return onIdTokenChanged(auth, (next) => {
-      const current = ++generation;
-      sessionSync = sessionSync.then(async () => {
-        if (current !== generation) return;
-        if (!next) {
-          await fetch("/api/docs/session", {
-            method: "DELETE",
-            credentials: "same-origin",
-            keepalive: true,
-          }).catch(() => undefined);
-          return;
-        }
-        try {
-          const token = await next.getIdToken();
+    void import("./auth.js").then(({ auth }) => {
+      if (!active) return;
+      unsubscribe = onIdTokenChanged(auth, (next) => {
+        const current = ++generation;
+        sessionSync = sessionSync.then(async () => {
           if (current !== generation) return;
-          await fetch("/api/docs/session", {
-            method: "POST",
-            credentials: "same-origin",
-            headers: { authorization: `Bearer ${token}` },
-          });
-        } catch {
-          // Swagger authorization must not block the admin app.
-        }
+          if (!next) {
+            await fetch("/api/docs/session", {
+              method: "DELETE",
+              credentials: "same-origin",
+              keepalive: true,
+            }).catch(() => undefined);
+            return;
+          }
+          try {
+            const token = await next.getIdToken();
+            if (current !== generation) return;
+            await fetch("/api/docs/session", {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { authorization: `Bearer ${token}` },
+            });
+          } catch {
+            // Swagger authorization must not block the admin app.
+          }
+        });
       });
-    });
-  }, [isPolicyRoute]);
+    }).catch(() => undefined);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [isPublicRoute]);
+  if (location.pathname === "/faq") return <FaqPage />;
   if (location.pathname === "/privacy-policy") return <PrivacyPolicy />;
   if (location.pathname === "/terms-and-conditions") return <TermsAndConditions />;
   if (user === undefined) return <Loading />;
   return (
     <Box>
-      <Routes>
-        <Route
-          path="/google-calendar/callback"
-          element={
-            <Suspense fallback={<Loading />}>
-              <GoogleCalendarCallback user={user} />
-            </Suspense>
-          }
-        />
-        <Route
-          path="/ai-chat"
-          element={
-            <Suspense fallback={<Loading />}>
-              <AiChatEntry user={user} />
-            </Suspense>
-          }
-        />
-        <Route
-          path="/login"
-          element={user ? <Navigate to="/dashboard" replace /> : <Login />}
-        />
-        <Route path="/*" element={<Protected user={user} />} />
-      </Routes>
+      <Suspense fallback={<Loading />}>
+        <Routes>
+          <Route
+            path="/google-calendar/callback"
+            element={<GoogleCalendarCallback user={user} />}
+          />
+          <Route
+            path="/ai-chat"
+            element={<AiChatEntry user={user} />}
+          />
+          <Route
+            path="/login"
+            element={user ? <Navigate to="/dashboard" replace /> : <Login />}
+          />
+          <Route path="/*" element={<Protected user={user} />} />
+        </Routes>
+      </Suspense>
     </Box>
   );
 };
