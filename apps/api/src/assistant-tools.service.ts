@@ -9,8 +9,9 @@ import { BookingRepository } from './repository.js';
 import { selectServiceOption } from './service-options.js';
 import { bookingConfirmationMismatches } from './booking-confirmation.js';
 import { bookingProposalError, bookingProposalFactError } from './booking-proposal-errors.js';
+import type { AssistantResponseVersion } from '@booking/contracts';
 import type { BookingEventContext } from './calendar.js';
-export type AssistantContext = { clientId: string; telegramChatId: string; businessConnectionId?: string; traceId?: string; currentMessage?: string; telegramUsername?: string; telegramDisplayName?: string };
+export type AssistantContext = { clientId: string; telegramChatId: string; businessConnectionId?: string; traceId?: string; currentMessage?: string; telegramUsername?: string; telegramDisplayName?: string; responseVersion?: AssistantResponseVersion };
 const bookingArguments = z.object({ serviceId: z.string().min(1), durationMinutes: z.number().int().min(15).max(480), startAt: z.string().datetime({ offset: true }) }).strict();
 export const assistantToolSchema = z.discriminatedUnion('name', [
   z.object({ name: z.literal('get_media'), arguments: z.object({}).strict() }),

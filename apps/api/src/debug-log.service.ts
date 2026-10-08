@@ -86,7 +86,7 @@ const responderOperations: Array<[string, string]> = [
   ['S2 tool create_booking', 'перевірити підтвердження та створити запис'],
   ['S2 tool get_booking_context', 'прочитати розклад і календар'],
   ['S2 tool request_human_assistance', 'передати запит людині'],
-  ['System One handoff', 'перевірити відповідь перед надсиланням'],
+  ['System One rewrite', 'переписати відповідь перед надсиланням'],
   ['OpenAI System Two', 'сформувати відповідь асистента'],
   ['assistant turn', 'обробити повідомлення клієнта'],
   ['Telegram delivery', 'надіслати відповідь клієнту'],
@@ -152,7 +152,7 @@ export function humanErrorContext(error: unknown, source: string, sensitiveValue
   if (detail.providerRequestId) fields.push(`ID запиту: ${detail.providerRequestId}.`);
   fields.push(source === 'Telegram delivery'
     ? 'Перевірте чат перед повторним надсиланням, щоб не створити дубль.'
-    : source === 'System One handoff'
+    : source === 'System One rewrite'
       ? 'Чернетку клієнту не надіслано; перевірте її вручну.'
       : 'Перевірте стан операції перед повторною спробою.');
   const summary = fields.join(' ');

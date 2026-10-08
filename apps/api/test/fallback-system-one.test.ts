@@ -30,6 +30,17 @@ describe('System One provider fallback', () => {
     expect(backup[method].mock.calls[0]![0]).toEqual(input);
   });
 
+  it('allows 30 seconds for TypeSafe and OpenAI fallback decisions', async () => {
+    const { selector, primary } = setup();
+    primary.estimateProbability.mockRejectedValueOnce(new Error('TypeSafe unavailable'));
+    const callerSignal = AbortSignal.timeout(45_000);
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+
+    await selector.estimateProbability(decision, callerSignal);
+
+    expect(timeout.mock.calls).toEqual([[30_000], [30_000]]);
+  });
+
   it('does not start fallback after caller cancellation', async () => {
     const { selector, primary, backup } = setup();
     const controller = new AbortController();

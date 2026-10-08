@@ -5,7 +5,7 @@ import { safeErrorCategory } from './debug-log.service.js';
 import { assistantToolDefinitions } from './openai.service.js';
 import { requestOpenAiResponse } from './openai-transport.js';
 import { BookingRepository } from './repository.js';
-import { SystemOneSelector, systemOneProbabilitySchema } from './system-one.js';
+import { SystemOneRewriter } from './system-one-rewriter.js';
 import { systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from './system-two-instructions.js';
 import { TextUtils } from './text-utils.js';
 
@@ -25,7 +25,7 @@ const outputText = (response: z.infer<typeof responseSchema>): string => respons
   .join('\n').trim();
 @Injectable()
 export class PromptTestService {
-  constructor(private readonly repository: BookingRepository, private readonly selector: SystemOneSelector) {}
+  constructor(private readonly repository: BookingRepository, private readonly rewriter: SystemOneRewriter) {}
 
   async run(raw: unknown): Promise<PromptTestResponse> {
     const parsed = promptTestRequestSchema.safeParse(raw);
@@ -42,11 +42,16 @@ export class PromptTestService {
   private async systemOne(request: Extract<PromptTestRequest, { system: 'one' }>): Promise<PromptTestResponse> {
     const signal = AbortSignal.timeout(45_000);
     const input = {
-      question: 'How likely is the proposed reply to sound like a bot response in conversation? Copied text alone is not proof.',
-      context: JSON.stringify({ recent_messages: [{ role: 'assistant', content: sampleReply }, { role: 'user', content: request.text }], proposed_reply: 'Дякую, уточню деталі.' }),
+      recentMessages: [
+        { role: 'user' as const, content: 'Добрий день, хочу записатися на масаж.' },
+        { role: 'assistant' as const, content: sampleReply },
+        { role: 'user' as const, content: 'Підкажіть, будь ласка, які є вільні дні?' },
+        { role: 'user' as const, content: request.text },
+      ],
+      messageToRewrite: 'Дякую, уточню деталі.',
     };
-    const result = systemOneProbabilitySchema.parse(await this.selector.estimateProbability(input, signal));
-    return { kind: 'decision', output: String(result), sampleContext: true };
+    const result = await this.rewriter.rewrite(input, request.version ?? 'v1', signal);
+    return { kind: 'text', output: result, sampleContext: true };
   }
 
   private async systemTwo(request: Extract<PromptTestRequest, { system: 'two' }>): Promise<PromptTestResponse> {

@@ -1,7 +1,7 @@
-import { SystemOneSelector, systemOneDecisionInputSchema, systemOneProbabilitySchema } from './system-one.js';
-import { DebugLogService, humanErrorContext, safeErrorDiagnostic } from './debug-log.service.js';
+import { SystemOneRewriter, systemOneRewriteInputSchema } from './system-one-rewriter.js';
+import { DebugLogService, safeErrorDiagnostic } from './debug-log.service.js';
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { humanReplySchema, type HumanRequestDto } from '@booking/contracts';
+import { humanReplySchema, type HumanAssistanceSettings, type HumanRequestDto } from '@booking/contracts';
 import { BookingRepository } from './repository.js';
 import { HumanAssistanceStore, type Responder } from './human-assistance.store.js';
 import { fetchWithLinearBackoff } from '@booking/http';
@@ -101,47 +101,27 @@ function formatResponderNotification(transcript: NotificationTranscript, contact
 @Injectable()
 export class HumanAssistanceService {
   private readonly logger = new Logger(HumanAssistanceService.name);
-  constructor(private readonly store: HumanAssistanceStore, private readonly repository: BookingRepository, private readonly debug: DebugLogService, private readonly selector: SystemOneSelector) {}
+  constructor(private readonly store: HumanAssistanceStore, private readonly repository: BookingRepository, private readonly debug: DebugLogService, private readonly rewriter: SystemOneRewriter) {}
 
-  async approveOutgoing(chatId: string, businessConnectionId: string | undefined, updateId: number, question: string, draft: string): Promise<boolean> {
-    const { thresholdPercent } = await this.store.settings();
-    let probability: number | undefined;
-    let errorDetails: string | undefined;
-    try {
-      const history = await this.repository.listMessages(chatId);
-      const recent = history.at(-1)?.role === 'user' && history.at(-1)?.content === question ? history.slice(-20) : [...history.slice(-19), { role: 'user' as const, content: question }];
-      const input = systemOneDecisionInputSchema.parse({
-        question: 'How likely is the exact proposed reply to sound like a bot response in the latest conversation? Copied and pasted text may appear in natural replies.',
-        context: JSON.stringify({ recent_messages: recent, proposed_reply: draft }),
-      });
-      probability = systemOneProbabilitySchema.parse(await this.selector.estimateProbability(input, AbortSignal.timeout(45_000)));
-    } catch (error) {
-      errorDetails = humanErrorContext(error, 'System One handoff', [question, draft]);
-      this.logger.warn('Handoff assessment failed; withholding automatic reply');
-    }
-    if (probability !== undefined && probability < 1 && probability * 100 <= thresholdPercent) return true;
-    const context = `Питання клієнта: ${question.slice(0, 1000)}\nЧернетка відповіді: ${draft.slice(0, 2500)}${errorDetails ? `\n${errorDetails}` : ''}\nАвтоматичну відповідь не надіслано. Перед відповіддю перевірте розмову й календар.`;
-    await this.escalate(chatId, businessConnectionId, updateId, context, {
-      reason: probability === undefined ? 'probability_unavailable' : 'handoff_probability',
-      ...(probability === undefined ? {} : { probability }), thresholdPercent,
-    }, { clientMessage: question, unsentMessage: readableTelegramDraft(draft), transferContext: errorDetails });
-    return false;
+  async rewriteOutgoing(chatId: string, draft: string, version: 'v1' | 'v2'): Promise<string> {
+    const history = await this.repository.listMessages(chatId);
+    const input = systemOneRewriteInputSchema.parse({ recentMessages: history.slice(-4), messageToRewrite: draft });
+    return this.rewriter.rewrite(input, version, AbortSignal.timeout(30_000));
   }
 
   async settingsView() {
     const settings = await this.store.settings();
     const connected = new Set((await this.verifiedResponders(settings)).map((item) => item.username));
-    return { thresholdPercent: settings.thresholdPercent, responders: settings.usernames.map((username) => ({ username, connected: connected.has(username) })), ...(settings.updatedAt ? { updatedAt: settings.updatedAt } : {}) };
+    return { responders: settings.usernames.map((username) => ({ username, connected: connected.has(username) })), ...(settings.updatedAt ? { updatedAt: settings.updatedAt } : {}) };
   }
-  async saveSettings(input: { thresholdPercent: number; usernames: string[] }) { return this.store.saveSettings(input); }
+  async saveSettings(input: HumanAssistanceSettings) { return this.store.saveSettings(input); }
 
-  async escalateError(chatId: string, businessConnectionId: string | undefined, updateId: number, question: string, context?: string) {
-    const settings = await this.store.settings();
-    await this.escalate(chatId, businessConnectionId, updateId, `${question.slice(0, 2600)}${context ? `\n\nПричина передачі: ${context.slice(0, 1200)}` : ''}\n\nАвтоматичну обробку зупинено. Перевірте стан операції перед повторною спробою.`, { reason: 'operation_error', thresholdPercent: settings.thresholdPercent }, { clientMessage: question, transferContext: context });
+  async escalateError(chatId: string, businessConnectionId: string | undefined, updateId: number, question: string, context?: string, unsentMessage?: string) {
+    await this.escalate(chatId, businessConnectionId, updateId, `${question.slice(0, 2600)}${context ? `\n\nПричина передачі: ${context.slice(0, 1200)}` : ''}\n\nАвтоматичну обробку зупинено. Перевірте стан операції перед повторною спробою.`, { reason: 'operation_error' }, { clientMessage: question, transferContext: context, ...(unsentMessage ? { unsentMessage: readableTelegramDraft(unsentMessage) } : {}) });
   }
 
-  async escalate(chatId: string, businessConnectionId: string | undefined, updateId: number, question: string, decision: { reason: HumanRequestDto['reason']; probability?: number; thresholdPercent: number }, display: { clientMessage?: string; unsentMessage?: string; transferContext?: string } = {}): Promise<void> {
-    const { request, created } = await this.store.open(chatId, businessConnectionId, updateId, question, decision.reason, decision.probability, decision.thresholdPercent);
+  async escalate(chatId: string, businessConnectionId: string | undefined, updateId: number, question: string, decision: { reason: HumanRequestDto['reason'] }, display: { clientMessage?: string; unsentMessage?: string; transferContext?: string } = {}): Promise<void> {
+    const { request, created } = await this.store.open(chatId, businessConnectionId, updateId, question, decision.reason);
     if (!created) {
       await this.store.queue(request.id, question);
       await this.notify(request.id, await this.notificationTranscript(chatId, display.clientMessage ?? question, display), String(updateId), chatId);
@@ -198,7 +178,7 @@ export class HumanAssistanceService {
     return {};
   }
 
-  private async verifiedResponders(settings?: { thresholdPercent: number; usernames: string[] }): Promise<Responder[]> {
+  private async verifiedResponders(settings?: HumanAssistanceSettings): Promise<Responder[]> {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     if (!token) return [];
     const candidates = await this.store.connected(settings ?? await this.store.settings());

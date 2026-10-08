@@ -9,6 +9,7 @@ import { HumanAssistanceService } from './human-assistance.service.js';
 import { assistantPromptIdSchema } from '@booking/contracts';
 import { promptDefinitions } from './prompt-settings.js';
 import { OpenAiBalanceService } from './openai-balance.service.js';
+import { SYSTEM_TWO_V2_PROMPT_TEMPLATE } from './system-two-v2.js';
 @Controller()
 export class HealthController { @Get('health') health() { return { status: 'ok' }; } }
 @Controller('telegram')
@@ -21,9 +22,10 @@ export class AdminController {
   @Get('spec') spec() { return this.specService.getSpec(); }
   @Get('prompt-catalog') promptCatalog() { return promptCatalogResponseSchema.parse({
     systemOne: [
-      ...(['handoff'] as const).map((id) => ({ id, label: promptDefinitions[id].label, description: promptDefinitions[id].description, content: promptDefinitions[id].defaultPrompt })),
+      ...(['rewrite'] as const).map((id) => ({ id, label: promptDefinitions[id].label, description: promptDefinitions[id].description, content: promptDefinitions[id].defaultPrompt })),
     ],
     systemTwo: (['assistant'] as const).map((id) => ({ id, label: promptDefinitions[id].label, description: promptDefinitions[id].description, content: promptDefinitions[id].defaultPrompt })),
+    systemTwoV2: [{ id: 'assistant-v2', label: 'Assistant v2', description: 'Short prompt that searches the Telegram archive with File Search.', content: SYSTEM_TWO_V2_PROMPT_TEMPLATE }],
   }); }
   @Get('prompts/:id') async promptById(@Param('id') rawId: string) {
     const id = assistantPromptIdSchema.parse(rawId);
@@ -75,5 +77,5 @@ export class AdminController {
   @Patch('conversations/:id') async patchConversation(@Param('id') id: string, @Body() body: unknown) { const changes = patchConversationSchema.parse(body); const existing = await this.repository.getConversation(id); const now = new Date().toISOString(); return this.repository.saveConversation({ ...(existing ?? { telegramChatId: id, assistantEnabled: true, state: 'active', summary: '', createdAt: now }), ...changes, humanTakeoverUntil: changes.humanTakeoverUntil === null ? undefined : changes.humanTakeoverUntil ?? existing?.humanTakeoverUntil, updatedAt: now }); }
   @Post('available-slots') availableSlots(@Body() body: unknown) { return this.availability.find(availableSlotsRequestSchema.parse(body)); }
   private knowledgeBaseResponse(override?: { content: string; updatedAt: string }, services: Awaited<ReturnType<BookingRepository['listServices']>> = []) { return knowledgeBaseResponseSchema.parse({ ...(override ? { ...override, isCustom: true } : { content: DEFAULT_KNOWLEDGE_BASE, isCustom: false }), services: services.map(({ id, name, description, durationMinutes, durationOptions, price, currency }) => ({ id, name, description, durationMinutes, ...(durationOptions ? { durationOptions } : {}), price, currency })) }); }
-  private botSettingsResponse(override?: { maxReadDelayMs: number; typingDelayPerSymbolMs: number; testerUsernames: string[]; allUsersEnabled: boolean; updatedAt: string }) { return botSettingsResponseSchema.parse(override ? { ...override, isCustom: true } : { ...getDefaultBotSettings(), isCustom: false }); }
+  private botSettingsResponse(override?: { maxReadDelayMs: number; typingDelayPerSymbolMs: number; testerUsernames: string[]; allUsersEnabled: boolean; responseVersion: 'v1' | 'v2'; updatedAt: string }) { return botSettingsResponseSchema.parse(override ? { ...override, isCustom: true } : { ...getDefaultBotSettings(), isCustom: false }); }
 }

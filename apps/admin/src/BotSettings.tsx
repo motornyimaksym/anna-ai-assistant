@@ -2,7 +2,7 @@ import { SystemOneSettings } from './SystemOneSettings.js';
 import { GoogleCalendarSettings } from './GoogleCalendarSettings.js';
 import { TelegramAccountSettings } from './TelegramAccountSettings.js';
 import { HumanAssistanceSettings } from './HumanAssistanceSettings.js';
-import { Alert, Box, Button, Chip, Divider, FormControlLabel, Stack, Switch, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Chip, Divider, FormControlLabel, Stack, Switch, TextField, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
 import { botSettingsSchema, updateAdminAccessSchema, type BotSettings as BotSettingsDto } from '@booking/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
@@ -24,6 +24,7 @@ export const BotSettings = () => {
   const [draft, setDraft] = useState<Draft>({ maxReadDelaySeconds: '', typingDelayPerSymbolMs: '' });
   const [testerUsernames, setTesterUsernames] = useState<string[]>([]);
   const [allUsersEnabled, setAllUsersEnabled] = useState(false);
+  const [responseVersion, setResponseVersion] = useState<'v1' | 'v2'>('v1');
   const [newTester, setNewTester] = useState('');
   const [testerError, setTesterError] = useState('');
   const [emails, setEmails] = useState<string[]>([]);
@@ -31,7 +32,7 @@ export const BotSettings = () => {
   const [message, setMessage] = useState('');
   const [accessMessage, setAccessMessage] = useState('');
   const [accessError, setAccessError] = useState('');
-  useEffect(() => { if (query.data) { setDraft(toDraft(query.data)); setTesterUsernames(query.data.testerUsernames); setAllUsersEnabled(query.data.allUsersEnabled); } }, [query.data]);
+  useEffect(() => { if (query.data) { setDraft(toDraft(query.data)); setTesterUsernames(query.data.testerUsernames); setAllUsersEnabled(query.data.allUsersEnabled); setResponseVersion(query.data.responseVersion); } }, [query.data]);
   useEffect(() => { if (accessQuery.data) setEmails(accessQuery.data.emails); }, [accessQuery.data]);
 
   const readDelaySeconds = draft.maxReadDelaySeconds.trim() === '' ? Number.NaN : Number(draft.maxReadDelaySeconds);
@@ -42,6 +43,7 @@ export const BotSettings = () => {
     typingDelayPerSymbolMs: draft.typingDelayPerSymbolMs.trim() === '' ? Number.NaN : Number(draft.typingDelayPerSymbolMs),
     testerUsernames,
     allUsersEnabled,
+    responseVersion,
   });
   const save = useMutation({
     mutationFn: (settings: BotSettingsDto) => adminApi.saveBotSettings(settings),
@@ -50,6 +52,7 @@ export const BotSettings = () => {
       setDraft(toDraft(value));
       setTesterUsernames(value.testerUsernames);
       setAllUsersEnabled(value.allUsersEnabled);
+      setResponseVersion(value.responseVersion);
       setMessage('Saved. Changes apply to the next incoming message.');
     },
   });
@@ -66,7 +69,7 @@ export const BotSettings = () => {
   if (query.isPending) return <Typography>{t("Loading bot settings…")}</Typography>;
   if (query.isError) return <Alert severity="error">{t("Could not load bot settings.")}{t(" ")}{t(errorText(query.error))}</Alert>;
 
-  const dirty = draft.maxReadDelaySeconds !== millisecondsToSeconds(query.data.maxReadDelayMs) || draft.typingDelayPerSymbolMs !== String(query.data.typingDelayPerSymbolMs) || JSON.stringify(testerUsernames) !== JSON.stringify(query.data.testerUsernames) || allUsersEnabled !== query.data.allUsersEnabled;
+  const dirty = draft.maxReadDelaySeconds !== millisecondsToSeconds(query.data.maxReadDelayMs) || draft.typingDelayPerSymbolMs !== String(query.data.typingDelayPerSymbolMs) || JSON.stringify(testerUsernames) !== JSON.stringify(query.data.testerUsernames) || allUsersEnabled !== query.data.allUsersEnabled || responseVersion !== query.data.responseVersion;
   const canSave = dirty && parsed.success && !save.isPending;
   const saveDraft = () => { if (parsed.success) { setMessage(''); save.mutate(parsed.data); } };
   const addTester = () => {
@@ -98,6 +101,22 @@ export const BotSettings = () => {
       <Chip size="small" color={query.data.isCustom ? 'primary' : 'default'} label={query.data.isCustom ? t("Custom settings") : t("Default settings")} />
       <Typography variant="body2" color="text.secondary">{t("Changes apply to the next incoming message.")}</Typography>
     </Stack>
+    <Stack spacing={0.5}>
+      <Typography variant="h6">{t("Assistant response version")}</Typography>
+      <ToggleButtonGroup
+        exclusive
+        size="small"
+        value={responseVersion}
+        onChange={(_event, value: 'v1' | 'v2' | null) => { if (value) { setResponseVersion(value); setMessage(''); } }}
+        aria-label={t("Assistant response version")}
+        disabled={save.isPending}
+      >
+        <ToggleButton value="v1" aria-label="v1">v1</ToggleButton>
+        <ToggleButton value="v2" aria-label="v2">v2</ToggleButton>
+      </ToggleButtonGroup>
+      <Typography variant="body2" color="text.secondary">{responseVersion === 'v1' ? t("Uses current assistant prompt and knowledge base.") : t("Uses a short prompt and AI search across the Telegram archive.")}</Typography>
+    </Stack>
+    <Divider />
     <TextField
       label={t("Maximum read delay (seconds)")}
       type="number"

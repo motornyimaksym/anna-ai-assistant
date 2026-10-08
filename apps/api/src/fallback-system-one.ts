@@ -17,7 +17,7 @@ export class FallbackSystemOneSelector extends SystemOneSelector {
     } catch (error) {
       if (signal.aborted) throw signal.reason;
       this.logger.warn(`TypeSafe System One ${operation} failed category=${safeErrorCategory(error)}; trying OpenAI`);
-      return backup(AbortSignal.any([signal, AbortSignal.timeout(10_000)]));
+      return backup(AbortSignal.any([signal, AbortSignal.timeout(30_000)]));
     }
   }
 

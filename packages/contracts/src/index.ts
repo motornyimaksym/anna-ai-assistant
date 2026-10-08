@@ -75,19 +75,23 @@ export const conversationSchema = z.object({ telegramChatId: z.string().min(1), 
 export const clearConversationContextResponseSchema = z.object({ clearedMessages: z.number().int().min(0) }).strict();
 export const patchConversationSchema = z.object({ assistantEnabled: z.boolean().optional(), humanTakeoverUntil: z.string().datetime().nullable().optional() }).refine((value) => Object.keys(value).length > 0, 'At least one field is required');
 export const assistantPromptResponseSchema = z.object({ prompt: z.string(), isCustom: z.boolean(), updatedAt: z.string().datetime().optional() });
-export const assistantPromptIdSchema = z.enum(['handoff', 'assistant']);
+export const assistantPromptIdSchema = z.enum(['rewrite', 'handoff', 'assistant']);
 export type AssistantPromptId = z.infer<typeof assistantPromptIdSchema>;
 export const promptCatalogEntrySchema = z.object({ id: z.string(), label: z.string(), description: z.string(), content: z.string() });
-export const promptCatalogResponseSchema = z.object({ systemOne: z.array(promptCatalogEntrySchema), systemTwo: z.array(promptCatalogEntrySchema) });
+export const promptCatalogResponseSchema = z.object({ systemOne: z.array(promptCatalogEntrySchema), systemTwo: z.array(promptCatalogEntrySchema), systemTwoV2: z.array(promptCatalogEntrySchema) });
 export type PromptCatalogResponse = z.infer<typeof promptCatalogResponseSchema>;
 export const updateAssistantPromptSchema = z.object({ prompt: z.string().min(1).max(20_000).refine((prompt) => prompt.trim().length > 0, 'Prompt must not be blank') });
 const testerUsernameSchema = z.string().trim().transform((value) => value.replace(/^@/, '').toLowerCase()).pipe(z.string().regex(/^[a-z0-9_]{5,32}$/, 'Enter a Telegram username (5–32 letters, digits, or underscores)'));
 const testerUsernamesSchema = z.array(testerUsernameSchema).max(20).superRefine((usernames, ctx) => {
   if (new Set(usernames).size !== usernames.length) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Telegram usernames must be unique' });
 });
-export const botSettingsSchema = z.object({ maxReadDelayMs: z.number().int().min(0).max(3_540_000), typingDelayPerSymbolMs: z.number().int().min(0).max(800), testerUsernames: testerUsernamesSchema, allUsersEnabled: z.boolean() });
+export const assistantResponseVersionSchema = z.enum(['v1', 'v2']);
+export type AssistantResponseVersion = z.infer<typeof assistantResponseVersionSchema>;
+export const botSettingsSchema = z.object({ maxReadDelayMs: z.number().int().min(0).max(3_540_000), typingDelayPerSymbolMs: z.number().int().min(0).max(800), testerUsernames: testerUsernamesSchema, allUsersEnabled: z.boolean(), responseVersion: assistantResponseVersionSchema });
 export const botSettingsResponseSchema = botSettingsSchema.extend({ isCustom: z.boolean(), updatedAt: z.string().datetime().optional() });
-export const updateBotSettingsSchema = botSettingsSchema.extend({ allUsersEnabled: z.boolean().optional() });
+export const updateBotSettingsSchema = botSettingsSchema.extend({ allUsersEnabled: z.boolean().optional(), responseVersion: assistantResponseVersionSchema.optional() });
+export const telegramArchiveSettingsSchema = z.object({ storagePath: z.literal('assistant-data/telegram-export/result.json'), openAiFileId: z.string().min(1), vectorStoreId: z.string().min(1), sourceBytes: z.number().int().positive(), updatedAt: z.string().datetime() }).strict();
+export type TelegramArchiveSettings = z.infer<typeof telegramArchiveSettingsSchema>;
 const adminAccessEmailSchema = z.string().trim().email().max(254).transform((email) => email.toLowerCase());
 const adminAccessEmailsSchema = z.object({ emails: z.array(adminAccessEmailSchema).max(100) });
 const uniqueAdminEmails = ({ emails }: { emails: string[] }, ctx: z.RefinementCtx) => {

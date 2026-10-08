@@ -15,7 +15,7 @@ function cleanText(value: string): string {
   const secrets = Object.entries(process.env).filter(([key, item]) => credentialKey.test(key) && item && item.length >= 4).map(([, item]) => item!);
   let text = value;
   for (const secret of secrets) text = text.replaceAll(secret, '[REDACTED]');
-  return text.replace(/Bearer\s+[^\s"']+/gi, 'Bearer [REDACTED]').replace(/\bsk-(?:proj-)?[A-Za-z0-9_-]{12,}/g, '[REDACTED]').replace(/\bbot\d+:[A-Za-z0-9_-]+/g, 'bot[REDACTED]').replace(/data:[^\s"']+;base64,[A-Za-z0-9+/=]+/g, '[BINARY OMITTED]');
+  return text.replace(/Bearer\s+[^\s"']+/gi, 'Bearer [REDACTED]').replace(/\bsk-(?:proj-)?[A-Za-z0-9_-]{12,}/g, '[REDACTED]').replace(/\bbot\d+:[A-Za-z0-9_-]+/g, 'bot[REDACTED]').replace(/https:\/\/(?:storage\.googleapis\.com|firebasestorage\.googleapis\.com)\/[^\s"'<>]+/gi, '[FIREBASE STORAGE URL REDACTED]').replace(/data:[^\s"']+;base64,[A-Za-z0-9+/=]+/g, '[BINARY OMITTED]');
 }
 
 function clean(value: unknown): unknown {
@@ -30,6 +30,7 @@ function clean(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(clean);
   if (value && typeof value === 'object') {
     if (object(value).type === 'reasoning') return { type: 'reasoning', content: '[REASONING OMITTED]' };
+    if (object(value).type === 'file_search_call') return Object.fromEntries(Object.entries(object(value)).map(([key, child]) => [key, key === 'results' ? '[FILE SEARCH RESULTS OMITTED]' : clean(child)]));
     return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, credentialKey.test(key) ? '[REDACTED]' : clean(child)]));
   }
   return value;

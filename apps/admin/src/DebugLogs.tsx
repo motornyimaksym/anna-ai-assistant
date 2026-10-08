@@ -84,18 +84,19 @@ const RequestDetails = ({ eventId, request }: { eventId: string; request: DebugR
   </Stack>;
 };
 
-const onePrompts = [{ value: 'handoff', label: 'Handoff' }] as const;
+const onePrompts = [{ value: 'rewrite', label: 'Reply Rewriter' }] as const;
 const twoPrompts = [{ value: 'assistant', label: 'Assistant' }] as const;
 const PromptTest = () => {
   const { t, language } = useI18n();
   const [system, setSystem] = useState<'one' | 'two'>('one');
-  const [onePrompt, setOnePrompt] = useState<(typeof onePrompts)[number]['value']>('handoff');
+  const [onePrompt, setOnePrompt] = useState<(typeof onePrompts)[number]['value']>('rewrite');
+  const [version, setVersion] = useState<'v1' | 'v2'>('v1');
   const [twoPrompt, setTwoPrompt] = useState<(typeof twoPrompts)[number]['value']>('assistant');
   const [example, setExample] = useState('');
   const test = useMutation({ mutationFn: adminApi.promptTest });
   const promptId = system === 'one' ? onePrompt : twoPrompt;
   const run = () => {
-    if (system === 'one') test.mutate({ system, promptId: onePrompt, text: example });
+    if (system === 'one') test.mutate({ system, promptId: onePrompt, text: example, version });
     else test.mutate({ system, promptId: twoPrompt, text: example });
   };
   return <Stack spacing={2}>
@@ -107,8 +108,11 @@ const PromptTest = () => {
       <TextField select label={t("Prompt")} value={promptId} onChange={(event) => { if (system === 'one') setOnePrompt(event.target.value as typeof onePrompt); else setTwoPrompt(event.target.value as typeof twoPrompt); test.reset(); }} disabled={test.isPending} sx={{ minWidth: 220 }}>
         {(system === 'one' ? onePrompts : twoPrompts).map(({ value, label }) => <MenuItem key={value} value={value}>{t(label)}</MenuItem>)}
       </TextField>
+      {system === 'one' && <TextField select label={t("Version")} value={version} onChange={(event) => { setVersion(event.target.value as typeof version); test.reset(); }} disabled={test.isPending} sx={{ minWidth: 140 }}>
+        <MenuItem value="v1">v1</MenuItem><MenuItem value="v2">v2</MenuItem>
+      </TextField>}
     </Stack>
-    {system === 'one' && <Alert severity="info">{t("Uses a sample recent reply, your example as the client message, and an unsent draft. The score measures whether the draft sounds automated; copied text alone is not proof.")}</Alert>}
+    {system === 'one' && <Alert severity="info">{t("Uses four synthetic recent messages and an unsent draft. It sends no knowledge or catalog data.")}</Alert>}
     <TextField label={t("Example text")} value={example} onChange={(event) => { setExample(event.target.value); test.reset(); }} multiline minRows={4} fullWidth disabled={test.isPending} inputProps={{ maxLength: 4_000 }} helperText={`${example.length.toLocaleString(language === "uk" ? "uk-UA" : "en-US")} / 4,000 ${t("characters")}`} />
     <Button variant="contained" onClick={run} disabled={!example.trim() || test.isPending} sx={{ alignSelf: 'flex-start' }}>{test.isPending ? t("Running…") : t("Run test")}</Button>
     {test.isError && <Alert severity="error">{test.error instanceof Error ? test.error.message : t("Prompt test failed.")}</Alert>}

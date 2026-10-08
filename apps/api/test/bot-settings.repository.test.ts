@@ -12,6 +12,7 @@ describe('bot settings persistence', () => {
       typingDelayPerSymbolMs: 600,
       testerUsernames: ['tester'],
       allUsersEnabled: true,
+      responseVersion: 'v2',
       updatedAt: '2026-10-06T10:00:00.000Z',
     };
     const ref = { get: vi.fn(async () => ({ exists: !!stored, data: () => stored })), set: vi.fn(async (value) => { stored = value; }) };
@@ -20,11 +21,13 @@ describe('bot settings persistence', () => {
 
     stored = { maxReadDelayMs: 2_000, typingDelayPerSymbolMs: 600, testerUsernames: ['tester'], updatedAt: '2026-10-06T10:00:00.000Z' };
     expect((await repository.getBotSettingsOverride())?.allUsersEnabled).toBe(false);
+    expect((await repository.getBotSettingsOverride())?.responseVersion).toBe('v1');
     stored.allUsersEnabled = true;
+    stored.responseVersion = 'v2';
 
     const legacyUpdate: UpdateBotSettingsRequest = { maxReadDelayMs: 1_000, typingDelayPerSymbolMs: 300, testerUsernames: ['tester'] };
     await repository.saveBotSettingsOverride(legacyUpdate);
 
-    expect(stored).toEqual({ ...legacyUpdate, allUsersEnabled: true, updatedAt: expect.any(String) });
+    expect(stored).toEqual({ ...legacyUpdate, allUsersEnabled: true, responseVersion: 'v2', updatedAt: expect.any(String) });
   });
 });

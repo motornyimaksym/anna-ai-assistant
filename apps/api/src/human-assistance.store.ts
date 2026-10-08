@@ -5,7 +5,7 @@ import { FirebaseAdminService } from './firebase-admin.js';
 import { randomUUID } from 'node:crypto';
 
 export type Responder = { userId: string; chatId: string; username: string; enrolledAt: string };
-const defaults: HumanAssistanceSettings = { thresholdPercent: 60, usernames: [] };
+const defaults: HumanAssistanceSettings = { usernames: [] };
 const now = () => new Date().toISOString();
 const active = (status: HumanRequestDto['status']) => status === 'open' || status === 'sending' || status === 'uncertain';
 
@@ -17,10 +17,10 @@ export class HumanAssistanceStore {
     const doc = await this.db.collection('assistantSettings').doc('humanAssistance').get();
     if (!doc.exists) return defaults;
     const data = doc.data();
-    return { ...updateHumanAssistanceSettingsSchema.parse({ thresholdPercent: data?.thresholdPercent, usernames: data?.usernames }), ...(typeof data?.updatedAt === 'string' ? { updatedAt: data.updatedAt } : {}) };
+    return { usernames: updateHumanAssistanceSettingsSchema.parse({ usernames: data?.usernames ?? [] }).usernames, ...(typeof data?.updatedAt === 'string' ? { updatedAt: data.updatedAt } : {}) };
   }
   async saveSettings(input: HumanAssistanceSettings) {
-    const value = { ...updateHumanAssistanceSettingsSchema.parse(input), updatedAt: now() };
+    const value = { usernames: updateHumanAssistanceSettingsSchema.parse(input).usernames, updatedAt: now() };
     await this.db.collection('assistantSettings').doc('humanAssistance').set(value);
     return value;
   }
@@ -41,7 +41,7 @@ export class HumanAssistanceStore {
     const snapshot = await this.db.collection('humanResponders').get();
     return snapshot.docs.map((doc) => doc.data() as Responder).filter((item) => effectiveSettings.usernames.includes(item.username));
   }
-  async open(chatId: string, businessConnectionId: string | undefined, updateId: number, question: string, reason: HumanRequestDto['reason'], probability: number | undefined, thresholdPercent: number): Promise<{ request: HumanRequestDto; created: boolean }> {
+  async open(chatId: string, businessConnectionId: string | undefined, updateId: number, question: string, reason: HumanRequestDto['reason'], _legacyProbability?: number, _legacyThresholdPercent?: number): Promise<{ request: HumanRequestDto; created: boolean }> {
     const conversationRef = this.db.collection('conversations').doc(chatId);
     const requestRef = this.db.collection('humanRequests').doc();
     return this.db.runTransaction(async (tx) => {
@@ -52,7 +52,7 @@ export class HumanAssistanceStore {
         if (current.exists && active(current.data()?.status as HumanRequestDto['status'])) return { request: humanRequestSchema.parse({ ...current.data(), id: current.id }), created: false };
       }
       const timestamp = now();
-      const request: HumanRequestDto = { id: requestRef.id, conversationId: chatId, telegramChatId: chatId, telegramUpdateId: updateId, ...(businessConnectionId ? { businessConnectionId } : {}), status: 'open', reason, ...(probability !== undefined ? { probability } : {}), thresholdPercent, question: question.slice(0, 4000), queuedMessages: [], notifications: {}, createdAt: timestamp, updatedAt: timestamp };
+      const request: HumanRequestDto = { id: requestRef.id, conversationId: chatId, telegramChatId: chatId, telegramUpdateId: updateId, ...(businessConnectionId ? { businessConnectionId } : {}), status: 'open', reason, question: question.slice(0, 4000), queuedMessages: [], notifications: {}, createdAt: timestamp, updatedAt: timestamp };
       tx.create(requestRef, request);
       tx.set(conversationRef, { activeHumanRequestId: requestRef.id, updatedAt: timestamp }, { merge: true });
       return { request, created: true };

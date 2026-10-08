@@ -15,7 +15,7 @@ const update = (username?: string) => ({
   },
 });
 
-const setup = (settings: { maxReadDelayMs: number; typingDelayPerSymbolMs: number; testerUsernames?: string[]; allUsersEnabled?: boolean; updatedAt?: string } = { maxReadDelayMs: 0, typingDelayPerSymbolMs: 600, allUsersEnabled: false, updatedAt: '2026-09-24T10:00:00.000Z' }) => {
+const setup = (settings: { maxReadDelayMs: number; typingDelayPerSymbolMs: number; testerUsernames?: string[]; allUsersEnabled?: boolean; responseVersion?: 'v1' | 'v2'; updatedAt?: string } = { maxReadDelayMs: 0, typingDelayPerSymbolMs: 600, allUsersEnabled: false, responseVersion: 'v1', updatedAt: '2026-09-24T10:00:00.000Z' }) => {
   const order: string[] = [];
   const repository = {
     appendMessage: vi.fn(),
@@ -42,6 +42,12 @@ afterEach(() => {
 });
 
 describe('Telegram private test restriction', () => {
+  it('passes the configured assistant response version to the shared S2 service', async () => {
+    vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'secret');
+    const { service, assistant } = setup({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0, allUsersEnabled: true, responseVersion: 'v2' });
+    await service.handle('secret', update('tester'));
+    expect(assistant.respond).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ responseVersion: 'v2' }), 'Hello');
+  });
   it('clears context for deleted business messages without invoking the assistant', async () => {
     vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
     const { service, repository, assistant, scheduleImport, send } = setup();

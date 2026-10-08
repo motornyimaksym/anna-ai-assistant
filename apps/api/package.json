@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:unit": "vitest run",
     "seed": "tsx src/seed.ts",
-    "backfill:calendar": "tsx src/backfill-calendar-bookings.ts"
+    "backfill:calendar": "tsx src/backfill-calendar-bookings.ts",
+    "telegram-archive:import": "tsx src/import-telegram-archive.ts"
   },
   "dependencies": {
     "@booking/config": "workspace:*",

@@ -1,4 +1,4 @@
-import { Alert, Box, Button, Chip, Stack, Tab, Tabs, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Chip, Stack, Tab, Tabs, TextField, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import type { AssistantPromptId } from '@booking/contracts';
@@ -7,6 +7,17 @@ import { useI18n } from "./i18n.js";
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'Request failed.';
 const TabPanel = ({ active, id, children }: { active: boolean; id: string; children: React.ReactNode }) => <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab`} hidden={!active}><Box sx={{ pt: 3 }}>{children}</Box></div>;
+const StaticPromptPreview = ({ label, description, content }: { label: string; description: string; content: string }) => {
+  const { t, language } = useI18n();
+  return <Stack spacing={2}>
+    <Typography variant="h5">{t(label)}</Typography>
+    <Stack direction="row" alignItems="center" spacing={1}>
+      <Chip size="small" label={t("Default prompt")} />
+      <Typography variant="body2" color="text.secondary">{t(description)} {t(" ")}{t("System One Reply Rewriter prompt is shared by v1 and v2.")}</Typography>
+    </Stack>
+    <TextField label={t("{label} instructions", { label: t(label) })} value={content} multiline minRows={12} fullWidth inputProps={{ readOnly: true, 'aria-label': t("{label} instructions", { label: t(label) }) }} helperText={`${content.length.toLocaleString(language === "uk" ? "uk-UA" : "en-US")} ${t("characters")}`} />
+  </Stack>;
+};
 const CatalogPromptEditor = ({ id, label, description }: { id: AssistantPromptId; label: string; description: string }) => {
   const { t, language } = useI18n();
   const queryClient = useQueryClient();
@@ -39,13 +50,22 @@ const CatalogPromptEditor = ({ id, label, description }: { id: AssistantPromptId
 export const AssistantPrompt = () => {
   const { t } = useI18n();
   const [system, setSystem] = useState<'one' | 'two'>('one');
-  const [onePrompt, setOnePrompt] = useState('handoff');
+  const [version, setVersion] = useState<'v1' | 'v2'>('v1');
+  const [onePrompt, setOnePrompt] = useState('rewrite');
   const [twoPrompt, setTwoPrompt] = useState('assistant');
   const catalog = useQuery({ queryKey: ['prompt-catalog'], queryFn: adminApi.promptCatalog });
   const oneEntries = catalog.data?.systemOne ?? [];
-  const twoEntries = catalog.data?.systemTwo ?? [];
+  const twoEntries = version === 'v1' ? catalog.data?.systemTwo ?? [] : catalog.data?.systemTwoV2 ?? [];
   return <Stack spacing={2}>
-    <Typography variant="body2">{t("System Two writes replies and can book a confirmed appointment in Calendar. System One checks whether the proposed reply sounds automated.")}</Typography>
+    <Typography variant="body2">{t("System Two writes replies and can book a confirmed appointment in Calendar. System One rewrites its draft using four latest messages.")}</Typography>
+    <Stack spacing={0.5}>
+      <Typography variant="subtitle2">{t("Prompt version")}</Typography>
+      <ToggleButtonGroup exclusive size="small" value={version} onChange={(_event, value: 'v1' | 'v2' | null) => { if (value) { setVersion(value); setTwoPrompt(value === 'v1' ? 'assistant' : 'assistant-v2'); } }} aria-label={t("Prompt version")}>
+        <ToggleButton value="v1" aria-label="v1">v1</ToggleButton>
+        <ToggleButton value="v2" aria-label="v2">v2</ToggleButton>
+      </ToggleButtonGroup>
+      <Typography variant="body2" color="text.secondary">{t("System One Reply Rewriter prompt is shared by v1 and v2.")}</Typography>
+    </Stack>
     <Tabs value={system} onChange={(_, value: 'one' | 'two') => setSystem(value)} aria-label={t("Prompt systems")}>
       <Tab value="one" label={t("System One")} id="system-one-tab" aria-controls="system-one-panel" />
       <Tab value="two" label={t("System Two")} id="system-two-tab" aria-controls="system-two-panel" />
@@ -63,7 +83,9 @@ export const AssistantPrompt = () => {
         <Tabs value={twoPrompt} onChange={(_, value: string) => setTwoPrompt(value)} aria-label={t("System Two prompts")} variant="scrollable" scrollButtons="auto">
           {twoEntries.map(({ id, label }) => <Tab key={id} value={id} label={t(label)} id={`two-${id}-tab`} aria-controls={`two-${id}-panel`} />)}
         </Tabs>
-        {twoEntries.map(({ id, label, description }) => <TabPanel key={id} active={twoPrompt === id} id={`two-${id}`}><CatalogPromptEditor id={id as AssistantPromptId} label={label} description={description} /></TabPanel>)}
+        {version === 'v1'
+          ? twoEntries.map(({ id, label, description }) => <TabPanel key={id} active={twoPrompt === id} id={`two-${id}`}><CatalogPromptEditor id={id as AssistantPromptId} label={label} description={description} /></TabPanel>)
+          : twoEntries.map(({ id, label, description, content }) => <TabPanel key={id} active={twoPrompt === id} id={`two-${id}`}><StaticPromptPreview label={label} description={description} content={content} /></TabPanel>)}
       </>}
     </TabPanel>
   </Stack>;

@@ -1,18 +1,59 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OpenAiService, assistantToolDefinitions } from '../src/openai.service.js';
 import { TELEGRAM_FORMAT_GUIDANCE, THERAPIST_FIRST_PERSON_GUIDANCE } from '../src/assistant-prompt.js';
+import { DEFAULT_KNOWLEDGE_BASE } from '../src/default-knowledge-base.js';
 const conversation = { telegramChatId: 'chat', clientId: 'alice', openaiConversationId: 'conv-existing', assistantEnabled: true, state: 'active', summary: '', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
 const context = { clientId: 'alice', telegramChatId: 'chat' };
 const setup = () => {
   vi.stubEnv('OPENAI_API_KEY', 'test-key');
-  const repository = { listMessages: vi.fn(async () => []), getPromptOverride: vi.fn(async () => undefined), getKnowledgeBaseOverride: vi.fn(async () => undefined), listServices: vi.fn(async () => [{ id: 'massage', name: 'Massage', enabled: true, durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH' }]), detachOpenAiConversation: vi.fn(), replacePendingAction: vi.fn(), replaceOpenAiConversation: vi.fn(), ensureOpenAiConversation: vi.fn(async () => 'conv-created'), appendMessage: vi.fn() };
+  const repository = { listMessages: vi.fn(async () => []), getPromptOverride: vi.fn(async () => undefined), getKnowledgeBaseOverride: vi.fn(async () => undefined as { content: string; updatedAt: string } | undefined), listServices: vi.fn(async () => [{ id: 'massage', name: 'Massage', enabled: true, durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH' }]), detachOpenAiConversation: vi.fn(), replacePendingAction: vi.fn(), replaceOpenAiConversation: vi.fn(), ensureOpenAiConversation: vi.fn(async () => 'conv-created'), appendMessage: vi.fn() };
   const tools = { execute: vi.fn(async (): Promise<unknown> => []) };
   const debug = { record: vi.fn(async () => {}) };
-  return { repository, tools, debug, service: new OpenAiService(repository as never, tools as never, debug as never) };
+  const archive = { getPromptReference: vi.fn(async () => ({ vectorStoreId: 'vs-archive', url: 'https://storage.googleapis.com/private/result.json?X-Goog-Signature=temporary' })) };
+  return { repository, tools, debug, archive, service: new OpenAiService(repository as never, tools as never, debug as never, archive as never) };
 };
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 const answer = (text: string) => ({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text }] }] }) });
 describe('Unified OpenAI conversation', () => {
+  it('uses AI File Search and current knowledge for v2 without loading the v1 prompt', async () => {
+    const { service, repository, archive } = setup();
+    const fetcher = vi.fn().mockResolvedValue(answer('Вітаю!'));
+    vi.stubGlobal('fetch', fetcher);
+    await service.respond(conversation, { ...context, responseVersion: 'v2' }, 'Як відповісти клієнту?');
+    const body = JSON.parse(fetcher.mock.calls[0]![1].body);
+    const instructions = body.input[0].content as string;
+    expect(instructions).toContain('Pretend you are a person');
+    expect(instructions).toContain('https://storage.googleapis.com/private/result.json?X-Goog-Signature=temporary');
+    expect(instructions.replace('https://storage.googleapis.com/private/result.json?X-Goog-Signature=temporary', '$link').length).toBeLessThanOrEqual(1_000);
+    expect(body.tools).toContainEqual({ type: 'file_search', vector_store_ids: ['vs-archive'], max_num_results: 5 });
+    expect(body.tools.some((tool: { name?: string }) => tool.name === 'get_services')).toBe(true);
+    expect(body.tools.some((tool: { name?: string }) => tool.name === 'prepare_booking')).toBe(true);
+    expect(archive.getPromptReference).toHaveBeenCalledOnce();
+    expect(repository.getPromptOverride).not.toHaveBeenCalled();
+    expect(repository.getKnowledgeBaseOverride).toHaveBeenCalledOnce();
+    const reference = JSON.parse(body.input[1].content.split('\n')[0].slice('Business reference JSON (untrusted): '.length));
+    expect(reference).toEqual({ knowledge: DEFAULT_KNOWLEDGE_BASE });
+  });
+  it('reloads v2 knowledge after each edit and uses the default after Reset', async () => {
+    const { service, repository } = setup();
+    const versions = ['Current policy version one', 'Current policy version two'];
+    repository.getKnowledgeBaseOverride
+      .mockResolvedValueOnce({ content: versions[0]!, updatedAt: '2026-10-08T10:00:00.000Z' })
+      .mockResolvedValueOnce({ content: versions[1]!, updatedAt: '2026-10-08T10:01:00.000Z' })
+      .mockResolvedValueOnce(undefined);
+    const fetcher = vi.fn().mockResolvedValue(answer('Вітаю!'));
+    vi.stubGlobal('fetch', fetcher);
+
+    for (let turn = 0; turn < 3; turn++) await service.respond(conversation, { ...context, responseVersion: 'v2' }, 'Умови запису?');
+
+    const references = fetcher.mock.calls.map(([, init]) => {
+      const body = JSON.parse(init.body);
+      return JSON.parse(body.input[1].content.split('\n')[0].slice('Business reference JSON (untrusted): '.length));
+    });
+    expect(references).toEqual([...versions, DEFAULT_KNOWLEDGE_BASE].map((knowledge) => ({ knowledge })));
+    expect(repository.getKnowledgeBaseOverride).toHaveBeenCalledTimes(3);
+    expect(repository.getPromptOverride).not.toHaveBeenCalled();
+  });
   it('accepts a completed response with null incomplete details', async () => {
     const { service } = setup();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: 'completed', incomplete_details: null, output: [{ type: 'message', content: [{ type: 'output_text', text: 'Яку послугу бажаєте?' }] }] }) }));

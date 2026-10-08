@@ -4,8 +4,8 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { FieldValue, getFirestore, type DocumentData, type Firestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import {
-  debugEventsSchema, debugEventSchema, debugPayloadSchema, type BookingConfirmationFacts, type DebugEvent, type DebugPayload, type AssistantPromptId, availabilityRuleSchema, bookingSchema, botSettingsSchema, conversationSchema, pendingActionSchema, scheduleExceptionSchema, serviceSchema, updateAdminAccessSchema, updateBotSettingsSchema,
-  type AvailabilityRuleDto, type BookingDto, type BotSettings, type ConversationDto, type ScheduleExceptionDto, type ServiceDto, type UpdateBotSettingsRequest,
+  debugEventsSchema, debugEventSchema, debugPayloadSchema, type BookingConfirmationFacts, type DebugEvent, type DebugPayload, type AssistantPromptId, availabilityRuleSchema, bookingSchema, botSettingsSchema, conversationSchema, pendingActionSchema, scheduleExceptionSchema, serviceSchema, updateAdminAccessSchema, updateBotSettingsSchema, telegramArchiveSettingsSchema,
+  type AvailabilityRuleDto, type BookingDto, type BotSettings, type ConversationDto, type ScheduleExceptionDto, type ServiceDto, type UpdateBotSettingsRequest, type TelegramArchiveSettings,
 } from '@booking/contracts';
 import { BookingConflictError, BookingNotFoundError, lockedSlotKeys, serviceEndAt } from '@booking/domain';
 import { FirebaseAdminService } from './firebase-admin.js';
@@ -55,7 +55,7 @@ export class BookingRepository {
   constructor(_firebase: FirebaseAdminService) { this.db = getFirestore(); }
 
   private promptDocumentId(id: AssistantPromptId): string {
-    return { handoff: 'handoffPrompt', assistant: 'unifiedAssistantPrompt' }[id];
+    return { rewrite: 'rewritePrompt', handoff: 'rewritePrompt', assistant: 'unifiedAssistantPrompt' }[id];
   }
   async getPromptOverride(id: AssistantPromptId): Promise<{ prompt: string; updatedAt: string } | undefined> {
     const data = (await this.db.collection('assistantSettings').doc(this.promptDocumentId(id)).get()).data();
@@ -473,18 +473,23 @@ export class BookingRepository {
     await this.db.collection('assistantSettings').doc('openAiBalance').set(value);
     return value;
   }
+  async getTelegramArchiveSettings(): Promise<TelegramArchiveSettings | undefined> {
+    const data = (await this.db.collection('assistantSettings').doc('telegramArchive').get()).data();
+    const value = telegramArchiveSettingsSchema.safeParse(data);
+    return value.success ? value.data : undefined;
+  }
   async getBotSettingsOverride(): Promise<(BotSettings & { updatedAt: string }) | undefined> {
     const doc = await this.db.collection('assistantSettings').doc('behavior').get();
     if (!doc.exists) return undefined;
     const data = doc.data();
     if (typeof data?.updatedAt !== 'string') return undefined;
-    const settings = botSettingsSchema.parse({ ...data, testerUsernames: data.testerUsernames ?? getLegacyTesterUsernames(), allUsersEnabled: data.allUsersEnabled ?? false });
+    const settings = botSettingsSchema.parse({ ...data, testerUsernames: data.testerUsernames ?? getLegacyTesterUsernames(), allUsersEnabled: data.allUsersEnabled ?? false, responseVersion: data.responseVersion ?? 'v1' });
     return { ...settings, updatedAt: data.updatedAt };
   }
   async saveBotSettingsOverride(settings: UpdateBotSettingsRequest): Promise<BotSettings & { updatedAt: string }> {
     const parsed = updateBotSettingsSchema.parse(settings);
     const existing = await this.getBotSettingsOverride();
-    const value = { ...botSettingsSchema.parse({ ...parsed, allUsersEnabled: parsed.allUsersEnabled ?? existing?.allUsersEnabled ?? false }), updatedAt: new Date().toISOString() };
+    const value = { ...botSettingsSchema.parse({ ...parsed, allUsersEnabled: parsed.allUsersEnabled ?? existing?.allUsersEnabled ?? false, responseVersion: parsed.responseVersion ?? existing?.responseVersion ?? 'v1' }), updatedAt: new Date().toISOString() };
     await this.db.collection('assistantSettings').doc('behavior').set(withoutUndefined(value));
     return value;
   }

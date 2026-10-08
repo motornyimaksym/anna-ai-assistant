@@ -120,9 +120,11 @@ export class TelegramService {
     let reply: string;
     let parseMode: 'HTML' | undefined;
     let bookingProposalId: string | undefined;
+    let generatedDraft = '';
     try {
       const answer = await this.assistant.respond(conversation, {
         clientId: String(message.from!.id), telegramChatId: chatId, businessConnectionId: message.business_connection_id, traceId: trace.traceId,
+        responseVersion: settings.responseVersion ?? 'v1',
         ...(message.from?.username ? { telegramUsername: message.from.username } : {}),
         telegramDisplayName: [message.from?.first_name, message.from?.last_name].filter(Boolean).join(' '),
       }, message.text);
@@ -132,22 +134,23 @@ export class TelegramService {
         await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, answer.humanContext);
         return;
       }
-      const outgoingText = TextUtils.replaceLongDashes(answer.text);
+      generatedDraft = answer.text;
       bookingProposalId = answer.bookingProposalId;
-      if (answer.fromOpenAI) await waitForResponsePacing(outgoingText, settings.typingDelayPerSymbolMs);
-      reply = answer.fromOpenAI ? formatTelegramHtml(outgoingText) : outgoingText;
-      if (answer.fromOpenAI) parseMode = 'HTML';
+      await this.repository.appendMessage(chatId, 'user', message.text.slice(0, 4000));
+      const rewrittenText = await this.human.rewriteOutgoing(chatId, answer.text, settings.responseVersion ?? 'v1');
+      const outgoingText = TextUtils.replaceLongDashes(rewrittenText);
+      await waitForResponsePacing(outgoingText, settings.typingDelayPerSymbolMs);
+      reply = formatTelegramHtml(outgoingText);
+      parseMode = 'HTML';
     } catch (error) {
       await this.debug.record(trace, 'error', { reason: 'assistant_operation_failed', errorCategory: safeErrorCategory(error) }, 'error');
-      this.logger.error(`Assistant operation failed update=${update.update_id} trace=${trace.traceId}: ${JSON.stringify(safeErrorDiagnostic(error, [message.text]))}`);
-      await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, humanErrorContext(error, 'assistant turn', [message.text]));
+      this.logger.error(`Assistant operation failed update=${update.update_id} trace=${trace.traceId}: ${JSON.stringify(safeErrorDiagnostic(error, [message.text, generatedDraft]))}`);
+      await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, humanErrorContext(error, generatedDraft ? 'System One rewrite' : 'assistant turn', [message.text, generatedDraft]), generatedDraft || undefined);
       return;
     } finally {
       stopTyping();
     }
-    await this.repository.appendMessage(chatId, 'user', message.text.slice(0, 4000));
     try {
-      if (!await this.human.approveOutgoing(chatId, message.business_connection_id, update.update_id, message.text, reply)) return;
       await this.reply(chatId, message.business_connection_id, reply, parseMode);
       await this.repository.appendMessage(chatId, 'assistant', reply, bookingProposalId);
       await this.debug.record(trace, 'reply_sent');

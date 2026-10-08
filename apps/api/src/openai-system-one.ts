@@ -26,7 +26,7 @@ const responseSchema = z.object({
 export class OpenAiSystemOneSelector extends SystemOneSelector {
   constructor(private readonly repository: BookingRepository) { super(); }
   private async requestDecision(body: Record<string, unknown>, signal: AbortSignal) {
-    const deadline = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
+    const deadline = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
     for (const maxOutputTokens of [4096, 8192]) {
       deadline.throwIfAborted();
       const response = await requestOpenAiResponse({ ...body, max_output_tokens: maxOutputTokens }, deadline);

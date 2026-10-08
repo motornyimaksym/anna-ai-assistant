@@ -90,7 +90,7 @@ describe('System One output budget', () => {
     vi.stubGlobal('fetch', fetcher);
     expect(await call(method)).toBe(expected);
     const bodies = fetcher.mock.calls.map(([, init]) => JSON.parse(init.body));
-    expect(timeout.mock.calls.filter(([milliseconds]) => milliseconds === 10_000)).toHaveLength(1);
+    expect(timeout.mock.calls.filter(([milliseconds]) => milliseconds === 30_000)).toHaveLength(3);
     expect(bodies[0].max_output_tokens).toBe(4096);
     expect(bodies[1]).toEqual({ ...bodies[0], max_output_tokens: 8192 });
     expect(bodies[1].store).toBe(false);

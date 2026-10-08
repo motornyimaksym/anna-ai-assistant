@@ -6,9 +6,11 @@ import { bookingConfirmationFactsSchema, type BookingConfirmationFacts, type Con
 import { boundedConversationHistory, systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from './system-two-instructions.js';
 import { bookingConfirmationMismatches } from './booking-confirmation.js';
 import { AssistantToolsService, assistantToolSchema, type AssistantContext } from './assistant-tools.service.js';
+import { TelegramArchiveService } from './telegram-archive.service.js';
 import { BookingRepository } from './repository.js';
 import { collectSensitiveStrings, DebugLogService, humanErrorContext, safeErrorCategory, safeErrorDiagnostic } from './debug-log.service.js';
 import { TextUtils } from './text-utils.js';
+import { systemTwoV2Instructions, systemTwoV2Rag } from './system-two-v2.js';
 
 const string = { type: 'string' };
 const tool = (name: string, description: string, properties: Record<string, unknown>) => ({ type: 'function', name, description, strict: true, parameters: { type: 'object', properties, required: Object.keys(properties), additionalProperties: false } });
@@ -28,6 +30,9 @@ const catalogTools = (services: ServiceDto[]) => {
     ...definition, parameters: { ...definition.parameters, properties: { ...definition.parameters.properties, serviceId: { type: 'string', enum: ids } } },
   }] : []);
 };
+const catalogToolsForVersion = (services: ServiceDto[], version: 'v1' | 'v2') => catalogTools(services).map((definition) => version === 'v2' && definition.name === 'request_human_assistance'
+  ? { ...definition, description: 'Request a human when the client asks for one or cannot be answered accurately from current knowledge and verified tools. No arguments; no automatic client reply.' }
+  : definition);
 const outputSchema = z.object({ status: z.string().optional(), incomplete_details: z.object({ reason: z.string().optional() }).nullish(), output: z.array(z.object({ type: z.string(), name: z.string().optional(), arguments: z.string().optional(), call_id: z.string().optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()).nullish() }).passthrough()) });
 export type AssistantReply = { text: string; fromOpenAI: boolean; needsHuman?: boolean; humanContext?: string; bookingProposalId?: string };
 const responderErrorContext = (error: unknown, source: string, sensitiveValues: string[] = []) => error instanceof BookingNeedsHumanError
@@ -36,7 +41,7 @@ const responderErrorContext = (error: unknown, source: string, sensitiveValues: 
 @Injectable()
 export class OpenAiService {
   private readonly logger = new Logger(OpenAiService.name);
-  constructor(private readonly repository: BookingRepository, private readonly assistantTools: AssistantToolsService, private readonly debug: DebugLogService) {}
+  constructor(private readonly repository: BookingRepository, private readonly assistantTools: AssistantToolsService, private readonly debug: DebugLogService, private readonly telegramArchive: TelegramArchiveService) {}
   async respond(conversation: ConversationDto, context: AssistantContext, text: string): Promise<AssistantReply> {
     const sensitiveValues = [text];
     try {
@@ -54,17 +59,26 @@ export class OpenAiService {
     sensitiveValues.push(...history.map(({ content }) => content), conversation.summary);
     const key = process.env.OPENAI_API_KEY;
     if (!key) throw new Error('OpenAI is not configured');
-    const [promptOverride, knowledgeBaseOverride, configuredServices] = await Promise.all([
-      this.repository.getPromptOverride('assistant'),
-      this.repository.getKnowledgeBaseOverride(),
+    const responseVersion = context.responseVersion ?? 'v1';
+    const [configuredServices, promptOverride, knowledgeBaseOverride, archiveReference] = await Promise.all([
       this.repository.listServices(),
+      responseVersion === 'v1' ? this.repository.getPromptOverride('assistant') : Promise.resolve(undefined),
+      this.repository.getKnowledgeBaseOverride(),
+      responseVersion === 'v2' ? this.telegramArchive.getPromptReference() : Promise.resolve(undefined),
     ]);
-    let selectedTools = catalogTools(configuredServices);
+    const archiveSearchTool = archiveReference ? { type: 'file_search' as const, vector_store_ids: [archiveReference.vectorStoreId], max_num_results: 5 } : undefined;
+    const getSelectedTools = (services: ServiceDto[]) => [
+      ...catalogToolsForVersion(services, responseVersion),
+      ...(archiveSearchTool ? [archiveSearchTool] : []),
+    ];
+    let selectedTools = getSelectedTools(configuredServices);
     let catalogCorrectionUsed = false;
-    const instructions = systemTwoInstructions({ promptOverride: promptOverride?.prompt });
+    const instructions = responseVersion === 'v2' ? systemTwoV2Instructions(archiveReference!.url) : systemTwoInstructions({ promptOverride: promptOverride?.prompt });
     const bookingProposalState = conversation.pendingAction?.name === 'create_booking' && conversation.pendingAction.expiresAt > new Date().toISOString() ? 'pending' : 'none';
-    const rag = systemTwoRag({ message: text, knowledgeBaseOverride: knowledgeBaseOverride?.content, configuredServices, bookingProposalState });
-    sensitiveValues.push(...collectSensitiveStrings({ instructions, rag, promptOverride, knowledgeBaseOverride, configuredServices }));
+    const rag = responseVersion === 'v2'
+      ? systemTwoV2Rag(bookingProposalState, knowledgeBaseOverride?.content)
+      : systemTwoRag({ message: text, knowledgeBaseOverride: knowledgeBaseOverride?.content, configuredServices, bookingProposalState });
+    sensitiveValues.push(...collectSensitiveStrings({ instructions, rag, promptOverride, knowledgeBaseOverride, configuredServices, archiveReference }));
     const bookingHistory = history.at(-1)?.role === 'user' && history.at(-1)?.content === text ? history.slice(0, -1) : history;
     const model = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
     const recentHistory = boundedConversationHistory(bookingHistory, 19);
@@ -97,7 +111,7 @@ export class OpenAiService {
         let parsed: z.infer<typeof assistantToolSchema> | undefined;
         await this.debug.record(context, 'tool_called', { tool: call.name?.slice(0, 100) });
         try {
-          if (!selectedTools.some((item) => item.name === call.name)) throw new Error('Unsupported tool');
+          if (!selectedTools.some((item) => 'name' in item && item.name === call.name)) throw new Error('Unsupported tool');
           parsed = assistantToolSchema.parse({ name: call.name, arguments: JSON.parse(call.arguments ?? '{}') });
           if (parsed.name === 'send_media') {
             if (mediaAttempted) result = { status: 'unavailable', reason: 'Only one media attempt per turn' };
@@ -110,7 +124,7 @@ export class OpenAiService {
             catalogCorrectionUsed = true;
             try {
               const services = (await this.repository.listServices()).filter((service) => service.enabled);
-              selectedTools = catalogTools(services);
+              selectedTools = getSelectedTools(services);
               if (services.length) {
                 corrected = true;
                 result = { status: 'correction_required', code: 'BOOKING_SERVICE_UNAVAILABLE', services: services.map(({ id, name, durationMinutes, durationOptions, price, currency }) => ({ id, name, durationMinutes, durationOptions, price, currency })) };

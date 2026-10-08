@@ -7,6 +7,7 @@ export const DEFAULT_BOT_SETTINGS: BotSettings = {
   typingDelayPerSymbolMs: 600,
   testerUsernames: [],
   allUsersEnabled: false,
+  responseVersion: 'v1',
 };
 
 export const getLegacyTesterUsernames = (): string[] => {
