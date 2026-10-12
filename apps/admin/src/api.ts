@@ -5,13 +5,14 @@ import { googleCalendarStatusSchema, googleCalendarStartSchema, googleCalendarLi
 import { aiChatThreadSchema, aiChatSummarySchema } from '@booking/contracts';
 import { knowledgeBaseResponseSchema } from '@booking/contracts';
 import { mediaSchema, mediaDeleteResponseSchema, createMediaSchema, updateMediaSchema, type MediaDto } from '@booking/contracts';
+import { messageStoreSchema, messageStoreDeleteResponseSchema, messageStoreImportResponseSchema, createMessageStoreSchema, updateMessageStoreSchema, type MessageStoreDto } from '@booking/contracts';
 import { telegramAccountStatusSchema } from '@booking/contracts';
 import { telegramScheduleSlotsResponseSchema, telegramScheduleChatsSchema, telegramScheduleTopicsSchema } from '@booking/contracts';
 import { humanAssistanceSettingsResponseSchema, humanReleaseResponseSchema, humanRequestSchema, updateHumanAssistanceSettingsSchema, type HumanAssistanceSettings } from '@booking/contracts';
 import { adminAccessResponseSchema, assistantPromptResponseSchema, clearConversationContextResponseSchema, promptCatalogResponseSchema, availableSlotsResponseSchema, botSettingsResponseSchema, conversationSchema, serviceDeleteResponseSchema, servicePhotoUploadResponseSchema, servicePhotoUploadSchema, serviceSchema, specResponseSchema, updateAdminAccessSchema, type AssistantPromptId, type BotSettings, type ServiceDto } from '@booking/contracts';
 import { openAiBalanceBaselineSchema, openAiBalanceResponseSchema, updateOpenAiBalanceSchema } from '@booking/contracts';
 import { getAuth } from 'firebase/auth';
-const request = async <T>(path: string, schema: { parse(value: unknown): T }, init?: RequestInit): Promise<T> => { const user = getAuth().currentUser; const token = user ? await user.getIdToken() : undefined; const response = await fetchWithLinearBackoff(`/api${path}`, { ...init, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...init?.headers } }); if (!response.ok) { const body = (path.startsWith('/admin/telegram-account') || path.startsWith('/admin/media') || path.startsWith('/admin/ai-chat') || path.startsWith('/admin/schedule') || path.startsWith('/admin/google-calendar') || path.startsWith('/admin/debug') || path.startsWith('/admin/openai-balance')) ? await response.json().catch(() => ({})) as { message?: unknown } : {}; throw new Error(typeof body.message === 'string' ? body.message : `API request failed (${response.status})`); } return schema.parse(await response.json()); };
+const request = async <T>(path: string, schema: { parse(value: unknown): T }, init?: RequestInit): Promise<T> => { const user = getAuth().currentUser; const token = user ? await user.getIdToken() : undefined; const response = await fetchWithLinearBackoff(`/api${path}`, { ...init, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...init?.headers } }); if (!response.ok) { const body = (path.startsWith('/admin/telegram-account') || path.startsWith('/admin/media') || path.startsWith('/admin/message-store') || path.startsWith('/admin/ai-chat') || path.startsWith('/admin/schedule') || path.startsWith('/admin/google-calendar') || path.startsWith('/admin/debug') || path.startsWith('/admin/openai-balance')) ? await response.json().catch(() => ({})) as { message?: unknown } : {}; throw new Error(typeof body.message === 'string' ? body.message : `API request failed (${response.status})`); } return schema.parse(await response.json()); };
 const readMediaFile = async (file: File) => {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -40,6 +41,13 @@ export const adminApi = {
     return request(id ? `/admin/media/${encodeURIComponent(id)}` : '/admin/media', mediaSchema, { method: id ? 'PATCH' : 'POST', body: JSON.stringify(input) });
   },
   deleteMedia: (id: string) => request(`/admin/media/${encodeURIComponent(id)}`, mediaDeleteResponseSchema, { method: 'DELETE' }),
+  messageStore: () => request('/admin/message-store', messageStoreSchema.array()),
+  saveMessageStore: async (id: string | undefined, value: Pick<MessageStoreDto, 'description' | 'text' | 'enabled'>) => {
+    const input = id ? updateMessageStoreSchema.parse(value) : createMessageStoreSchema.parse(value);
+    return request(id ? `/admin/message-store/${encodeURIComponent(id)}` : '/admin/message-store', messageStoreSchema, { method: id ? 'PATCH' : 'POST', body: JSON.stringify(input) });
+  },
+  deleteMessageStore: (id: string) => request(`/admin/message-store/${encodeURIComponent(id)}`, messageStoreDeleteResponseSchema, { method: 'DELETE' }),
+  importMessageStoreStarters: () => request('/admin/message-store/import-starters', messageStoreImportResponseSchema, { method: 'POST', body: '{}' }),
   telegramAccount: () => request('/admin/telegram-account', telegramAccountStatusSchema, { cache: 'no-store' }),
   telegramAccountAction: (action: 'start' | 'code' | 'password' | 'check' | 'disconnect', data?: { phone?: string; code?: string; password?: string }) => request(action === 'disconnect' ? '/admin/telegram-account' : `/admin/telegram-account/${action}`, telegramAccountStatusSchema, { method: action === 'disconnect' ? 'DELETE' : 'POST', ...(data ? { body: JSON.stringify(data) } : {}) }),
   telegramScheduleChats: () => request('/admin/schedule/source-chats', telegramScheduleChatsSchema, { cache: 'no-store' }),

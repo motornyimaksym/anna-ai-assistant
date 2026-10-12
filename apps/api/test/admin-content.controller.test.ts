@@ -24,7 +24,7 @@ const setup = () => {
     getKnowledgeBaseOverride: vi.fn(async () => undefined),
     saveKnowledgeBaseOverride: vi.fn(async (content: string) => ({ content, updatedAt: '2026-09-24T10:00:00.000Z' })),
     deleteKnowledgeBaseOverride: vi.fn(async () => undefined),
-    listServices: vi.fn(async () => [{ id: 'massage-60', name: 'Relax', description: 'Relaxing massage', durationMinutes: 60, price: 1500, currency: 'UAH', enabled: true }]),
+    listServices: vi.fn(async () => [{ id: 'massage-60', name: 'Relax', description: 'Relaxing massage', durationMinutes: 60, price: 1500, currency: 'UAH', enabled: true, publiclyAvailable: false }]),
     clearConversationContext: vi.fn(async (_chatId: string) => ({ clearedMessages: 3 } as { clearedMessages: number } | undefined)),
   };
   const specService = { getSpec: vi.fn(async () => ({ content: '# Test spec' })) };
@@ -71,7 +71,7 @@ describe('admin content endpoints', () => {
 
   it('serves an editable knowledge base with live service facts and resets it independently', async () => {
     const { controller, repository } = setup();
-    const service = { id: 'massage-60', name: 'Relax', description: 'Relaxing massage', durationMinutes: 60, price: 1500, currency: 'UAH' };
+    const service = { id: 'massage-60', name: 'Relax', description: 'Relaxing massage', durationMinutes: 60, price: 1500, currency: 'UAH', publiclyAvailable: false };
     expect(await controller.knowledgeBase()).toEqual({ content: DEFAULT_KNOWLEDGE_BASE, isCustom: false, services: [service] });
     expect(await controller.updateKnowledgeBase({ content: 'Parking is available.' })).toEqual({ content: 'Parking is available.', isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z', services: [service] });
     expect(repository.saveKnowledgeBaseOverride).toHaveBeenCalledWith('Parking is available.');

@@ -11,7 +11,7 @@ const errorText = (error: unknown) => error instanceof Error ? error.message : '
 
 const newService = (): ServiceDto => ({
   id: globalThis.crypto?.randomUUID?.() ?? `service-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-  name: '', description: '', durationMinutes: 60, bufferMinutes: 30, price: 0, currency: 'UAH', enabled: true,
+  name: '', description: '', durationMinutes: 60, bufferMinutes: 30, price: 0, currency: 'UAH', enabled: true, publiclyAvailable: false,
 });
 
 export function KnowledgeBaseServiceEditor({ service, onSaved }: { service?: Pick<ServiceDto, 'id' | 'name'>; onSaved: (saved: ServiceDto, creating: boolean) => void }) {

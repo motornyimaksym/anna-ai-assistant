@@ -182,6 +182,7 @@ The main backend configuration groups are:
 | Telegram bot           | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`                                                             |
 | AI                     | `OPENAI_API_KEY`, `OPENAI_MODEL`; optional `TYPESAFE_AI_TOKEN` for S1                                       |
 | Google Calendar        | Google OAuth client settings and `GOOGLE_CALENDAR_ENCRYPTION_KEY`; connect the account through the owner UI |
+| Public booking         | Secret Manager `MONOBANK_ACQUIRING_TOKEN`; canonical return/webhook origin `PUBLIC_SITE_URL`           |
 | Telegram account       | `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_SESSION_ENCRYPTION_KEY`                                   |
 | Telegram MCP workspace | Backend-only `TELEGRAM_MCP_BRIDGE_URL` and Cloud Run invocation permission                                  |
 | Runtime                | `PORT` and `DEFAULT_TIMEZONE` (default `Europe/Kyiv`)                                                       |

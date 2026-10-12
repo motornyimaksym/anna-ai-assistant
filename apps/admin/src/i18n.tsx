@@ -47,7 +47,7 @@ const uk: Record<string, string> = {
   "knowledge_gap": "бракує бізнес-відомостей", "jev_unavailable": "послуга недоступна", "operation_error": "помилка операції", "bot_detectability": "відповідь схожа на автоматичну", "probability_unavailable": "не вдалося оцінити відповідь", "handoff_probability": "потрібна перевірка відповіді",
   "source_not_found": "чат-джерело або тема не знайдені", "account_busy": "обліковий запис зайнятий", "connection_failed": "помилка з’єднання", "timeout": "час очікування вичерпано", "error": "помилка", "warn": "попередження", "info": "інформація", "provider_request": "запит до провайдера", "received": "повідомлення отримано", "ignored": "повідомлення пропущено", "human_paused": "обробку передано людині", "jev_decision": "рішення системи 1", "assistant_started": "асистент почав відповідь", "tool_called": "виклик інструмента", "booking_context": "контекст запису", "booking_result": "результат запису", "proposal_created": "пропозицію створено", "confirmation_result": "результат підтвердження", "handoff": "передача людині", "reply_sent": "відповідь надіслано", "reply_failed": "не вдалося надіслати відповідь",
   "Choose a JPEG, PNG or MP4 file.": "Виберіть файл JPEG, PNG або MP4.", "Choose a nonempty file up to 5 MB.": "Виберіть непорожній файл розміром до 5 МБ.", "Choose a nonempty file up to 20 MB.": "Виберіть непорожній файл розміром до 20 МБ.", "Check the description, repeat interval and file.": "Перевірте опис, інтервал повторного надсилання й файл.",
-  "Saved. Changes apply to the next request.": "Збережено. Зміни застосуються до наступного запиту.", "Reset to the default prompt.": "Промпт за замовчуванням відновлено.", "Saved. Changes apply to the next assistant request.": "Збережено. Зміни застосуються до наступного запиту асистента.", "Reset to the default knowledge base.": "Базу знань за замовчуванням відновлено.", "Service catalog item saved. Changes apply to the next assistant request.": "Послугу збережено. Зміни застосуються до наступного запиту асистента.", "Service deleted from the catalog.": "Послугу видалено з каталогу.", "Service saved.": "Послугу збережено.", "Saved. Changes apply to the next incoming message.": "Збережено. Зміни застосуються до наступного вхідного повідомлення.", "Stakeholder access saved.": "Доступ зацікавлених осіб збережено.",
+  "Saved. Changes apply to the next request.": "Збережено. Зміни застосуються до наступного запиту.", "Reset to the default prompt.": "Промпт за замовчуванням відновлено.", "Saved. Changes apply to the next assistant request.": "Збережено. Зміни застосуються до наступного запиту асистента.", "Reset to the default knowledge base.": "Базу знань за замовчуванням відновлено.", "Service catalog item saved. Changes apply to the next assistant request.": "Послугу збережено. Зміни застосуються до наступного запиту асистента.", "Service deleted from the catalog.": "Послугу видалено з каталогу.", "Service saved.": "Послугу збережено.", "Available publicly": "Доступно публічно", "Could not update public availability.": "Не вдалося змінити публічну доступність.", "Saved. Changes apply to the next incoming message.": "Збережено. Зміни застосуються до наступного вхідного повідомлення.", "Stakeholder access saved.": "Доступ зацікавлених осіб збережено.",
   "Expected refresh token expiration:": "Очікувана дата завершення дії refresh token:",
   "Calendar selected. New appointments will be created here.": "Календар вибрано. Нові записи створюватимуться тут.", "Conflict calendars saved.": "Календарі зайнятості збережено.", "Google Calendar connection verified.": "Підключення Google Calendar перевірено.", "Google Calendar disconnected.": "Google Calendar відключено.", "Telegram connection verified.": "Підключення Telegram перевірено.", "Telegram account connected.": "Обліковий запис Telegram підключено.", "Telegram account disconnected.": "Обліковий запис Telegram відключено.", "Telegram request failed.": "Не вдалося виконати запит Telegram.", "Sign-out failed. Please try again.": "Не вдалося вийти. Спробуйте ще раз.",
   "Enter a valid Telegram username.": "Введіть коректне ім’я користувача Telegram.", "Enter a valid, unique email address.": "Введіть коректну унікальну email-адресу.", "Invalid username.": "Некоректне ім’я користувача.", "Select caption text first.": "Спершу виділіть текст підпису.", "Invalid formatting selection.": "Вибрано некоректний фрагмент форматування.", "Use a JPEG, PNG, or WebP image.": "Виберіть зображення JPEG, PNG або WebP.", "Image must be 5 MiB or smaller.": "Зображення має бути розміром до 5 МіБ.", "Could not preview the selected image.": "Не вдалося переглянути вибране зображення.", "Service is no longer available. Reload the page.": "Послуга більше недоступна. Перезавантажте сторінку.", "Invalid service details.": "Некоректні дані послуги.",
@@ -59,7 +59,28 @@ const uk: Record<string, string> = {
   "Current balance (USD)": "Поточний баланс (USD)",
   "Saving sets this as current balance and starts counting costs from now.": "Після збереження ця сума стане поточним балансом, а витрати рахуватимуться від цього часу.",
   "Save a current balance to start the estimate.": "Збережіть поточний баланс, щоб почати розрахунок.",
-  "Could not save OpenAI balance.": "Не вдалося зберегти баланс OpenAI."
+  "Could not save OpenAI balance.": "Не вдалося зберегти баланс OpenAI.",
+  "Message Store": "Сховище повідомлень",
+  "Save exact replies for questions you answer often.": "Зберігайте точні відповіді на часті запитання.",
+  "Save exact owner-written text. The description guides selection and is never sent to clients.": "Зберігайте точний текст відповідей власниці. Опис допомагає вибрати відповідь і не надсилається клієнтам.",
+  "Suitable situation or client question": "Відповідна ситуація або запитання клієнта",
+  "Exact reply text": "Точний текст відповіді",
+  "Check the description and message text.": "Перевірте опис і текст повідомлення.",
+  "Could not save the reply.": "Не вдалося зберегти відповідь.",
+  "Keep reusable replies exactly as written. The assistant uses one only when it directly answers and current facts allow it.": "Зберігайте відповіді без змін. Асистент використає їх лише для прямої відповіді, якщо факти залишаються актуальними.",
+  "Import reviewed replies": "Імпортувати перевірені відповіді",
+  "Add reply": "Додати відповідь",
+  "Importing…": "Імпорт…",
+  "Imported {imported} saved replies; {existing} already existed.": "Імпортовано відповідей: {imported}; вже існувало: {existing}.",
+  "Could not import starter replies.": "Не вдалося імпортувати початкові відповіді.",
+  "Loading saved replies": "Завантаження збережених відповідей",
+  "Could not load saved replies.": "Не вдалося завантажити збережені відповіді.",
+  "No saved replies yet. Import reviewed replies or add one.": "Збережених відповідей поки немає. Імпортуйте перевірені або додайте нову.",
+  "Edit saved reply": "Редагувати збережену відповідь",
+  "Add saved reply": "Додати збережену відповідь",
+  "Delete saved reply?": "Видалити збережену відповідь?",
+  "This removes the reply from Message Store. Messages already sent remain in client chats.": "Відповідь буде видалено зі сховища. Уже надіслані повідомлення залишаться в чатах клієнтів.",
+  "Could not delete the reply.": "Не вдалося видалити відповідь."
 };
 
 type LocaleContextValue = { language: AdminLanguage; setLanguage: (language: AdminLanguage) => void; t: (key: string, values?: Record<string, string | number>) => string };

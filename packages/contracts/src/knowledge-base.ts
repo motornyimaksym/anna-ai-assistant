@@ -9,6 +9,7 @@ export const knowledgeBaseServiceSchema = z.object({
   durationOptions: z.array(z.object({ durationMinutes: z.number().int().positive(), price: z.number().finite().nonnegative() })).optional(),
   price: z.number().finite().nonnegative(),
   currency: z.string().length(3),
+  publiclyAvailable: z.boolean().default(false),
 });
 export const knowledgeBaseResponseSchema = z.object({
   content: z.string(),

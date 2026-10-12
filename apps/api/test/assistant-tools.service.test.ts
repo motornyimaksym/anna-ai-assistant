@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { AssistantToolsService } from '../src/assistant-tools.service.js';
 const context = { clientId: 'alice', telegramChatId: 'chat' };
 describe('assistant tools', () => {
-  const bookings = { list: vi.fn(async () => [{ id: 'foreign', clientId: 'bob', telegramChatId: 'other' }, { id: 'own', ...context }]), create: vi.fn(), cancel: vi.fn(), reschedule: vi.fn() };
+  const bookings = { list: vi.fn(async () => [{ id: 'foreign', clientId: 'bob', telegramChatId: 'other' }, { id: 'own', ...context }]), hasPriorAppointment: vi.fn(async () => false), create: vi.fn(), cancel: vi.fn(), reschedule: vi.fn() };
   const bookingContext = { read: vi.fn(async () => ({ schedule: { status: 'unavailable' }, calendar: { status: 'unavailable' } })) };
-  const tools = new AssistantToolsService({} as never, bookings as never, bookingContext as never);
+  const tools = new AssistantToolsService({} as never, bookings as never, bookingContext as never, {} as never);
   it('binds listing to current sender and chat', async () => {
     expect(await tools.execute({ name: 'get_bookings', arguments: {} }, context)).toEqual([{ id: 'own', ...context }]);
   });
@@ -26,7 +26,7 @@ describe('assistant tools', () => {
     const startAt = `${new Date(utcStart.getTime() + 3 * 60 * 60_000).toISOString().slice(0, 19)}+03:00`;
     const normalizedStartAt = utcStart.toISOString();
     const proposalId = '2a1c75d0-d891-4e04-8b54-341cba762ae6';
-    const service = { id: 'massage', name: 'Massage', durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH', enabled: true };
+    const service = { id: 'massage', name: 'Massage', durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH', enabled: true, publiclyAvailable: true };
     let proposal: { id: string; name: 'create_booking'; arguments: { serviceId: string; durationMinutes: number; startAt: string }; confirmationFacts: { serviceName: string; durationMinutes: number; localDate: string; localTime: string; price: number; currency: string; referenceCode?: string }; expiresAt: string } | undefined;
     let delivered = false;
     let omitCurrency = false;
@@ -44,9 +44,9 @@ describe('assistant tools', () => {
       consumeAssistantBooking: vi.fn(async () => { consumed = true; return proposal; }),
     };
     const booking = { id: 'created', clientId: 'alice', telegramChatId: 'chat' };
-    const bookingService = { create: vi.fn(async (..._args: unknown[]) => booking) };
+    const bookingService = { create: vi.fn(async (..._args: unknown[]) => booking), hasPriorAppointment: vi.fn(async () => false) };
     const evidence = { read: vi.fn(async () => ({ schedule: { status: 'ready' }, calendar: { status: 'ready', rangeStart: new Date().toISOString(), rangeEnd: new Date(Date.now() + 30 * 24 * 60 * 60_000).toISOString(), busy: [] } })) };
-    const subject = new AssistantToolsService(repository as never, bookingService as never, evidence as never);
+    const subject = new AssistantToolsService(repository as never, bookingService as never, evidence as never, {} as never);
     const prepared = await subject.execute({ name: 'prepare_booking', arguments: { serviceId: 'massage', durationMinutes: 60, startAt } }, context);
     expect(prepared).toMatchObject({ status: 'prepared', proposalId, confirmationFacts: { serviceName: 'Massage', durationMinutes: 60, price: 1500, currency: 'UAH' } });
     expect((prepared as { confirmationFacts: object }).confirmationFacts).not.toHaveProperty('referenceCode');
@@ -82,7 +82,7 @@ describe('assistant tools', () => {
     ['factless legacy proposal', { clientId: 'alice', pendingAction: { id: 'legacy', name: 'create_booking', confirmationText: 'Massage at 20:00?', expiresAt: '2099-01-01T00:00:00.000Z' } }, 'incomplete'],
   ])('identifies a safe proposal state issue: %s', async (_label, conversation, proposalIssue) => {
     const repository = { getConversation: vi.fn(async () => conversation) };
-    const subject = new AssistantToolsService(repository as never, { create: vi.fn() } as never, {} as never);
+    const subject = new AssistantToolsService(repository as never, { create: vi.fn(), hasPriorAppointment: vi.fn(async () => false) } as never, {} as never, {} as never);
     await expect(subject.execute({ name: 'create_booking', arguments: {} }, context)).rejects.toMatchObject({ code: 'BOOKING_PROPOSAL_STATE', proposalIssue });
   });
 
@@ -90,13 +90,14 @@ describe('assistant tools', () => {
     const proposal = { id: '3a1c75d0-d891-4e04-8b54-341cba762ae6', name: 'create_booking' as const, arguments: { serviceId: 'massage', durationMinutes: 60, startAt: '2026-09-30T17:00:00.000Z' }, confirmationFacts: { serviceName: 'Massage', durationMinutes: 60, localDate: '30 вер. 2026 р.', localTime: '20:00', price: 1500, currency: 'UAH', referenceCode: 'f6b473a6' }, expiresAt: new Date(Date.now() + 60_000).toISOString() };
     let deliveredProposalId: string | undefined = 'different-proposal';
     const repository = {
+      getService: vi.fn(async () => ({ id: 'massage', enabled: true, publiclyAvailable: true })),
       getConversation: vi.fn(async () => ({ clientId: 'alice', pendingAction: proposal })),
       listMessagesForBookingCheck: vi.fn(async () => [{ role: 'assistant' as const, content: 'Massage, 60 хв, 30 вер. 2026 р. о 20:00, 1500 UAH. Код f6b473a6.', ...(deliveredProposalId ? { bookingProposalId: deliveredProposalId } : {}) }]),
       consumeAssistantBooking: vi.fn(async () => proposal),
     };
     const booking = { id: 'legacy-created', clientId: 'alice', telegramChatId: 'chat' };
-    const bookingService = { create: vi.fn(async () => booking) };
-    const subject = new AssistantToolsService(repository as never, bookingService as never, {} as never);
+    const bookingService = { create: vi.fn(async () => booking), hasPriorAppointment: vi.fn(async () => false) };
+    const subject = new AssistantToolsService(repository as never, bookingService as never, {} as never, {} as never);
     const approvalContext = { ...context, currentMessage: 'Так, підтверджую' };
     await expect(subject.execute({ name: 'create_booking', arguments: {} }, approvalContext)).rejects.toThrow('not delivered accurately');
     deliveredProposalId = undefined;
@@ -108,7 +109,7 @@ it.each([undefined, { enabled: false }])('rejects an unavailable service before 
   const repository = { getService: vi.fn(async () => service), stageAssistantBooking: vi.fn() };
   const evidence = { read: vi.fn() };
   const bookings = { create: vi.fn() };
-  const subject = new AssistantToolsService(repository as never, bookings as never, evidence as never);
+  const subject = new AssistantToolsService(repository as never, bookings as never, evidence as never, {} as never);
   await expect(subject.execute({ name: 'prepare_booking', arguments: { serviceId: 'invented-id', durationMinutes: 90, startAt: '2099-01-01T18:30:00+03:00' } }, context)).rejects.toMatchObject({ code: 'BOOKING_SERVICE_UNAVAILABLE' });
   expect(evidence.read).not.toHaveBeenCalled();
   expect(repository.stageAssistantBooking).not.toHaveBeenCalled();
@@ -125,13 +126,13 @@ it.each([
 ])('reports %s before staging or writing', async (code, failure) => {
   const start = Date.now() + (failure === 'past' ? -1 : 1) * 86400_000;
   const repository = {
-    getService: vi.fn(async () => ({ id: 'massage', name: 'Massage', enabled: true, durationMinutes: 90, price: 4000, currency: 'UAH', bufferMinutes: 15 })),
+    getService: vi.fn(async () => ({ id: 'massage', name: 'Massage', enabled: true, publiclyAvailable: true, durationMinutes: 90, price: 4000, currency: 'UAH', bufferMinutes: 15 })),
     stageAssistantBooking: vi.fn(),
   };
   const calendar = { status: failure === 'calendar' ? 'unavailable' : 'ready', rangeStart: new Date(Date.now() - 2 * 86400_000).toISOString(), rangeEnd: new Date(failure === 'range' ? start + 60_000 : start + 86400_000).toISOString(), busy: failure === 'busy' ? [{ start: new Date(start + 95 * 60_000).toISOString(), end: new Date(start + 120 * 60_000).toISOString() }] : [] };
   const evidence = { read: vi.fn(async () => ({ schedule: { status: failure === 'schedule' ? 'unavailable' : 'ready' }, calendar })) };
-  const bookings = { create: vi.fn() };
-  const subject = new AssistantToolsService(repository as never, bookings as never, evidence as never);
+  const bookings = { create: vi.fn(), hasPriorAppointment: vi.fn(async () => false) };
+  const subject = new AssistantToolsService(repository as never, bookings as never, evidence as never, {} as never);
   await expect(subject.execute({ name: 'prepare_booking', arguments: { serviceId: 'massage', durationMinutes: failure === 'duration' ? 75 : 90, startAt: new Date(start).toISOString() } }, context)).rejects.toMatchObject({ code });
   expect(repository.stageAssistantBooking).not.toHaveBeenCalled();
   expect(bookings.create).not.toHaveBeenCalled();

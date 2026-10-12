@@ -25,7 +25,7 @@ describe('Calendar-only booking records', () => {
     const event = requests[0]?.body as { summary: string; description: string; extendedProperties: { private: Record<string, string> } };
     expect(event.summary.split(' | ')).toEqual(['@user61785', 'Іван Петренко', 'Авторський чуттєвий масаж', '4000 UAH (ai-bot)']);
     const descriptionLines = event.description.split('\n');
-    expect(descriptionLines.slice(0, 3).map((line) => line.split(':')[0])).toEqual(['Booking ID', 'Client', 'Telegram chat']);
+    expect(descriptionLines.slice(0, 3).map((line) => line.split(':')[0])).toEqual(['Booking ID', 'Client ID', 'Telegram chat']);
     expect(descriptionLines.slice(5).map((line) => line.split(':')[0])).toEqual(['Клієнт', 'Помічник']);
     expect(event.extendedProperties.private).toMatchObject({ bookingId: 'booking-1', clientId: 'client-1', serviceId: 'massage', durationMinutes: '90', price: '4000', currency: 'UAH', bufferMinutes: '30' });
   });
@@ -70,6 +70,6 @@ describe('Calendar-only booking records', () => {
     expect(await calendar.backfillLegacyBookingEvent(booking, 15, true)).toBe('ready');
     expect(request.mock.calls[2]?.[2]).toMatchObject({ method: 'PATCH', headers: { 'If-Match': 'v1' } });
     const patch = JSON.parse(String(request.mock.calls[2]?.[2]?.body)) as { description: string };
-    expect(patch.description.split('\n').slice(0, 3).map((line) => line.split(':')[0])).toEqual(['Booking ID', 'Client', 'Telegram chat']);
+    expect(patch.description.split('\n').slice(0, 3).map((line) => line.split(':')[0])).toEqual(['Booking ID', 'Client ID', 'Telegram chat']);
   });
 });

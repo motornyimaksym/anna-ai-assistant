@@ -31,6 +31,7 @@ import {
   GavelRounded,
   HubOutlined,
   MenuBookRounded,
+  MessageOutlined,
   MenuRounded,
   PrivacyTipOutlined,
   PermMediaOutlined,
@@ -96,6 +97,13 @@ const destinations = [
     group: "Resources",
     icon: PermMediaOutlined,
     description: "A visual library for more helpful client conversations.",
+  },
+  {
+    path: "message-store",
+    label: "Message Store",
+    group: "Resources",
+    icon: MessageOutlined,
+    description: "Save exact replies for questions you answer often.",
   },
   {
     path: "specs",

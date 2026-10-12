@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Services } from './Services.js';
 import { adminApi } from './api.js';
 
-const service = { id: 'massage-60', name: 'Massage 60 min', description: 'Relaxing full-body massage.', durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH', enabled: true };
+const service = { id: 'massage-60', name: 'Massage 60 min', description: 'Relaxing full-body massage.', durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH', enabled: true, publiclyAvailable: false };
 vi.mock('./api.js', () => ({ adminApi: { services: vi.fn(), saveService: vi.fn(), uploadServicePhoto: vi.fn() } }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 const show = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } })}><Services /></QueryClientProvider>);

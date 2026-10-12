@@ -5,7 +5,7 @@ import { waitForRandomReadDelay, waitForResponsePacing } from './response-pacing
 import { OpenAiService } from './openai.service.js';
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { z } from 'zod';
-import { type ConversationDto } from '@booking/contracts';
+import { type ConversationDto, type MessageStoreEntityDto } from '@booking/contracts';
 import { BookingRepository } from './repository.js';
 import { getDefaultBotSettings, getLegacyTesterUsernames } from './bot-settings.js';
 import { HumanAssistanceService } from './human-assistance.service.js';
@@ -116,9 +116,10 @@ export class TelegramService {
       return;
     }
     await this.debug.record(trace, 'assistant_started');
-    const stopTyping = await this.startTyping(chatId, message.business_connection_id);
+    const typing = this.startTyping(chatId, message.business_connection_id);
     let reply: string;
     let parseMode: 'HTML' | undefined;
+    let replyEntities: MessageStoreEntityDto[] | undefined;
     let bookingProposalId: string | undefined;
     try {
       const answer = await this.assistant.respond(conversation, {
@@ -132,23 +133,27 @@ export class TelegramService {
         await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, answer.humanContext);
         return;
       }
-      const outgoingText = TextUtils.replaceLongDashes(answer.text);
+      const outgoingText = answer.exactStoredMessage ? answer.text : TextUtils.replaceLongDashes(answer.text);
       bookingProposalId = answer.bookingProposalId;
-      if (answer.fromOpenAI) await waitForResponsePacing(outgoingText, settings.typingDelayPerSymbolMs);
-      reply = answer.fromOpenAI ? formatTelegramHtml(outgoingText) : outgoingText;
-      if (answer.fromOpenAI) parseMode = 'HTML';
+      replyEntities = answer.exactStoredMessage ? answer.storedMessageEntities : undefined;
+      if (answer.fromOpenAI && !answer.exactStoredMessage) {
+        typing.start();
+        await waitForResponsePacing(outgoingText, settings.typingDelayPerSymbolMs);
+      }
+      reply = answer.exactStoredMessage ? answer.text : answer.fromOpenAI ? formatTelegramHtml(outgoingText) : outgoingText;
+      if (answer.fromOpenAI && !answer.exactStoredMessage) parseMode = 'HTML';
     } catch (error) {
       await this.debug.record(trace, 'error', { reason: 'assistant_operation_failed', errorCategory: safeErrorCategory(error) }, 'error');
       this.logger.error(`Assistant operation failed update=${update.update_id} trace=${trace.traceId}: ${JSON.stringify(safeErrorDiagnostic(error, [message.text]))}`);
       await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, humanErrorContext(error, 'assistant turn', [message.text]));
       return;
     } finally {
-      stopTyping();
+      typing.stop();
     }
     await this.repository.appendMessage(chatId, 'user', message.text.slice(0, 4000));
     try {
       if (!await this.human.approveOutgoing(chatId, message.business_connection_id, update.update_id, message.text, reply)) return;
-      await this.reply(chatId, message.business_connection_id, reply, parseMode);
+      await this.reply(chatId, message.business_connection_id, reply, parseMode, replyEntities);
       await this.repository.appendMessage(chatId, 'assistant', reply, bookingProposalId);
       await this.debug.record(trace, 'reply_sent');
     } catch (error) {
@@ -157,8 +162,8 @@ export class TelegramService {
       await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, `Результат доставки відповіді клієнту або її збереження невідомий. Звірте чат і стан запиту перед повторним надсиланням, щоб не створити дубль. ${humanErrorContext(error, 'Telegram delivery', [message.text, reply])}`);
     }
   }
-  private async startTyping(chatId: string, businessConnectionId: string | undefined): Promise<() => void> {
-    if (!process.env.TELEGRAM_BOT_TOKEN) return () => undefined;
+  private startTyping(chatId: string, businessConnectionId: string | undefined): { start: () => void; stop: () => void } {
+    if (!process.env.TELEGRAM_BOT_TOKEN) return { start: () => undefined, stop: () => undefined };
     let pending = false;
     const pulse = async () => {
       if (pending) return;
@@ -175,9 +180,11 @@ export class TelegramService {
         pending = false;
       }
     };
-    await pulse();
-    const timer = setInterval(() => { void pulse(); }, 4_000);
-    return () => clearInterval(timer);
+    let timer: ReturnType<typeof setInterval> | undefined;
+    return {
+      start: () => { if (!timer) { void pulse(); timer = setInterval(() => { void pulse(); }, 4_000); } },
+      stop: () => { if (timer) clearInterval(timer); timer = undefined; },
+    };
   }
   private async markBusinessMessageRead(businessConnectionId: string, chatId: string | number, messageId: number): Promise<void> {
     const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -194,5 +201,5 @@ export class TelegramService {
       this.logger.error(`Telegram read receipt request failed: ${JSON.stringify(safeErrorDiagnostic(error, [String(chatId)]))}`);
     }
   }
-  private async reply(chatId: string, businessConnectionId: string | undefined, text: string, parseMode?: 'HTML'): Promise<void> { const token = process.env.TELEGRAM_BOT_TOKEN; if (!token) throw new Error('Telegram token not configured'); const response = await fetchWithLinearBackoff(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text, ...(parseMode ? { parse_mode: parseMode } : {}), ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}) }) }, { timeoutMs: 10_000 }); const providerRequestId = response.headers?.get('x-request-id') ?? undefined; if (!response.ok) throw Object.assign(new Error(`Telegram HTTP ${response.status}`), { upstreamStatus: response.status, providerRequestId }); const result = await response.json().catch(() => undefined) as { ok?: boolean } | undefined; if (result?.ok !== true) throw Object.assign(new Error('Telegram message delivery was not confirmed'), { upstreamStatus: response.status, providerRequestId }); }
+  private async reply(chatId: string, businessConnectionId: string | undefined, text: string, parseMode?: 'HTML', entities?: MessageStoreEntityDto[]): Promise<void> { const token = process.env.TELEGRAM_BOT_TOKEN; if (!token) throw new Error('Telegram token not configured'); const response = await fetchWithLinearBackoff(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text, ...(parseMode ? { parse_mode: parseMode } : {}), ...(entities?.length ? { entities } : {}), ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}) }) }, { timeoutMs: 10_000 }); const providerRequestId = response.headers?.get('x-request-id') ?? undefined; if (!response.ok) throw Object.assign(new Error(`Telegram HTTP ${response.status}`), { upstreamStatus: response.status, providerRequestId }); const result = await response.json().catch(() => undefined) as { ok?: boolean } | undefined; if (result?.ok !== true) throw Object.assign(new Error('Telegram message delivery was not confirmed'), { upstreamStatus: response.status, providerRequestId }); }
 }

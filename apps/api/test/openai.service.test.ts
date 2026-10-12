@@ -5,8 +5,8 @@ const conversation = { telegramChatId: 'chat', clientId: 'alice', openaiConversa
 const context = { clientId: 'alice', telegramChatId: 'chat' };
 const setup = () => {
   vi.stubEnv('OPENAI_API_KEY', 'test-key');
-  const repository = { listMessages: vi.fn(async () => []), getPromptOverride: vi.fn(async () => undefined), getKnowledgeBaseOverride: vi.fn(async () => undefined), listServices: vi.fn(async () => [{ id: 'massage', name: 'Massage', enabled: true, durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH' }]), detachOpenAiConversation: vi.fn(), replacePendingAction: vi.fn(), replaceOpenAiConversation: vi.fn(), ensureOpenAiConversation: vi.fn(async () => 'conv-created'), appendMessage: vi.fn() };
-  const tools = { execute: vi.fn(async (): Promise<unknown> => []) };
+  const repository = { listMessages: vi.fn(async () => []), getPromptOverride: vi.fn(async () => undefined), getKnowledgeBaseOverride: vi.fn(async () => undefined), listServices: vi.fn(async () => [{ id: 'massage', name: 'Massage', enabled: true, publiclyAvailable: true, durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH' }]), detachOpenAiConversation: vi.fn(), replacePendingAction: vi.fn(), replaceOpenAiConversation: vi.fn(), ensureOpenAiConversation: vi.fn(async () => 'conv-created'), appendMessage: vi.fn() };
+  const tools = { execute: vi.fn(async (): Promise<unknown> => []), isReturningClient: vi.fn(async () => false), servicesForClient: vi.fn(async () => repository.listServices()) };
   const debug = { record: vi.fn(async () => {}) };
   return { repository, tools, debug, service: new OpenAiService(repository as never, tools as never, debug as never) };
 };
@@ -182,7 +182,7 @@ it.each(['cancel_booking', 'reschedule_booking', 'plan_booking'])('rejects remov
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name, arguments: '{}', call_id: 'bad' }] }) }));
   expect(await service.respond(conversation, context, 'Запиши мене')).toMatchObject({ needsHuman: true, text: '' });
   expect(tools.execute).not.toHaveBeenCalled();
-  expect(assistantToolDefinitions.map(({ name }) => name)).toEqual(['get_media', 'send_media', 'get_services', 'get_bookings', 'get_booking_context', 'prepare_booking', 'create_booking', 'request_human_assistance']);
+  expect(assistantToolDefinitions.map(({ name }) => name)).toEqual(['get_media', 'send_media', 'get_saved_messages', 'select_saved_message', 'get_services', 'get_bookings', 'get_booking_context', 'prepare_booking', 'create_booking', 'request_human_assistance']);
 });
 
 it('hands an unlisted custom-service request to a person without an automatic reply', async () => {
@@ -234,7 +234,7 @@ it('uses the unified override for every turn and keeps full knowledge and catalo
   const { service, repository } = setup();
   repository.getPromptOverride.mockResolvedValue({ prompt: 'Unified custom style' } as never);
   repository.getKnowledgeBaseOverride.mockResolvedValue({ content: 'Unrelated policy still retained. Eligibility matters.' } as never);
-  repository.listServices.mockResolvedValue([{ id: 'massage', name: 'Massage', enabled: true, durationMinutes: 60, bufferMinutes: 30, price: 1500, currency: 'UAH' }] as never);
+  repository.listServices.mockResolvedValue([{ id: 'massage', name: 'Massage', enabled: true, publiclyAvailable: true, durationMinutes: 60, bufferMinutes: 30, price: 1500, currency: 'UAH' }] as never);
   const fetcher = vi.fn().mockResolvedValue(answer('Вітаю.'));
   vi.stubGlobal('fetch', fetcher);
   await service.respond(conversation, context, 'Hi');
@@ -248,7 +248,7 @@ it('uses the unified override for every turn and keeps full knowledge and catalo
 
 it.each([false, true])('bounds invalid catalog ID correction (repeated=%s)', async (repeated) => {
   const { service, tools, repository, debug } = setup();
-  const catalog = [{ id: 'actual-id', name: 'Massage', enabled: true, durationMinutes: 90, price: 4000, currency: 'UAH', bufferMinutes: 15 }];
+  const catalog = [{ id: 'actual-id', name: 'Massage', enabled: true, publiclyAvailable: true, durationMinutes: 90, price: 4000, currency: 'UAH', bufferMinutes: 15 }];
   repository.listServices.mockResolvedValue(catalog as never);
   const failure = Object.assign(new Error('Service unavailable'), { code: 'BOOKING_SERVICE_UNAVAILABLE' });
   tools.execute.mockRejectedValueOnce(failure);
@@ -289,8 +289,8 @@ it('does not retry an uncertain booking write or generate an unsent final reply'
 
 it.each(['empty', 'error'])('escalates without another model call when catalog recovery is %s', async (kind) => {
   const { service, tools, repository, debug } = setup();
-  if (kind === 'empty') repository.listServices.mockResolvedValueOnce([{ id: 'massage', name: 'Massage', enabled: true, durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH' }]).mockResolvedValueOnce([]);
-  else repository.listServices.mockResolvedValueOnce([{ id: 'massage', name: 'Massage', enabled: true, durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH' }]).mockRejectedValueOnce(new Error('Catalog unavailable'));
+  if (kind === 'empty') repository.listServices.mockResolvedValueOnce([{ id: 'massage', name: 'Massage', enabled: true, publiclyAvailable: true, durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH' }]).mockResolvedValueOnce([]);
+  else repository.listServices.mockResolvedValueOnce([{ id: 'massage', name: 'Massage', enabled: true, publiclyAvailable: true, durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH' }]).mockRejectedValueOnce(new Error('Catalog unavailable'));
   tools.execute.mockRejectedValue(Object.assign(new Error('Service unavailable'), { code: 'BOOKING_SERVICE_UNAVAILABLE' }));
   const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ output: [{ type: 'function_call', name: 'prepare_booking', call_id: 'c1', arguments: JSON.stringify({ serviceId: 'missing', durationMinutes: 90, startAt: '2099-01-01T10:00:00Z' }) }] }) });
   vi.stubGlobal('fetch', fetcher);

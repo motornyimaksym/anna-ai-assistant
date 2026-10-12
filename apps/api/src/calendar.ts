@@ -6,7 +6,7 @@ import { localDayBounds } from '@booking/domain';
 import { GoogleCalendarConnection, type CalendarCredentials } from './google-calendar.connection.js';
 export type BusyInterval = { start: string; end: string };
 export type BookingConversationMessage = { role: 'user' | 'assistant' | 'human'; content: string };
-export type BookingEventContext = { telegramUsername?: string; telegramDisplayName?: string; messages?: BookingConversationMessage[] };
+export type BookingEventContext = { source?: 'telegram' | 'public_web'; serviceName?: string; telegramUsername?: string; telegramDisplayName?: string; clientName?: string; clientContact?: string; messages?: BookingConversationMessage[] };
 export const bookingEventId = (id: string) => createHash('sha256').update(`booking:${id}`).digest('hex');
 const instant = z.string().datetime({ offset: true });
 const eventSchema = z.object({ id: z.string(), etag: z.string().optional(), status: z.string().optional(), transparency: z.string().optional(), start: z.object({ dateTime: instant.optional(), date: z.string().optional() }).optional(), end: z.object({ dateTime: instant.optional(), date: z.string().optional() }).optional(), extendedProperties: z.object({ private: z.record(z.string()).optional() }).optional() });
@@ -41,9 +41,9 @@ const truncateCodePoints = (value: string, limit: number) => {
 };
 const calendarTitlePart = (value: string) => value.replace(/[\r\n\t]+/g, ' ').replace(/\|/g, '／').replace(/\s+/g, ' ').trim();
 const bookingDescription = (booking: BookingDto, messages: BookingConversationMessage[] = []) => {
-  const header = `Booking ID: ${booking.id}\nClient: ${booking.clientId}\nTelegram chat: ${booking.telegramChatId}`;
-  const heading = '\n\nОстанні повідомлення:\n';
+  const header = [`Booking ID: ${booking.id}`, ...(booking.clientId ? [`Client ID: ${booking.clientId}`] : []), ...(booking.telegramChatId ? [`Telegram chat: ${booking.telegramChatId}`] : []), ...(booking.clientName ? [`Client name: ${booking.clientName}`] : []), ...(booking.clientContact ? [`Preferred contact: ${booking.clientContact}`] : [])].join('\n');
   const entries = messages.slice(-20).map((message) => `${transcriptRoleNames[message.role]}: ${cleanTranscriptText(message)}`);
+  const heading = entries.length ? '\n\nОстанні повідомлення:\n' : '';
   const separatorsLength = Math.max(0, entries.length - 1);
   const labelsLength = entries.reduce((total, entry) => total + entry.length - entry.slice(entry.indexOf(': ') + 2).length, 0);
   const contentBudget = Math.max(0, calendarDescriptionLimit - header.length - heading.length - separatorsLength - labelsLength);
@@ -72,7 +72,10 @@ const bookingDescription = (booking: BookingDto, messages: BookingConversationMe
 type CalendarEvent = z.infer<typeof eventSchema>;
 const path = (calendarId: string, eventId?: string) => `/calendars/${encodeURIComponent(calendarId)}/events${eventId ? `/${encodeURIComponent(eventId)}` : ''}`;
 const sameTime = (event: CalendarEvent, booking: Pick<BookingDto, 'startAt' | 'endAt'>) => Date.parse(event.start?.dateTime ?? '') === Date.parse(booking.startAt) && Date.parse(event.end?.dateTime ?? '') === Date.parse(booking.endAt);
-const managedProperties = z.object({ schemaVersion: z.literal('1'), bookingId: z.string().min(1), clientId: z.string().min(1), telegramChatId: z.string().min(1), businessConnectionId: z.string().optional(), serviceId: z.string().min(1), durationMinutes: z.coerce.number().int().min(15).max(480), price: z.coerce.number().finite().nonnegative(), currency: z.string().length(3), bufferMinutes: z.coerce.number().int().min(0).max(120), createdAt: instant });
+const managedProperties = z.object({ schemaVersion: z.literal('1'), bookingId: z.string().min(1), clientId: z.string().min(1).optional(), telegramChatId: z.string().min(1).optional(), businessConnectionId: z.string().optional(), source: z.enum(['telegram', 'public_web']).default('telegram'), clientName: z.string().min(1).max(120).optional(), clientContact: z.string().min(1).max(256).optional(), serviceId: z.string().min(1), durationMinutes: z.coerce.number().int().min(15).max(480), price: z.coerce.number().finite().nonnegative(), currency: z.string().length(3), bufferMinutes: z.coerce.number().int().min(0).max(120), createdAt: instant }).superRefine((value, ctx) => {
+  if (value.source === 'telegram' && (!value.clientId || !value.telegramChatId)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Telegram event identity is incomplete' });
+  if (value.source === 'public_web' && (!value.clientName || !value.clientContact)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Public event contact is incomplete' });
+});
 export type ManagedBooking = { booking: BookingDto; bufferMinutes: number };
 @Injectable()
 export class CalendarService {
@@ -90,7 +93,7 @@ export class CalendarService {
     const data = parsed.data;
     const startAt = event.start?.dateTime; const endAt = event.end?.dateTime;
     if (event.id !== bookingEventId(data.bookingId) || !startAt || !endAt || Date.parse(startAt) >= Date.parse(endAt) || (Date.parse(endAt) - Date.parse(startAt)) / 60_000 !== data.durationMinutes) return undefined;
-    return { booking: { id: data.bookingId, clientId: data.clientId, telegramChatId: data.telegramChatId, ...(data.businessConnectionId ? { businessConnectionId: data.businessConnectionId } : {}), serviceId: data.serviceId, durationMinutes: data.durationMinutes, price: data.price, currency: data.currency, startAt: new Date(startAt).toISOString(), endAt: new Date(endAt).toISOString(), status: 'confirmed', googleCalendarEventId: event.id, googleCalendarId: calendarId, calendarSyncStatus: 'synced', createdAt: data.createdAt, updatedAt: data.createdAt }, bufferMinutes: data.bufferMinutes };
+    return { booking: { id: data.bookingId, ...(data.clientId ? { clientId: data.clientId } : {}), ...(data.telegramChatId ? { telegramChatId: data.telegramChatId } : {}), ...(data.businessConnectionId ? { businessConnectionId: data.businessConnectionId } : {}), source: data.source, ...(data.clientName ? { clientName: data.clientName } : {}), ...(data.clientContact ? { clientContact: data.clientContact } : {}), serviceId: data.serviceId, durationMinutes: data.durationMinutes, price: data.price, currency: data.currency, startAt: new Date(startAt).toISOString(), endAt: new Date(endAt).toISOString(), status: 'confirmed', googleCalendarEventId: event.id, googleCalendarId: calendarId, calendarSyncStatus: 'synced', createdAt: data.createdAt, updatedAt: data.createdAt }, bufferMinutes: data.bufferMinutes };
   }
   private async eventPages(credentials: CalendarCredentials, calendarId: string, start?: string, end?: string): Promise<CalendarEvent[]> {
     const events: CalendarEvent[] = []; let pageToken = '';
@@ -219,7 +222,7 @@ export class CalendarService {
     if (owner !== booking.id) throw new Error('Legacy Calendar ownership is uncertain');
     if (!apply) return 'needs_backfill';
     const credentials = await this.required();
-    const metadata = { schemaVersion: '1', bookingId: booking.id, clientId: booking.clientId, telegramChatId: booking.telegramChatId, ...(booking.businessConnectionId ? { businessConnectionId: booking.businessConnectionId } : {}), serviceId: booking.serviceId, durationMinutes: String(booking.durationMinutes), price: String(booking.price), currency: booking.currency, bufferMinutes: String(bufferMinutes), createdAt: booking.createdAt };
+    const metadata = { schemaVersion: '1', bookingId: booking.id, ...(booking.clientId ? { clientId: booking.clientId } : {}), ...(booking.telegramChatId ? { telegramChatId: booking.telegramChatId } : {}), ...(booking.businessConnectionId ? { businessConnectionId: booking.businessConnectionId } : {}), source: booking.source, ...(booking.clientName ? { clientName: booking.clientName } : {}), ...(booking.clientContact ? { clientContact: booking.clientContact } : {}), serviceId: booking.serviceId, durationMinutes: String(booking.durationMinutes), price: String(booking.price), currency: booking.currency, bufferMinutes: String(bufferMinutes), createdAt: booking.createdAt };
     const response = await this.connection.request(credentials, path(booking.googleCalendarId, booking.googleCalendarEventId), { method: 'PATCH', headers: { 'If-Match': event.etag }, body: JSON.stringify({ description: bookingDescription(booking), extendedProperties: { private: metadata } }) });
     const changed = this.parseManaged(eventSchema.parse(await response.json()), booking.googleCalendarId);
     if (!changed || changed.booking.id !== booking.id || changed.bufferMinutes !== bufferMinutes) throw new Error('Calendar backfill result is uncertain');
@@ -231,9 +234,11 @@ export class CalendarService {
     const eventId = booking.googleCalendarEventId ?? bookingEventId(booking.id);
     if (!booking.durationMinutes || booking.price === undefined || !booking.currency) throw new Error('Booking snapshot is incomplete');
     const username = calendarTitlePart(context.telegramUsername?.replace(/^@+/, '') ?? '') || 'unknown';
-    const displayName = calendarTitlePart(context.telegramDisplayName ?? '') || 'Без імені';
-    const summary = `@${username} | ${displayName} | ${calendarTitlePart(serviceName)} | ${booking.price} ${booking.currency} (ai-bot)`;
-    const response = await this.connection.request(credentials, path(calendarId), { method: 'POST', body: JSON.stringify({ id: eventId, summary, description: bookingDescription(booking, context.messages), extendedProperties: { private: { schemaVersion: '1', bookingId: booking.id, clientId: booking.clientId, telegramChatId: booking.telegramChatId, ...(booking.businessConnectionId ? { businessConnectionId: booking.businessConnectionId } : {}), serviceId: booking.serviceId, durationMinutes: String(booking.durationMinutes), price: String(booking.price), currency: booking.currency, bufferMinutes: String(bufferMinutes), createdAt: booking.createdAt } }, transparency: 'opaque', start: { dateTime: booking.startAt }, end: { dateTime: booking.endAt } }) }, [409], { replaySafe: true });
+    const displayName = calendarTitlePart(context.clientName ?? booking.clientName ?? context.telegramDisplayName ?? '') || 'Без імені';
+    const summary = booking.source === 'public_web'
+      ? `${displayName} | ${calendarTitlePart(serviceName)} | ${booking.price} ${booking.currency} (online)`
+      : `@${username} | ${calendarTitlePart(context.telegramDisplayName ?? '') || 'Без імені'} | ${calendarTitlePart(serviceName)} | ${booking.price} ${booking.currency} (ai-bot)`;
+    const response = await this.connection.request(credentials, path(calendarId), { method: 'POST', body: JSON.stringify({ id: eventId, summary, description: bookingDescription(booking, context.messages), extendedProperties: { private: { schemaVersion: '1', bookingId: booking.id, ...(booking.clientId ? { clientId: booking.clientId } : {}), ...(booking.telegramChatId ? { telegramChatId: booking.telegramChatId } : {}), ...(booking.businessConnectionId ? { businessConnectionId: booking.businessConnectionId } : {}), source: booking.source, ...(booking.clientName ? { clientName: booking.clientName } : {}), ...(booking.clientContact ? { clientContact: booking.clientContact } : {}), serviceId: booking.serviceId, durationMinutes: String(booking.durationMinutes), price: String(booking.price), currency: booking.currency, bufferMinutes: String(bufferMinutes), createdAt: booking.createdAt } }, transparency: 'opaque', start: { dateTime: booking.startAt }, end: { dateTime: booking.endAt } }) }, [409], { replaySafe: true });
     if (response.status === 409) {
       if (!await this.verifyBookingEvent({ ...booking, googleCalendarId: calendarId, googleCalendarEventId: eventId })) throw new Error('Calendar event is missing');
     } else {

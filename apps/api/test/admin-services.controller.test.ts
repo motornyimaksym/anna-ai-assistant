@@ -6,7 +6,7 @@ import type { BookingRepository } from '../src/repository.js';
 import type { ServicePhotoService } from '../src/service-photo.service.js';
 import type { SpecService } from '../src/spec.service.js';
 
-const sample = { id: 'massage', name: 'Massage', description: 'Relaxing massage', durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH', enabled: true };
+const sample = { id: 'massage', name: 'Massage', description: 'Relaxing massage', durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH', enabled: true, publiclyAvailable: false };
 const setup = () => {
   const oldPhoto = 'https://firebasestorage.googleapis.com/v0/b/demo/o/service-photos%2Fold.jpg?alt=media&token=old';
   const repository = {

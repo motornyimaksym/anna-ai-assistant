@@ -48,6 +48,11 @@ const routes: Record<string, RouteDoc> = {
   'GET /admin/openai-balance': route('Read OpenAI credits, total costs, and estimated remaining balance', C.openAiBalanceResponseSchema),
   'PUT /admin/openai-balance': route('Set the current OpenAI balance baseline', C.openAiBalanceBaselineSchema, C.updateOpenAiBalanceSchema),
   'GET /public/services': route('Read enabled public service prices', C.publicServiceSchema.array(), undefined, 'Read-only public catalog; only names, IDs, durations, prices and currencies. No authentication required.'),
+  'GET /public/booking/services': route('List services available for self-booking', C.publicBookingServiceSchema.array(), undefined, 'No authentication required. Only enabled services explicitly marked as publicly available are returned.'),
+  'POST /public/booking/slots': route('Find currently free public appointment slots', C.publicBookingSlotsResponseSchema, C.publicBookingSlotsRequestSchema, 'No authentication required. Slots are studio-only and may change before reservation.'),
+  'POST /public/booking/reservations': route('Reserve a public appointment and create a Monobank invoice', C.publicBookingStartResponseSchema, C.publicBookingStartRequestSchema, 'No authentication required. Client contact is stored for booking operations and never returned by the status endpoint.'),
+  'GET /public/booking/reservations/{id}': route('Read public reservation payment status', C.publicBookingStatusResponseSchema, undefined, 'No authentication required. Requires the reservation token in the X-Reservation-Token header.'),
+  'POST /public/booking/monobank-webhook': route('Receive signed Monobank payment updates', z.object({ ok: z.literal(true) }), z.object({ invoiceId: z.string(), status: z.string(), amount: z.number(), finalAmount: z.number().optional(), ccy: z.number(), modifiedDate: z.string(), reference: z.string() }).passthrough(), 'No authentication required. Monobank X-Sign ECDSA signature is verified against the original request bytes.'),
   'GET /admin/services': route('List services', C.serviceSchema.array()),
   'POST /admin/services': route('Create a service', C.serviceSchema, C.serviceSchema),
   'PATCH /admin/services/{id}': route('Replace a service', C.serviceSchema, serviceUpdate, 'The path ID overrides any ID in the JSON body. Supply the complete service definition.'),
@@ -73,6 +78,11 @@ const routes: Record<string, RouteDoc> = {
   'POST /admin/media': route('Upload a media item', C.mediaSchema, C.createMediaSchema, 'Send a base64 file in JSON; this is not multipart upload.'),
   'PATCH /admin/media/{id}': route('Update a media item', C.mediaSchema, C.updateMediaSchema),
   'DELETE /admin/media/{id}': route('Delete a media item', C.mediaDeleteResponseSchema),
+  'GET /admin/message-store': route('List saved replies', C.messageStoreSchema.array()),
+  'POST /admin/message-store': route('Create a saved reply', C.messageStoreSchema, C.createMessageStoreSchema),
+  'POST /admin/message-store/import-starters': route('Import reviewed starter replies', C.messageStoreImportResponseSchema, empty, undefined, false),
+  'PATCH /admin/message-store/{id}': route('Update a saved reply', C.messageStoreSchema, C.updateMessageStoreSchema),
+  'DELETE /admin/message-store/{id}': route('Delete a saved reply', C.messageStoreDeleteResponseSchema),
 
   'GET /admin/ai-chat/threads': route('List AI workspace threads', C.aiChatSummarySchema.array()),
   'POST /admin/ai-chat/threads': route('Create an AI workspace thread', C.aiChatThreadSchema, empty, undefined, false),
@@ -113,6 +123,8 @@ const tagFor = (path: string): string => {
   if (path.startsWith('/admin/schedule/')) return 'Schedule import';
   if (path.startsWith('/admin/debug/')) return 'Diagnostics';
   if (path.startsWith('/admin/media')) return 'Media';
+  if (path.startsWith('/admin/message-store')) return 'Message Store';
+  if (path.startsWith('/public/booking/')) return 'Public booking';
   if (path === '/public/services' || path.startsWith('/admin/services')) return 'Services';
   if (path.startsWith('/admin/schedule')) return 'Schedule';
   if (path.startsWith('/admin/conversations') || path.startsWith('/admin/human-')) return 'Conversations';
@@ -151,10 +163,12 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
         parameters.push({ in: 'query', name: 'chatId', required: true, schema: { type: 'string' }, description: 'Numeric Telegram chat ID.' });
         parameters.push({ in: 'query', name: 'q', required: false, schema: { type: 'string', maxLength: 128 }, description: 'Optional topic search text.' });
       }
+      if (key === 'GET /public/booking/reservations/{id}') parameters.push({ in: 'header', name: 'X-Reservation-Token', required: true, schema: { type: 'string', minLength: 32 }, description: 'One-time reservation status token.' });
+      if (key === 'POST /public/booking/monobank-webhook') parameters.push({ in: 'header', name: 'X-Sign', required: true, schema: { type: 'string' }, description: 'Monobank ECDSA signature of the original JSON body.' });
       operation.parameters = parameters;
       if (details.request) operation.requestBody = { required: details.requestRequired, content: { 'application/json': { schema: schemaOf(details.request) } } };
       else delete operation.requestBody;
-      const status = method === 'post' && path !== '/telegram/webhook' ? '201' : '200';
+      const status = method === 'post' && !['/telegram/webhook', '/public/booking/slots', '/public/booking/monobank-webhook'].includes(path) ? '201' : '200';
       operation.responses = { [status]: { description: details.response ? 'Successful response.' : details.note ?? 'Successful response.', ...(details.response ? { content: { 'application/json': { schema: schemaOf(details.response) } } } : {}) }, ...(path.startsWith('/admin/') ? { '401': { description: 'Missing or invalid Firebase ID token.' }, '403': { description: 'Insufficient administrator privileges.' } } : {}) };
     }
   }

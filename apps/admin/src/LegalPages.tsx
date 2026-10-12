@@ -43,6 +43,7 @@ const privacyCopy: Record<"en" | "uk", PageCopy> = {
         paragraphs: [
           "When an administrator signs in with Google, Firebase Authentication receives the Google account details needed for sign-in, such as the account name, email address, profile image and Firebase user ID. Access to the workspace is limited by the service's administrator access settings.",
           "For booking conversations, the service processes Telegram numeric user and chat IDs, available usernames or display names, message text and message times. It also handles booking details such as the selected service, appointment time, price and status, along with the business settings needed to provide the assistant.",
+          "Visitors who book through the public page provide a name and one contact value of their choice. The service stores these details with the appointment for booking operations. Monobank processes the deposit on its payment page; the service receives invoice and payment status, not the card details entered there.",
           "If an administrator connects Google Calendar, the service receives the connected account and selected calendar details. It reads busy periods for availability checks and creates or updates appointment events. Appointment events can include client and booking details; an event description may also include a limited amount of recent conversation context when available.",
           "The browser stores the Firebase sign-in state and the selected interface language and theme. The service does not use these preferences for advertising or cross-site tracking.",
         ],
@@ -81,7 +82,7 @@ const privacyCopy: Record<"en" | "uk", PageCopy> = {
       {
         title: "Storage, retention and choices",
         paragraphs: [
-          "Booking and conversation records are kept in protected service storage for operating and reviewing the service. There is no single automatic deletion period for all operational records. Telegram and Google Calendar may also retain messages or appointment events in those services.",
+          "Booking and conversation records, including details submitted through the public booking page, are kept in protected service storage for operating and reviewing the service. There is no single automatic deletion period for all operational records. Telegram and Google Calendar may also retain messages or appointment events in those services; Monobank handles payment records under its own terms.",
           "An administrator can clear stored assistant context for a conversation; this does not delete booking records, previously submitted provider data or owner-only diagnostics. Disconnecting Google Calendar revokes the stored connection when successful, but does not delete existing Calendar events. Access can also be revoked from the relevant Google account settings.",
           "To ask about, correct or request deletion of information controlled by this service, email yazon2006@gmail.com. Some information may need to remain for active bookings, security, legal obligations or records held by third-party providers.",
         ],
@@ -106,6 +107,7 @@ const privacyCopy: Record<"en" | "uk", PageCopy> = {
         paragraphs: [
           "Під час входу адміністратора через Google Firebase Authentication отримує дані облікового запису, потрібні для входу: наприклад, ім’я, email, зображення профілю та Firebase user ID. Доступ до панелі обмежений налаштуваннями доступу адміністраторів сервісу.",
           "Для запису сервіс обробляє числові ідентифікатори користувача й чату Telegram, доступні імена користувачів або відображувані імена, текст і час повідомлень. Також обробляються дані запису: вибрана послуга, час візиту, ціна, статус та бізнес-налаштування, необхідні асистенту.",
+          "Відвідувач, який записується через публічну сторінку, залишає ім’я та один контакт на власний вибір. Сервіс зберігає ці дані разом із записом для його організації. Передоплату обробляє Monobank на своїй сторінці оплати; сервіс отримує номер рахунку та статус оплати, але не дані картки, введені там.",
           "Якщо адміністратор підключає Google Calendar, сервіс отримує дані підключеного облікового запису й вибраного календаря. Для перевірки доступності він читає зайняті проміжки, а для записів створює або оновлює події. Події запису можуть містити дані клієнта й запису; опис події за наявності може містити обмежений фрагмент нещодавньої розмови.",
           "Браузер зберігає стан входу Firebase і вибрані мову інтерфейсу та тему. Сервіс не використовує ці налаштування для реклами або міжсайтового відстеження.",
         ],
@@ -144,7 +146,7 @@ const privacyCopy: Record<"en" | "uk", PageCopy> = {
       {
         title: "Зберігання, строки та вибір користувача",
         paragraphs: [
-          "Дані записів і розмов зберігаються в захищеному сховищі сервісу для його роботи й перегляду. Єдиного автоматичного строку видалення для всіх робочих даних немає. Telegram і Google Calendar також можуть зберігати повідомлення або події у своїх сервісах.",
+          "Дані записів і розмов, зокрема надані через публічну сторінку запису, зберігаються в захищеному сховищі сервісу для його роботи й перегляду. Єдиного автоматичного строку видалення для всіх робочих даних немає. Telegram і Google Calendar також можуть зберігати повідомлення або події у своїх сервісах; Monobank обробляє платіжні записи за власними умовами.",
           "Адміністратор може очистити збережений контекст асистента для окремої розмови; це не видаляє записи на прийом, раніше передані провайдерам дані або діагностику, доступну власнику. Після відключення Google Calendar збережене підключення відкликається, якщо відкликання успішне; наявні події календаря не видаляються. Доступ також можна відкликати в налаштуваннях облікового запису Google.",
           "Щоб дізнатися про дані, виправити їх або надіслати запит на видалення даних, контрольованих цим сервісом, напишіть на yazon2006@gmail.com. Частину інформації може знадобитися зберегти для активних записів, безпеки, вимог закону або через зберігання у сторонніх провайдерів.",
         ],

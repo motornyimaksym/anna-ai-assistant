@@ -4,8 +4,9 @@ import type { TelegramScheduleImportService } from '../src/telegram-schedule-imp
 import type { CalendarService } from '../src/calendar.js';
 const schedule = { readSnapshot: vi.fn() };
 const calendar = { getBusyIntervals: vi.fn() };
-const service = new BookingContextService(schedule as unknown as TelegramScheduleImportService, calendar as unknown as CalendarService);
-beforeEach(() => { vi.resetAllMocks(); calendar.getBusyIntervals.mockResolvedValue([]); });
+const repository = { getActivePublicBookingSlotLocks: vi.fn(async () => []) };
+const service = new BookingContextService(schedule as unknown as TelegramScheduleImportService, calendar as unknown as CalendarService, repository as never);
+beforeEach(() => { vi.resetAllMocks(); calendar.getBusyIntervals.mockResolvedValue([]); repository.getActivePublicBookingSlotLocks.mockResolvedValue([]); });
 describe('read-only booking evidence', () => {
   it('returns fresh raw schedule and live Calendar evidence without client wording', async () => {
     schedule.readSnapshot.mockResolvedValue({ status: 'success', syncedAt: new Date().toISOString(), slots: [{ text: 'Tomorrow 10:00', createdAt: new Date().toISOString() }] });

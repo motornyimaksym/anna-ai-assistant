@@ -16,6 +16,7 @@ const secrets = [
   defineSecret('GOOGLE_CALENDAR_ENCRYPTION_KEY'),
   defineSecret('GOOGLE_REFRESH_TOKEN'),
   defineSecret('ADMIN_UIDS'),
+  defineSecret('MONOBANK_ACQUIRING_TOKEN'),
 ];
 let applicationPromise: ReturnType<typeof createApp> | undefined;
 export const api = onRequest({ region: 'europe-west1', timeoutSeconds: 3600, secrets }, async (request, response) => {

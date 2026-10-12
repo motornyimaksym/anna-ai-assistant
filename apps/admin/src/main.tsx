@@ -1,5 +1,6 @@
 import { DebugLogs } from "./DebugLogs.js";
 import { MediaStore } from "./MediaStore.js";
+import { MessageStore } from "./MessageStore.js";
 import { AssistantPrompt } from "./AssistantPrompt.js";
 import { KnowledgeBase } from "./KnowledgeBase.js";
 import { BotSettings } from "./BotSettings.js";
@@ -43,6 +44,9 @@ const AiChatEntry = lazy(() =>
 const Specs = lazy(() =>
   import("./Specs.js").then((module) => ({ default: module.Specs })),
 );
+const PublicBookingPage = lazy(() =>
+  import("./PublicBooking.js").then((module) => ({ default: module.PublicBooking })),
+);
 const queryClient = new QueryClient();
 const Loading = () => {
   const { t } = useI18n();
@@ -71,6 +75,14 @@ const Protected = ({ user }: { user: User | null }) =>
           }
         />
         <Route path="/services" element={<Navigate to="/media" replace />} />
+        <Route
+          path="/message-store"
+          element={
+            <Page title="Message Store">
+              <MessageStore />
+            </Page>
+          }
+        />
         <Route
           path="/schedule"
           element={
@@ -131,6 +143,7 @@ export const App = () => {
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const location = useLocation();
   const isPublicRoute =
+    location.pathname === "/book" ||
     location.pathname === "/privacy-policy" ||
     location.pathname === "/terms-and-conditions" ||
     location.pathname === "/faq";
@@ -195,6 +208,7 @@ export const App = () => {
     };
   }, [isPublicRoute]);
   if (location.pathname === "/faq") return <FaqPage />;
+  if (location.pathname === "/book") return <Suspense fallback={<Loading />}><PublicBookingPage /></Suspense>;
   if (location.pathname === "/privacy-policy") return <PrivacyPolicy />;
   if (location.pathname === "/terms-and-conditions") return <TermsAndConditions />;
   if (user === undefined) return <Loading />;

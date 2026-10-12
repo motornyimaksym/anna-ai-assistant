@@ -114,7 +114,7 @@ describe('Telegram private test restriction', () => {
     expect(send).toHaveBeenCalledTimes(3);
     expect(assistant.respond).toHaveBeenCalledOnce();
     expect(assistant.respond).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ telegramUsername: 'User61785', telegramDisplayName: expect.any(String) }), expect.any(String));
-    expect(order.slice(0, 3)).toEqual(['readBusinessMessage', 'sendChatAction', 'assistant']);
+    expect(order.slice(0, 3)).toEqual(['readBusinessMessage', 'assistant', 'sendChatAction']);
     expect(JSON.parse(send.mock.calls[0]![1]!.body as string)).toEqual({ business_connection_id: 'connection-1', chat_id: 123, message_id: 9 });
     expect(JSON.parse(send.mock.calls[1]![1]!.body as string)).toMatchObject({ chat_id: '123', business_connection_id: 'connection-1', action: 'typing' });
     expect(send.mock.calls[2]![0]).toContain('/sendMessage');
@@ -204,14 +204,14 @@ it('continues replying when Telegram rejects the business read receipt', async (
 
   await service.handle('webhook-secret', update('user61785'));
 
-  expect(send).toHaveBeenCalledTimes(4);
+  expect(send).toHaveBeenCalledTimes(3);
   expect(send.mock.calls[0]![0]).toContain('/readBusinessMessage');
-  expect(send.mock.calls[3]![0]).toContain('/sendMessage');
-  expect(JSON.parse(send.mock.calls[3]![1]!.body as string)).not.toHaveProperty('parse_mode');
+  expect(send.mock.calls[2]![0]).toContain('/sendMessage');
+  expect(JSON.parse(send.mock.calls[2]![1]!.body as string)).not.toHaveProperty('parse_mode');
   expect(assistant.respond).toHaveBeenCalledOnce();
 });
 
-it('refreshes typing while OpenAI is processing and stops when it finishes', async () => {
+it('delays typing until model text is ready to pace', async () => {
   vi.useFakeTimers();
   vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret');
   vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-token');
@@ -225,16 +225,16 @@ it('refreshes typing while OpenAI is processing and stops when it finishes', asy
 
   const handling = service.handle('webhook-secret', update('user61785'));
   await called;
-  expect(send).toHaveBeenCalledTimes(2);
+  expect(send).toHaveBeenCalledTimes(1);
   await vi.advanceTimersByTimeAsync(4_000);
-  expect(send).toHaveBeenCalledTimes(3);
+  expect(send).toHaveBeenCalledTimes(1);
   finish({ text: 'OK', fromOpenAI: true });
   await vi.advanceTimersByTimeAsync(1_199);
-  expect(send).toHaveBeenCalledTimes(3);
+  expect(send).toHaveBeenCalledTimes(2);
   await vi.advanceTimersByTimeAsync(1);
   await handling;
-  expect(send).toHaveBeenCalledTimes(4);
-  expect(send.mock.calls[3]![0]).toContain('/sendMessage');
+  expect(send).toHaveBeenCalledTimes(3);
+  expect(send.mock.calls[2]![0]).toContain('/sendMessage');
   vi.useRealTimers();
 });
 
@@ -299,8 +299,8 @@ it('does not automatically send legacy service photos or captions', async () => 
   await service.handle('webhook-secret', dm);
 
   const photoCall = send.mock.calls.find(([url]) => url.includes('/sendPhoto'));
-  expect(order).toEqual(['sendChatAction', 'sendMessage']);
-  expect(JSON.parse(send.mock.calls[1]![1]!.body as string)).toMatchObject({ text: 'Here are the services.' });
+  expect(order).toEqual(['sendMessage']);
+  expect(JSON.parse(send.mock.calls[0]![1]!.body as string)).toMatchObject({ text: 'Here are the services.' });
   expect(photoCall).toBeUndefined();
 });
 

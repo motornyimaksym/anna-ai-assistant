@@ -1,4 +1,4 @@
-import { Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider, FormControlLabel, Stack, TextField, Typography } from '@mui/material';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import type { KnowledgeBaseResponse, ServiceDto } from '@booking/contracts';
@@ -25,6 +25,7 @@ export const KnowledgeBase = () => {
     const summary = {
       id: saved.id, name: saved.name, description: saved.description, durationMinutes: saved.durationMinutes,
       ...(saved.durationOptions ? { durationOptions: saved.durationOptions } : {}), price: saved.price, currency: saved.currency,
+      publiclyAvailable: saved.publiclyAvailable,
     };
     queryClient.setQueryData<KnowledgeBaseResponse>(queryKey, (current) => current ? { ...current, services: creating ? [...current.services, summary] : current.services.map((item) => item.id === saved.id ? summary : item) } : current);
     queryClient.setQueryData<ServiceDto[]>(['services'], (current = []) => creating ? [...current, saved] : current.map((item) => item.id === saved.id ? saved : item));
@@ -38,6 +39,15 @@ export const KnowledgeBase = () => {
       setDeleteTarget(null);
       setMessage('Service deleted from the catalog.');
     },
+  });
+
+  const togglePubliclyAvailable = useMutation({
+    mutationFn: async ({ id, publiclyAvailable }: { id: string; publiclyAvailable: boolean }) => {
+      const current = (await adminApi.services()).find((item) => item.id === id);
+      if (!current) throw new Error('Service is no longer available. Reload the page.');
+      return adminApi.saveService({ ...current, publiclyAvailable }, false);
+    },
+    onSuccess: (saved) => serviceSaved(saved, false),
   });
 
   const save = useMutation({
@@ -89,8 +99,9 @@ export const KnowledgeBase = () => {
         </Stack>
         {query.data.services.length ? <Stack spacing={1.5}>
           {query.data.services.map((service) => <Box key={service.id}>
-            <Stack direction="row" alignItems="center" spacing={1}>
+            <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
               <Typography fontWeight={600}>{service.name}</Typography>
+              <FormControlLabel control={<Checkbox checked={service.publiclyAvailable} disabled={togglePubliclyAvailable.isPending} onChange={(event) => togglePubliclyAvailable.mutate({ id: service.id, publiclyAvailable: event.target.checked })} />} label={t("Available publicly")} />
               <KnowledgeBaseServiceEditor service={service} onSaved={serviceSaved} />
               <Button size="small" color="error" aria-label={t("Delete {name}", { name: service.name })} disabled={removeService.isPending} onClick={() => { setMessage(''); setDeleteTarget({ id: service.id, name: service.name }); }}>{t("Delete")}</Button>
             </Stack>
@@ -102,6 +113,7 @@ export const KnowledgeBase = () => {
     </>
     {message && <Alert severity="success">{t(message)}</Alert>}
     {removeService.isError && <Alert severity="error">{t("Could not delete service.")}{t(" ")}{t(errorText(removeService.error))}</Alert>}
+    {togglePubliclyAvailable.isError && <Alert severity="error">{t("Could not update public availability.")}{t(" ")}{t(errorText(togglePubliclyAvailable.error))}</Alert>}
     {save.isError && <Alert severity="error">{t("Could not save the knowledge base.")}{t(" ")}{t(errorText(save.error))}</Alert>}
     {reset.isError && <Alert severity="error">{t("Could not reset the knowledge base.")}{t(" ")}{t(errorText(reset.error))}</Alert>}
     <Box display="flex" gap={1}>

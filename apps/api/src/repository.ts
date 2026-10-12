@@ -5,7 +5,7 @@ import { FieldValue, getFirestore, type DocumentData, type Firestore } from 'fir
 import { getStorage } from 'firebase-admin/storage';
 import {
   debugEventsSchema, debugEventSchema, debugPayloadSchema, type BookingConfirmationFacts, type DebugEvent, type DebugPayload, type AssistantPromptId, availabilityRuleSchema, bookingSchema, botSettingsSchema, conversationSchema, pendingActionSchema, scheduleExceptionSchema, serviceSchema, updateAdminAccessSchema, updateBotSettingsSchema,
-  type AvailabilityRuleDto, type BookingDto, type BotSettings, type ConversationDto, type ScheduleExceptionDto, type ServiceDto, type UpdateBotSettingsRequest,
+  publicBookingReservationSchema, type PublicBookingReservation, type AvailabilityRuleDto, type BookingDto, type BotSettings, type ConversationDto, type ScheduleExceptionDto, type ServiceDto, type UpdateBotSettingsRequest,
 } from '@booking/contracts';
 import { BookingConflictError, BookingNotFoundError, lockedSlotKeys, serviceEndAt } from '@booking/domain';
 import { FirebaseAdminService } from './firebase-admin.js';
@@ -17,6 +17,7 @@ export type CreateStoredBooking = Omit<BookingDto, 'id' | 'createdAt' | 'updated
 export type BookingOperation = { id: string; kind: 'create' | 'reschedule' | 'cancel'; targetStartAt?: string; targetEndAt?: string; leaseId?: string; leaseUntil?: number };
 type StoredBooking = BookingDto & { lockedSlots: string[]; bufferMinutes: number; operation?: BookingOperation };
 type StoredTelegramButton = { row: number; text: string; url: string };
+type PublicBookingSlotLock = { ownerType: 'reservation' | 'calendar_write'; ownerId: string; startAt: string; endAt: string; expiresAt: string; createdAt: string };
 const withoutUndefined = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const serviceFromDocument = (id: string, data: DocumentData): ServiceDto => {
   const { telegramButtons: storedButtons, ...fields } = data;
@@ -81,6 +82,170 @@ export class BookingRepository {
   async saveService(service: ServiceDto): Promise<ServiceDto> {
     await this.db.collection('services').doc(service.id).set(serviceDocument(service));
     return service;
+  }
+  async createPublicBookingReservation(input: Omit<PublicBookingReservation, 'id' | 'status' | 'createdAt' | 'updatedAt' | 'holdExpiresAt'>): Promise<PublicBookingReservation> {
+    const id = randomUUID(); const now = new Date(); const nowIso = now.toISOString();
+    const holdExpiresAt = new Date(now.getTime() + 15 * 60_000).toISOString();
+    const reservation = publicBookingReservationSchema.parse({ ...input, id, status: 'invoice_pending', createdAt: nowIso, updatedAt: nowIso, holdExpiresAt });
+    const reservationRef = this.db.collection('publicBookingReservations').doc(id);
+    const slotKeys = lockedSlotKeys('studio', reservation.startAt, reservation.endAt, reservation.bufferMinutes);
+    const slotRefs = slotKeys.map((key) => this.db.collection('publicBookingSlots').doc(key));
+    const lock: PublicBookingSlotLock = { ownerType: 'reservation', ownerId: id, startAt: reservation.startAt, endAt: new Date(Date.parse(reservation.endAt) + reservation.bufferMinutes * 60_000).toISOString(), expiresAt: holdExpiresAt, createdAt: nowIso };
+    await this.db.runTransaction(async (transaction) => {
+      const snapshots = await Promise.all(slotRefs.map((ref) => transaction.get(ref)));
+      if (snapshots.some((snapshot) => snapshot.exists && String(snapshot.data()?.expiresAt ?? '') > nowIso)) throw new BookingConflictError();
+      transaction.create(reservationRef, withoutUndefined(reservation));
+      slotRefs.forEach((ref) => transaction.set(ref, lock));
+    });
+    return reservation;
+  }
+  async acquirePublicBookingCalendarWriteLock(input: { ownerId: string; startAt: string; endAt: string; bufferMinutes: number; allowReservationId?: string }): Promise<void> {
+    const now = new Date(); const nowIso = now.toISOString(); const expiresAt = new Date(now.getTime() + 15 * 60_000).toISOString();
+    const slotKeys = lockedSlotKeys('studio', input.startAt, input.endAt, input.bufferMinutes);
+    const slotRefs = slotKeys.map((key) => this.db.collection('publicBookingSlots').doc(key));
+    const lock: PublicBookingSlotLock = { ownerType: 'calendar_write', ownerId: input.ownerId, startAt: input.startAt, endAt: new Date(Date.parse(input.endAt) + input.bufferMinutes * 60_000).toISOString(), expiresAt, createdAt: nowIso };
+    await this.db.runTransaction(async (transaction) => {
+      const snapshots = await Promise.all(slotRefs.map((ref) => transaction.get(ref)));
+      const conflict = snapshots.some((snapshot) => {
+        if (!snapshot.exists || String(snapshot.data()?.expiresAt ?? '') <= nowIso) return false;
+        const data = snapshot.data()!;
+        return !(data.ownerType === 'calendar_write' && data.ownerId === input.ownerId)
+          && !(data.ownerType === 'reservation' && data.ownerId === input.allowReservationId);
+      });
+      if (conflict) throw new BookingConflictError();
+      slotRefs.forEach((ref) => transaction.set(ref, lock));
+    });
+  }
+  async releasePublicBookingSlots(ownerType: PublicBookingSlotLock['ownerType'], ownerId: string, startAt: string, endAt: string, bufferMinutes: number): Promise<void> {
+    const refs = lockedSlotKeys('studio', startAt, endAt, bufferMinutes).map((key) => this.db.collection('publicBookingSlots').doc(key));
+    await this.db.runTransaction(async (transaction) => {
+      const snapshots = await Promise.all(refs.map((ref) => transaction.get(ref)));
+      snapshots.forEach((snapshot, index) => {
+        if (snapshot.data()?.ownerType === ownerType && snapshot.data()?.ownerId === ownerId) transaction.delete(refs[index]!);
+      });
+    });
+  }
+  async getActivePublicBookingSlotLocks(): Promise<{ ownerId: string; start: string; end: string }[]> {
+    const now = new Date().toISOString();
+    const snapshot = await this.db.collection('publicBookingSlots').where('expiresAt', '>', now).get();
+    const unique = new Map<string, { ownerId: string; start: string; end: string }>();
+    for (const document of snapshot.docs) {
+      const data = document.data();
+      if (typeof data.ownerId !== 'string' || typeof data.startAt !== 'string' || typeof data.endAt !== 'string') continue;
+      unique.set(`${data.ownerId}:${data.startAt}:${data.endAt}`, { ownerId: data.ownerId, start: data.startAt, end: data.endAt });
+    }
+    return [...unique.values()];
+  }
+  async getPublicBookingReservation(id: string): Promise<PublicBookingReservation | undefined> {
+    const document = await this.db.collection('publicBookingReservations').doc(id).get();
+    return document.exists ? publicBookingReservationSchema.parse({ ...document.data(), id: document.id }) : undefined;
+  }
+  async savePublicBookingInvoice(id: string, invoiceId: string): Promise<void> {
+    const ref = this.db.collection('publicBookingReservations').doc(id);
+    await this.db.runTransaction(async (transaction) => {
+      const document = await transaction.get(ref);
+      if (!document.exists) throw new NotFoundException('Reservation not found');
+      const reservation = publicBookingReservationSchema.parse({ ...document.data(), id });
+      if (reservation.invoiceId && reservation.invoiceId !== invoiceId) throw new Error('Payment invoice identity changed');
+      transaction.update(ref, { invoiceId, status: reservation.status === 'invoice_pending' ? 'pending_payment' : reservation.status, updatedAt: new Date().toISOString() });
+    });
+  }
+  async failPublicBookingInvoice(id: string): Promise<void> {
+    const ref = this.db.collection('publicBookingReservations').doc(id);
+    const reservation = await this.db.runTransaction(async (transaction) => {
+      const document = await transaction.get(ref);
+      if (!document.exists) return undefined;
+      const current = publicBookingReservationSchema.parse({ ...document.data(), id });
+      if (current.status === 'invoice_pending' || current.status === 'pending_payment') transaction.update(ref, { status: 'payment_failed', updatedAt: new Date().toISOString() });
+      return current;
+    });
+    if (reservation) await this.releasePublicBookingSlots('reservation', id, reservation.startAt, reservation.endAt, reservation.bufferMinutes);
+  }
+  async expirePublicBookingReservation(id: string): Promise<PublicBookingReservation | undefined> {
+    const ref = this.db.collection('publicBookingReservations').doc(id);
+    const result = await this.db.runTransaction(async (transaction) => {
+      const document = await transaction.get(ref);
+      if (!document.exists) return undefined;
+      const current = publicBookingReservationSchema.parse({ ...document.data(), id });
+      if (['invoice_pending', 'pending_payment'].includes(current.status) && current.holdExpiresAt <= new Date().toISOString()) {
+        transaction.update(ref, { status: 'expired', updatedAt: new Date().toISOString() });
+        return { ...current, status: 'expired' as const };
+      }
+      return current;
+    });
+    if (result?.status === 'expired') await this.releasePublicBookingSlots('reservation', id, result.startAt, result.endAt, result.bufferMinutes);
+    return result;
+  }
+  async applyPublicPaymentUpdate(input: { reservationId: string; invoiceId: string; status: string; amount: number; finalAmount?: number; currency: number; modifiedAt: string }): Promise<{ reservation?: PublicBookingReservation; leaseId?: string }> {
+    const ref = this.db.collection('publicBookingReservations').doc(input.reservationId);
+    let shouldRelease = false;
+    const result = await this.db.runTransaction(async (transaction) => {
+      const document = await transaction.get(ref);
+      if (!document.exists) return undefined;
+      const current = publicBookingReservationSchema.parse({ ...document.data(), id: input.reservationId });
+      const currentStatusIsPaid = ['calendar_creating', 'confirmed', 'manual_review'].includes(current.status) || current.paymentStatus === 'success';
+      if (input.status !== 'success' && currentStatusIsPaid) return { reservation: current };
+      if (current.paymentModifiedAt && current.paymentModifiedAt > input.modifiedAt) return { reservation: current };
+      if (current.invoiceId && current.invoiceId !== input.invoiceId) {
+        const changed = { ...current, status: 'manual_review' as const, reviewReason: 'payment_mismatch' as const, updatedAt: new Date().toISOString() };
+        transaction.update(ref, { status: changed.status, reviewReason: changed.reviewReason, paymentStatus: input.status, paymentModifiedAt: input.modifiedAt, updatedAt: changed.updatedAt });
+        return { reservation: changed };
+      }
+      if (input.status === 'success') {
+        const expectedAmount = current.depositAmount * 100;
+        const invalidAmount = input.amount !== expectedAmount || (input.finalAmount !== undefined && input.finalAmount !== expectedAmount) || input.currency !== 980;
+        if (invalidAmount) {
+          const changed = { ...current, status: 'manual_review' as const, reviewReason: 'payment_mismatch' as const, invoiceId: input.invoiceId, paymentStatus: input.status, paymentModifiedAt: input.modifiedAt, updatedAt: new Date().toISOString() };
+          transaction.update(ref, { status: changed.status, reviewReason: changed.reviewReason, invoiceId: input.invoiceId, paymentStatus: input.status, paymentModifiedAt: input.modifiedAt, updatedAt: changed.updatedAt });
+          return { reservation: changed };
+        }
+        if (current.status === 'confirmed' || current.status === 'manual_review') return { reservation: current };
+        if (current.status === 'calendar_creating' && current.calendarLeaseUntil && current.calendarLeaseUntil > new Date().toISOString()) return { reservation: current };
+        const leaseId = randomUUID(); const leaseUntil = new Date(Date.now() + 2 * 60_000).toISOString(); const updatedAt = new Date().toISOString();
+        const changed = { ...current, status: 'calendar_creating' as const, invoiceId: input.invoiceId, paymentStatus: input.status, paymentModifiedAt: input.modifiedAt, paidAt: input.modifiedAt, calendarLeaseId: leaseId, calendarLeaseUntil: leaseUntil, updatedAt };
+        transaction.update(ref, { status: changed.status, invoiceId: input.invoiceId, paymentStatus: input.status, paymentModifiedAt: input.modifiedAt, paidAt: input.modifiedAt, calendarLeaseId: leaseId, calendarLeaseUntil: leaseUntil, updatedAt });
+        return { reservation: changed, leaseId };
+      }
+      const failed = ['failure', 'failed', 'declined'].includes(input.status);
+      const nextStatus = failed ? 'payment_failed' as const : 'pending_payment' as const;
+      const changed = { ...current, status: nextStatus, invoiceId: input.invoiceId, paymentStatus: input.status, paymentModifiedAt: input.modifiedAt, updatedAt: new Date().toISOString() };
+      transaction.update(ref, { status: changed.status, invoiceId: input.invoiceId, paymentStatus: input.status, paymentModifiedAt: input.modifiedAt, updatedAt: changed.updatedAt });
+      shouldRelease = failed;
+      return { reservation: changed };
+    });
+    if (shouldRelease && result?.reservation) await this.releasePublicBookingSlots('reservation', input.reservationId, result.reservation.startAt, result.reservation.endAt, result.reservation.bufferMinutes);
+    return result ?? {};
+  }
+  async completePublicBookingCalendarWrite(id: string, leaseId: string, bookingId: string): Promise<void> {
+    const ref = this.db.collection('publicBookingReservations').doc(id);
+    const reservation = await this.db.runTransaction(async (transaction) => {
+      const document = await transaction.get(ref);
+      if (!document.exists) throw new NotFoundException('Reservation not found');
+      const current = publicBookingReservationSchema.parse({ ...document.data(), id });
+      if (current.status !== 'calendar_creating' || current.calendarLeaseId !== leaseId) throw new Error('Reservation payment claim changed');
+      transaction.update(ref, { status: 'confirmed', bookingId, calendarLeaseId: FieldValue.delete(), calendarLeaseUntil: FieldValue.delete(), reviewReason: FieldValue.delete(), updatedAt: new Date().toISOString() });
+      return current;
+    });
+    await this.releasePublicBookingSlots('calendar_write', id, reservation.startAt, reservation.endAt, reservation.bufferMinutes);
+    await this.releasePublicBookingSlots('reservation', id, reservation.startAt, reservation.endAt, reservation.bufferMinutes);
+  }
+  async markPublicBookingManualReview(id: string, leaseId: string | undefined, reason: 'slot_unavailable' | 'payment_mismatch' | 'calendar_uncertain'): Promise<void> {
+    const ref = this.db.collection('publicBookingReservations').doc(id);
+    const reservation = await this.db.runTransaction(async (transaction) => {
+      const document = await transaction.get(ref);
+      if (!document.exists) return undefined;
+      const current = publicBookingReservationSchema.parse({ ...document.data(), id });
+      if (leaseId && current.calendarLeaseId !== leaseId) return undefined;
+      const updatedAt = new Date().toISOString();
+      transaction.update(ref, { status: 'manual_review', reviewReason: reason, calendarLeaseId: FieldValue.delete(), calendarLeaseUntil: FieldValue.delete(), updatedAt });
+      return current;
+    });
+    if (reservation && reason === 'calendar_uncertain') {
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60_000).toISOString();
+      const refs = lockedSlotKeys('studio', reservation.startAt, reservation.endAt, reservation.bufferMinutes).map((key) => this.db.collection('publicBookingSlots').doc(key));
+      const lock: PublicBookingSlotLock = { ownerType: 'calendar_write', ownerId: id, startAt: reservation.startAt, endAt: new Date(Date.parse(reservation.endAt) + reservation.bufferMinutes * 60_000).toISOString(), expiresAt, createdAt: new Date().toISOString() };
+      await this.db.runTransaction(async (transaction) => { refs.forEach((ref) => transaction.set(ref, lock)); });
+    }
   }
   async deleteService(id: string): Promise<ServiceDto> {
     const ref = this.db.collection('services').doc(id);

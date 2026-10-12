@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { mediaIdSchema } from './media.js';
+import { messageStoreIdSchema } from './message-store.js';
 export { defaultServiceCaption, serviceDurationOptions } from './service-presentation.js';
 
 export const timeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Expected HH:mm');
@@ -31,7 +32,7 @@ export const serviceDurationOptionSchema = z.object({ durationMinutes: z.number(
 export const serviceSchema = z.object({
   id: z.string().min(1), name: z.string().trim().min(1).max(120), description: z.string().max(2_000).default(''),
   durationMinutes: z.number().int().min(15).max(480), bufferMinutes: z.number().int().min(0).max(120),
-  price: z.number().finite().nonnegative(), durationOptions: z.array(serviceDurationOptionSchema).max(9).optional(), currency: z.string().length(3).default('UAH'), enabled: z.boolean().default(true),
+  price: z.number().finite().nonnegative(), durationOptions: z.array(serviceDurationOptionSchema).max(9).optional(), currency: z.string().length(3).default('UAH'), enabled: z.boolean().default(true), publiclyAvailable: z.boolean().default(false),
   photoUrl: z.string().url().refine((value) => value.startsWith('https://firebasestorage.googleapis.com/v0/b/'), 'Photo must use the Firebase Storage download URL').optional(), telegramCaption: telegramCaptionSchema.optional(), telegramButtons: telegramButtonRowsSchema,
 }).superRefine((service, ctx) => {
   const durations = [service.durationMinutes, ...(service.durationOptions ?? []).map((option) => option.durationMinutes)];
@@ -50,9 +51,12 @@ export const availabilityRuleSchema = z.object({ id: z.string().min(1), dayOfWee
 export const scheduleExceptionSchema = z.object({ id: z.string().min(1), date: z.string().date(), type: z.enum(['day_off', 'working_interval', 'blocked_interval']), start: timeSchema.optional(), end: timeSchema.optional(), note: z.string().max(500).optional() }).superRefine((value, ctx) => { if (value.type !== 'day_off' && (!value.start || !value.end || value.start >= value.end)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Intervals require a valid start and end' }); });
 export const bookingSchema = z.object({
   durationMinutes: z.number().int().min(15).max(480).optional(), price: z.number().finite().nonnegative().optional(), currency: z.string().length(3).optional(),
-  id: z.string().min(1), clientId: z.string().min(1), serviceId: z.string().min(1), startAt: z.string().datetime(), endAt: z.string().datetime(), status: bookingStatusSchema,
-  telegramChatId: z.string().min(1), businessConnectionId: z.string().optional(), googleCalendarEventId: z.string().optional(), googleCalendarId: z.string().optional(), calendarSyncStatus: calendarSyncStatusSchema, calendarOperation: z.enum(['create', 'reschedule', 'cancel']).optional(),
+  id: z.string().min(1), clientId: z.string().min(1).optional(), serviceId: z.string().min(1), startAt: z.string().datetime(), endAt: z.string().datetime(), status: bookingStatusSchema,
+  telegramChatId: z.string().min(1).optional(), businessConnectionId: z.string().optional(), source: z.enum(['telegram', 'public_web']).default('telegram'), clientName: z.string().min(1).max(120).optional(), clientContact: z.string().min(1).max(256).optional(), googleCalendarEventId: z.string().optional(), googleCalendarId: z.string().optional(), calendarSyncStatus: calendarSyncStatusSchema, calendarOperation: z.enum(['create', 'reschedule', 'cancel']).optional(),
   createdAt: z.string().datetime(), updatedAt: z.string().datetime()
+}).superRefine((booking, ctx) => {
+  if (booking.source === 'telegram' && (!booking.clientId || !booking.telegramChatId)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Telegram bookings require client and chat IDs' });
+  if (booking.source === 'public_web' && (!booking.clientName || !booking.clientContact)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Public bookings require client name and contact' });
 });
 export const clientSchema = z.object({ telegramUserId: z.string().min(1), username: z.string().optional(), firstName: z.string().min(1), lastName: z.string().optional(), phone: z.string().optional(), createdAt: z.string().datetime(), updatedAt: z.string().datetime() });
 export const createBookingRequestSchema = z.object({ durationMinutes: serviceDurationOptionSchema.shape.durationMinutes.optional(), clientId: z.string().min(1), serviceId: z.string().min(1), startAt: z.string().datetime(), telegramChatId: z.string().min(1), businessConnectionId: z.string().optional() });
@@ -99,6 +103,8 @@ export const specResponseSchema = z.object({ content: z.string() });
 export const telegramToolArgsSchema = z.discriminatedUnion('name', [
   z.object({ name: z.literal('get_media'), arguments: z.object({}).strict() }),
   z.object({ name: z.literal('send_media'), arguments: z.object({ mediaId: mediaIdSchema }).strict() }),
+  z.object({ name: z.literal('get_saved_messages'), arguments: z.object({}).strict() }),
+  z.object({ name: z.literal('select_saved_message'), arguments: z.object({ messageId: messageStoreIdSchema }).strict() }),
   z.object({ name: z.literal('get_services'), arguments: z.object({}) }),
   z.object({ name: z.literal('create_booking'), arguments: createBookingRequestSchema }),
   z.object({ name: z.literal('get_bookings'), arguments: z.object({ clientId: z.string().min(1) }) }),
@@ -111,6 +117,7 @@ export type BotSettings = z.infer<typeof botSettingsSchema>; export type BotSett
 export type AdminAccessResponse = z.infer<typeof adminAccessResponseSchema>; export type UpdateAdminAccessRequest = z.infer<typeof updateAdminAccessSchema>;
 export * from './telegram-account.js';
 export * from './media.js';
+export * from './message-store.js';
 export * from './knowledge-base.js';
 export * from './human-assistance.js';
 export * from './telegram-schedule-import.js';
@@ -121,6 +128,7 @@ export * from './google-calendar.js';
 export * from './debug.js';
 export * from './prompt-test.js';
 export * from './openai-balance.js';
+export * from './public-booking.js';
 
 export const systemOneSettingsSchema = z.object({ provider: z.enum(['openai', 'typesafe']) }).strict();
 export type SystemOneSettings = z.infer<typeof systemOneSettingsSchema>;

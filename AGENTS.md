@@ -45,3 +45,17 @@ Never deploy to any production environment or invoke a production deployment scr
 ## User shorthand
 
 When the user types `cpd`, treat it as an explicit request to commit the current intended changes, push the current branch, and deploy those changes using the repository's configured deployment target and script. Complete those steps in that order. `cpd` authorizes that deployment; it is not a standing authorization to deploy later changes without a new request. If the target is unclear, ask before deploying.
+
+## Agent skills
+
+### Issue tracker
+
+Project issues and specs live in GitHub Issues. Use `gh` CLI; see `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the canonical labels `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`; see `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single booking-assistant domain. `SPEC.md` defines behavior; `docs/data-model.md` defines persisted shapes. Read root `GLOSSARY.md` and `docs/adr/` when present; see `docs/agents/domain.md`.

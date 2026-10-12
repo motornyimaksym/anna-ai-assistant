@@ -5,7 +5,7 @@ import { defaultServiceCaption } from './service-presentation.js';
 const service = { id: 'massage', name: 'Massage', description: '', durationMinutes: 60, price: 1500, bufferMinutes: 15, currency: 'UAH', enabled: true };
 describe('service duration options', () => {
   it('keeps legacy services and validates additional duration/price pairs', () => {
-    expect(serviceSchema.parse(service)).toEqual(service);
+    expect(serviceSchema.parse(service)).toEqual({ ...service, publiclyAvailable: false });
     expect(serviceSchema.parse({ ...service, durationOptions: [{ durationMinutes: 90, price: 2000 }] }).durationOptions).toEqual([{ durationMinutes: 90, price: 2000 }]);
     for (const durationOptions of [[{ durationMinutes: 60, price: 100 }], [{ durationMinutes: 90, price: -1 }], [{ durationMinutes: 14, price: 100 }], [{ durationMinutes: 90.5, price: 100 }], Array.from({ length: 10 }, (_, i) => ({ durationMinutes: 100 + i, price: 100 }))]) {
       expect(serviceSchema.safeParse({ ...service, durationOptions }).success).toBe(false);

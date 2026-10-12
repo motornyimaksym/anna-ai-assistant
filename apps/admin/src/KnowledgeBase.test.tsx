@@ -11,7 +11,7 @@ const show = () => render(<QueryClientProvider client={new QueryClient({ default
 
 describe('admin knowledge base page', () => {
   it('shows live service prices and saves additional facts', async () => {
-    vi.mocked(adminApi.knowledgeBase).mockResolvedValue({ content: 'Studio is upstairs.', isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z', services: [{ id: 'relax', name: 'Relax massage', description: 'Gentle full body massage', durationMinutes: 60, durationOptions: [{ durationMinutes: 90, price: 2000 }], price: 1500, currency: 'UAH' }] });
+    vi.mocked(adminApi.knowledgeBase).mockResolvedValue({ content: 'Studio is upstairs.', isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z', services: [{ id: 'relax', name: 'Relax massage', description: 'Gentle full body massage', durationMinutes: 60, durationOptions: [{ durationMinutes: 90, price: 2000 }], price: 1500, currency: 'UAH', publiclyAvailable: false }] });
     vi.mocked(adminApi.saveKnowledgeBase).mockResolvedValue({ content: 'Studio is upstairs. Parking is available.', isCustom: true, updatedAt: '2026-09-24T10:05:00.000Z', services: [] });
     show();
     const editor = await screen.findByRole('textbox', { name: 'Additional business knowledge' });
@@ -38,8 +38,8 @@ describe('admin knowledge base page', () => {
   });
 
   it('edits an automatically included service without changing the knowledge text or other service fields', async () => {
-    const service = { id: 'relax', name: 'Relax massage', description: 'Gentle massage', durationMinutes: 60, durationOptions: [{ durationMinutes: 90, price: 2000 }], price: 1500, currency: 'UAH', bufferMinutes: 30, enabled: true, photoUrl: 'https://firebasestorage.googleapis.com/v0/b/demo/o/photo' };
-    vi.mocked(adminApi.knowledgeBase).mockResolvedValue({ content: 'Studio is upstairs.', isCustom: true, services: [{ id: service.id, name: service.name, description: service.description, durationMinutes: service.durationMinutes, durationOptions: service.durationOptions, price: service.price, currency: service.currency }] });
+    const service = { id: 'relax', name: 'Relax massage', description: 'Gentle massage', durationMinutes: 60, durationOptions: [{ durationMinutes: 90, price: 2000 }], price: 1500, currency: 'UAH', publiclyAvailable: false, bufferMinutes: 30, enabled: true, photoUrl: 'https://firebasestorage.googleapis.com/v0/b/demo/o/photo' };
+    vi.mocked(adminApi.knowledgeBase).mockResolvedValue({ content: 'Studio is upstairs.', isCustom: true, services: [{ id: service.id, name: service.name, description: service.description, durationMinutes: service.durationMinutes, durationOptions: service.durationOptions, price: service.price, currency: service.currency, publiclyAvailable: service.publiclyAvailable }] });
     vi.mocked(adminApi.services).mockResolvedValue([service]);
     vi.mocked(adminApi.saveService).mockImplementation(async (value) => value);
     show();
@@ -72,7 +72,7 @@ describe('admin knowledge base page', () => {
   });
 
   it('requires delete confirmation, deletes the service, and keeps knowledge text intact', async () => {
-    const service = { id: 'relax', name: 'Relax massage', description: 'Gentle massage', durationMinutes: 60, price: 1500, currency: 'UAH' };
+    const service = { id: 'relax', name: 'Relax massage', description: 'Gentle massage', durationMinutes: 60, price: 1500, currency: 'UAH', publiclyAvailable: false };
     vi.mocked(adminApi.knowledgeBase).mockResolvedValue({ content: 'Studio facts.', isCustom: true, services: [service] });
     vi.mocked(adminApi.deleteService).mockResolvedValue({ ok: true });
     show();

@@ -6,7 +6,7 @@ import type { CalendarService } from '../src/calendar.js';
 
 const service = { id: 'massage', name: 'Massage', description: '', durationMinutes: 60, price: 1500, bufferMinutes: 15, currency: 'UAH', enabled: true, durationOptions: [{ durationMinutes: 90, price: 2000 }] };
 const setup = () => {
-  const repository = { getService: vi.fn(async () => service), getRules: vi.fn(async () => []), getExceptions: vi.fn(async () => [{ id: 'day', date: '2099-01-01', type: 'working_interval', start: '09:00', end: '11:00' }]), createBooking: vi.fn(), listLockedIntervals: vi.fn() };
+  const repository = { getService: vi.fn(async () => service), getRules: vi.fn(async () => []), getExceptions: vi.fn(async () => [{ id: 'day', date: '2099-01-01', type: 'working_interval', start: '09:00', end: '11:00' }]), createBooking: vi.fn(), listLockedIntervals: vi.fn(), getActivePublicBookingSlotLocks: vi.fn(async () => []), acquirePublicBookingCalendarWriteLock: vi.fn(async () => undefined), releasePublicBookingSlots: vi.fn(async () => undefined) };
   const calendar = { destination: vi.fn(async () => 'calendar'), getBusyIntervals: vi.fn(async (): Promise<Array<{ start: string; end: string }>> => []), createBookingEvent: vi.fn(async (booking: { id: string }) => ({ eventId: booking.id, calendarId: 'calendar' })), verifyBookingEvent: vi.fn(async () => true), getBooking: vi.fn(async () => undefined), getBookingTiming: vi.fn(async () => ({ durationMinutes: 90, bufferMinutes: 15 })) };
   return { repository, calendar, booking: new BookingService(repository as unknown as BookingRepository, calendar as unknown as CalendarService), availability: new AvailabilityService(repository as unknown as BookingRepository, calendar as unknown as CalendarService) };
 };

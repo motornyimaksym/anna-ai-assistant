@@ -1,8 +1,9 @@
 import { BookingPreparationError } from './booking-preparation-errors.js';
 import { MediaStoreService } from './media-store.service.js';
+import { MessageStoreService } from './message-store.service.js';
 import { Inject, Injectable } from '@nestjs/common';
 import { z } from 'zod';
-import { createBookingRequestSchema, mediaIdSchema } from '@booking/contracts';
+import { createBookingRequestSchema, mediaIdSchema, messageStoreIdSchema, type ServiceDto } from '@booking/contracts';
 import { BookingContextService } from './booking-context.service.js';
 import { BookingService } from './booking.service.js';
 import { BookingRepository } from './repository.js';
@@ -10,11 +11,13 @@ import { selectServiceOption } from './service-options.js';
 import { bookingConfirmationMismatches } from './booking-confirmation.js';
 import { bookingProposalError, bookingProposalFactError } from './booking-proposal-errors.js';
 import type { BookingEventContext } from './calendar.js';
-export type AssistantContext = { clientId: string; telegramChatId: string; businessConnectionId?: string; traceId?: string; currentMessage?: string; telegramUsername?: string; telegramDisplayName?: string };
+export type AssistantContext = { clientId: string; telegramChatId: string; businessConnectionId?: string; traceId?: string; currentMessage?: string; telegramUsername?: string; telegramDisplayName?: string; isReturningClient?: boolean };
 const bookingArguments = z.object({ serviceId: z.string().min(1), durationMinutes: z.number().int().min(15).max(480), startAt: z.string().datetime({ offset: true }) }).strict();
 export const assistantToolSchema = z.discriminatedUnion('name', [
   z.object({ name: z.literal('get_media'), arguments: z.object({}).strict() }),
   z.object({ name: z.literal('send_media'), arguments: z.object({ mediaId: mediaIdSchema }).strict() }),
+  z.object({ name: z.literal('get_saved_messages'), arguments: z.object({}).strict() }),
+  z.object({ name: z.literal('select_saved_message'), arguments: z.object({ messageId: messageStoreIdSchema }).strict() }),
   z.object({ name: z.literal('get_services'), arguments: z.object({}) }),
   z.object({ name: z.literal('get_booking_context'), arguments: z.object({}).strict() }),
   z.object({ name: z.literal('get_bookings'), arguments: z.object({}) }),
@@ -25,7 +28,18 @@ export const assistantToolSchema = z.discriminatedUnion('name', [
 @Injectable()
 export class AssistantToolsService {
   @Inject(MediaStoreService) private readonly media!: MediaStoreService;
-  constructor(private readonly repository: BookingRepository, private readonly bookings: BookingService, private readonly bookingContext: BookingContextService) {}
+  constructor(private readonly repository: BookingRepository, private readonly bookings: BookingService, private readonly bookingContext: BookingContextService, private readonly messageStore: MessageStoreService) {}
+  async isReturningClient(context: AssistantContext): Promise<boolean> {
+    if (context.isReturningClient !== undefined) return context.isReturningClient;
+    try { return await this.bookings.hasPriorAppointment(context.clientId, context.telegramChatId); }
+    catch { return false; }
+  }
+  filterServicesForClient(services: ServiceDto[], context: AssistantContext): Promise<ServiceDto[]> {
+    return this.isReturningClient(context).then((returning) => services.filter((service) => service.enabled && (returning || service.publiclyAvailable)));
+  }
+  async servicesForClient(context: AssistantContext): Promise<ServiceDto[]> {
+    return this.filterServicesForClient(await this.repository.listServices(), context);
+  }
   async execute(input: unknown, context: AssistantContext): Promise<unknown> {
     const tool = assistantToolSchema.parse(input);
     switch (tool.name) {
@@ -35,12 +49,14 @@ export class AssistantToolsService {
       }
       case 'get_media': return this.media.available(context.telegramChatId);
       case 'send_media': return this.media.send(tool.arguments.mediaId, context.telegramChatId, context.businessConnectionId);
-      case 'get_services': return (await this.repository.listServices()).filter((service) => service.enabled);
+      case 'get_saved_messages': return (await this.messageStore.enabled()).map(({ id, description, text }) => ({ id, description, text }));
+      case 'select_saved_message': return this.messageStore.select(tool.arguments.messageId);
+      case 'get_services': return this.servicesForClient(context);
       case 'get_bookings': return (await this.bookings.list()).filter((booking) => booking.clientId === context.clientId && booking.telegramChatId === context.telegramChatId);
       case 'get_booking_context': return this.bookingContext.read();
       case 'prepare_booking': {
         const service = await this.repository.getService(tool.arguments.serviceId);
-        if (!service?.enabled) throw new BookingPreparationError('BOOKING_SERVICE_UNAVAILABLE');
+        if (!service?.enabled || (!await this.isReturningClient(context) && !service.publiclyAvailable)) throw new BookingPreparationError('BOOKING_SERVICE_UNAVAILABLE');
         let option: ReturnType<typeof selectServiceOption>;
         try { option = selectServiceOption(service, tool.arguments.durationMinutes); }
         catch { throw new BookingPreparationError('BOOKING_DURATION_UNAVAILABLE'); }
@@ -87,6 +103,8 @@ export class AssistantToolsService {
         const consumed = await this.repository.consumeAssistantBooking(context.telegramChatId, context.clientId, proposal.id);
         if (JSON.stringify(consumed) !== JSON.stringify(proposal)) throw bookingProposalError('replaced', 'Booking proposal changed before confirmation');
         const args = bookingArguments.parse(consumed.arguments);
+        const selectedService = await this.repository.getService(args.serviceId);
+        if (!selectedService?.enabled || (!await this.isReturningClient(context) && !selectedService.publiclyAvailable)) throw new BookingPreparationError('BOOKING_SERVICE_UNAVAILABLE');
         const eventContext: BookingEventContext = {
           ...(context.telegramUsername ? { telegramUsername: context.telegramUsername } : {}),
           ...(context.telegramDisplayName ? { telegramDisplayName: context.telegramDisplayName } : {}),
