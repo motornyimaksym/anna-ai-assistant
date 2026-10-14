@@ -130,7 +130,8 @@ export class TelegramService {
       if (answer.needsHuman) {
         await this.debug.record(trace, 'handoff', { reason: 'assistant_requested_human' }, 'warn');
         await this.repository.appendMessage(chatId, 'user', message.text.slice(0, 4000));
-        await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, answer.humanContext);
+        if (answer.humanReason === 'knowledge_gap') await this.human.escalateKnowledgeGap(chatId, message.business_connection_id, update.update_id, message.text, answer.humanContext ?? 'Немає підтвердженої відповіді в базі знань.');
+        else await this.human.escalateError(chatId, message.business_connection_id, update.update_id, message.text, answer.humanContext);
         return;
       }
       const outgoingText = answer.exactStoredMessage ? answer.text : TextUtils.replaceLongDashes(answer.text);

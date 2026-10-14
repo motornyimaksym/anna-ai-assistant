@@ -1,9 +1,9 @@
 import { systemOneSettingsSchema } from '@booking/contracts';
-import { Body, Controller, Delete, Get, Header, Headers, HttpCode, NotFoundException, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Header, Headers, HttpCode, NotFoundException, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { adminAccessResponseSchema, assistantPromptResponseSchema, clearConversationContextResponseSchema, debugClearResponseSchema, promptCatalogResponseSchema, availabilityRuleSchema, availableSlotsRequestSchema, botSettingsResponseSchema, openAiBalanceBaselineSchema, patchConversationSchema, scheduleExceptionSchema, servicePhotoUploadSchema, serviceSchema, serviceDeleteResponseSchema, updateAdminAccessSchema, updateAssistantPromptSchema, updateBotSettingsSchema, updateOpenAiBalanceSchema, knowledgeBaseResponseSchema, updateKnowledgeBaseSchema, humanAssistanceSettingsResponseSchema, humanReplySchema, updateHumanAssistanceSettingsSchema } from '@booking/contracts';
 import { AdminGuard, AdminOwnerGuard, AdminDebugGuard, canViewDebug, type AdminRequest } from './auth.js'; import { AvailabilityService } from './availability.service.js'; import { BookingService } from './booking.service.js'; import { BookingRepository } from './repository.js'; import { SpecService } from './spec.service.js'; import { TelegramService } from './telegram.service.js';
 import { getDefaultBotSettings } from './bot-settings.js';
-import { DEFAULT_KNOWLEDGE_BASE } from './default-knowledge-base.js';
+import { KnowledgeBaseService } from './knowledge-base.service.js';
 import { ServicePhotoService } from './service-photo.service.js';
 import { HumanAssistanceService } from './human-assistance.service.js';
 import { assistantPromptIdSchema } from '@booking/contracts';
@@ -15,7 +15,7 @@ export class HealthController { @Get('health') health() { return { status: 'ok' 
 export class TelegramController { constructor(private readonly telegram: TelegramService) {} @Post('webhook') @HttpCode(200) async webhook(@Headers('x-telegram-bot-api-secret-token') secret: string | undefined, @Body() body: unknown) { await this.telegram.handle(secret, body); return { ok: true }; } }
 @UseGuards(AdminGuard) @Controller('admin')
 export class AdminController {
-  constructor(private readonly repository: BookingRepository, private readonly bookings: BookingService, private readonly availability: AvailabilityService, private readonly specService: SpecService, private readonly servicePhotos: ServicePhotoService, private readonly human: HumanAssistanceService, private readonly openAiBalance: OpenAiBalanceService) {}
+  constructor(private readonly repository: BookingRepository, private readonly bookings: BookingService, private readonly availability: AvailabilityService, private readonly specService: SpecService, private readonly servicePhotos: ServicePhotoService, private readonly human: HumanAssistanceService, private readonly openAiBalance: OpenAiBalanceService, private readonly knowledgeBase: KnowledgeBaseService) {}
   @Get('openai-balance') @Header('Cache-Control', 'no-store') openAiBalanceSummary() { return this.openAiBalance.getBalance(); }
   @Put('openai-balance') async updateOpenAiBalance(@Body() body: unknown) { const { balance } = updateOpenAiBalanceSchema.parse(body); return openAiBalanceBaselineSchema.parse(await this.openAiBalance.setCurrentBalance(balance)); }
   @Get('spec') spec() { return this.specService.getSpec(); }
@@ -44,9 +44,9 @@ export class AdminController {
   @Get('debug/logs') @Header('Cache-Control', 'no-store') @UseGuards(AdminDebugGuard) debugLogs() { return this.repository.listDebugEvents(); }
   @Delete('debug/logs') @Header('Cache-Control', 'no-store') @UseGuards(AdminDebugGuard) async clearDebugLogs() { await this.repository.clearDebugEvents(); return debugClearResponseSchema.parse({ ok: true }); }
   @Get('debug/logs/:id/payload') @Header('Cache-Control', 'no-store') @UseGuards(AdminDebugGuard) debugLogPayload(@Param('id') id: string) { return this.repository.getDebugPayload(id); }
-  @Get('knowledge-base') async knowledgeBase() { const [override, services] = await Promise.all([this.repository.getKnowledgeBaseOverride(), this.repository.listServices()]); return this.knowledgeBaseResponse(override, services.filter((service) => service.enabled)); }
-  @Put('knowledge-base') async updateKnowledgeBase(@Body() body: unknown) { const { content } = updateKnowledgeBaseSchema.parse(body); const [override, services] = await Promise.all([this.repository.saveKnowledgeBaseOverride(content), this.repository.listServices()]); return this.knowledgeBaseResponse(override, services.filter((service) => service.enabled)); }
-  @Delete('knowledge-base') async resetKnowledgeBase() { await this.repository.deleteKnowledgeBaseOverride(); return this.knowledgeBaseResponse(undefined, (await this.repository.listServices()).filter((service) => service.enabled)); }
+  @Get('knowledge-base') async knowledgeBaseView() { await this.knowledgeBase.activeIndex(); const [source, services] = await Promise.all([this.knowledgeBase.adminView(), this.repository.listServices()]); return this.knowledgeBaseResponse(source, services.filter((service) => service.enabled)); }
+  @Put('knowledge-base') async updateKnowledgeBase(@Body() body: unknown) { const { content } = updateKnowledgeBaseSchema.parse(body); await this.knowledgeBase.save(content); const [source, services] = await Promise.all([this.knowledgeBase.adminView(), this.repository.listServices()]); return this.knowledgeBaseResponse(source, services.filter((service) => service.enabled)); }
+  @Delete('knowledge-base') async resetKnowledgeBase() { await this.knowledgeBase.reset(); const [source, services] = await Promise.all([this.knowledgeBase.adminView(), this.repository.listServices()]); return this.knowledgeBaseResponse(source, services.filter((service) => service.enabled)); }
   @Get('system-one-settings') async systemOneSettings() { return systemOneSettingsSchema.parse(await this.repository.getSystemOneSettings()); }
   @Put('system-one-settings') async updateSystemOneSettings(@Body() body: unknown) { return systemOneSettingsSchema.parse(await this.repository.saveSystemOneSettings(systemOneSettingsSchema.parse(body))); }
   @Get('bot-settings') async botSettings() { return this.botSettingsResponse(await this.repository.getBotSettingsOverride()); }
@@ -74,6 +74,13 @@ export class AdminController {
   @Post('conversations/:id/clear-context') @Header('Cache-Control', 'no-store') async clearConversationContext(@Param('id') id: string) { const result = await this.repository.clearConversationContext(id); if (!result) throw new NotFoundException('Conversation not found'); return clearConversationContextResponseSchema.parse(result); }
   @Patch('conversations/:id') async patchConversation(@Param('id') id: string, @Body() body: unknown) { const changes = patchConversationSchema.parse(body); const existing = await this.repository.getConversation(id); const now = new Date().toISOString(); return this.repository.saveConversation({ ...(existing ?? { telegramChatId: id, assistantEnabled: true, state: 'active', summary: '', createdAt: now }), ...changes, humanTakeoverUntil: changes.humanTakeoverUntil === null ? undefined : changes.humanTakeoverUntil ?? existing?.humanTakeoverUntil, updatedAt: now }); }
   @Post('available-slots') availableSlots(@Body() body: unknown) { return this.availability.find(availableSlotsRequestSchema.parse(body)); }
-  private knowledgeBaseResponse(override?: { content: string; updatedAt: string }, services: Awaited<ReturnType<BookingRepository['listServices']>> = []) { return knowledgeBaseResponseSchema.parse({ ...(override ? { ...override, isCustom: true } : { content: DEFAULT_KNOWLEDGE_BASE, isCustom: false }), services: services.map(({ id, name, description, durationMinutes, durationOptions, price, currency, publiclyAvailable }) => ({ id, name, description, durationMinutes, ...(durationOptions ? { durationOptions } : {}), price, currency, publiclyAvailable })) }); }
-  private botSettingsResponse(override?: { maxReadDelayMs: number; typingDelayPerSymbolMs: number; testerUsernames: string[]; allUsersEnabled: boolean; updatedAt: string }) { return botSettingsResponseSchema.parse(override ? { ...override, isCustom: true } : { ...getDefaultBotSettings(), isCustom: false }); }
+  private knowledgeBaseResponse(source: { content: string; isCustom: boolean; updatedAt?: string }, services: Awaited<ReturnType<BookingRepository['listServices']>> = []) { return knowledgeBaseResponseSchema.parse({ ...source, services: services.map(({ id, name, description, durationMinutes, durationOptions, price, currency, publiclyAvailable }) => ({ id, name, description, durationMinutes, ...(durationOptions ? { durationOptions } : {}), price, currency, publiclyAvailable })) }); }
+  private botSettingsResponse(override?: { maxReadDelayMs: number; typingDelayPerSymbolMs: number; testerUsernames: string[]; allUsersEnabled: boolean; discloseAiIdentity: boolean; updatedAt: string }) { return botSettingsResponseSchema.parse(override ? { ...override, isCustom: true } : { ...getDefaultBotSettings(), isCustom: false }); }
+}
+
+@Controller('knowledge-base')
+export class KnowledgeBaseFileController {
+  constructor(private readonly knowledgeBase: KnowledgeBaseService) {}
+  @Get('file/:hash') @Header('Content-Type', 'text/plain; charset=utf-8') @Header('Cache-Control', 'private, no-store')
+  file(@Param('hash') hash: string, @Query('token') token: string | undefined) { return this.knowledgeBase.readFile(hash, token ?? ''); }
 }

@@ -509,21 +509,6 @@ export class BookingRepository {
   async resetDeletedBusinessChat(chatId: string, businessConnectionId: string): Promise<boolean> {
     return (await this.clearConversationContext(chatId, businessConnectionId)) !== undefined;
   }
-  async getKnowledgeBaseOverride(): Promise<{ content: string; updatedAt: string } | undefined> {
-    const doc = await this.db.collection('assistantSettings').doc('knowledgeBase').get();
-    if (!doc.exists) return undefined;
-    const data = doc.data();
-    return typeof data?.content === 'string' && typeof data.updatedAt === 'string' ? { content: data.content, updatedAt: data.updatedAt } : undefined;
-  }
-  async saveKnowledgeBaseOverride(content: string): Promise<{ content: string; updatedAt: string }> {
-    const value = { content, updatedAt: new Date().toISOString() };
-    await this.db.collection('assistantSettings').doc('knowledgeBase').set(value);
-    return value;
-  }
-  async deleteKnowledgeBaseOverride(): Promise<void> {
-    await this.db.collection('assistantSettings').doc('knowledgeBase').delete();
-  }
-
   private diagnosticBodyFile(id: string, kind: 'request' | 'response') { return getStorage().bucket().file(`assistant-diagnostics/${id}/${kind}.json`); }
   private async deleteDiagnosticBodies(id: string) {
     await Promise.all((['request', 'response'] as const).map(async (kind) => {
@@ -649,7 +634,11 @@ export class BookingRepository {
   async saveBotSettingsOverride(settings: UpdateBotSettingsRequest): Promise<BotSettings & { updatedAt: string }> {
     const parsed = updateBotSettingsSchema.parse(settings);
     const existing = await this.getBotSettingsOverride();
-    const value = { ...botSettingsSchema.parse({ ...parsed, allUsersEnabled: parsed.allUsersEnabled ?? existing?.allUsersEnabled ?? false }), updatedAt: new Date().toISOString() };
+    const value = { ...botSettingsSchema.parse({
+      ...parsed,
+      allUsersEnabled: parsed.allUsersEnabled ?? existing?.allUsersEnabled ?? false,
+      discloseAiIdentity: parsed.discloseAiIdentity ?? existing?.discloseAiIdentity ?? true,
+    }), updatedAt: new Date().toISOString() };
     await this.db.collection('assistantSettings').doc('behavior').set(withoutUndefined(value));
     return value;
   }

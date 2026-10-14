@@ -140,6 +140,11 @@ export class HumanAssistanceService {
     await this.escalate(chatId, businessConnectionId, updateId, `${question.slice(0, 2600)}${context ? `\n\nПричина передачі: ${context.slice(0, 1200)}` : ''}\n\nАвтоматичну обробку зупинено. Перевірте стан операції перед повторною спробою.`, { reason: 'operation_error', thresholdPercent: settings.thresholdPercent }, { clientMessage: question, transferContext: context });
   }
 
+  async escalateKnowledgeGap(chatId: string, businessConnectionId: string | undefined, updateId: number, question: string, context: string) {
+    const settings = await this.store.settings();
+    await this.escalate(chatId, businessConnectionId, updateId, `${question.slice(0, 2600)}\n\nПричина передачі: ${context.slice(0, 1200)}\n\nАвтоматичну відповідь не надіслано.`, { reason: 'knowledge_gap', thresholdPercent: settings.thresholdPercent }, { clientMessage: question, transferContext: context });
+  }
+
   async escalate(chatId: string, businessConnectionId: string | undefined, updateId: number, question: string, decision: { reason: HumanRequestDto['reason']; probability?: number; thresholdPercent: number }, display: { clientMessage?: string; unsentMessage?: string; transferContext?: string } = {}): Promise<void> {
     const { request, created } = await this.store.open(chatId, businessConnectionId, updateId, question, decision.reason, decision.probability, decision.thresholdPercent);
     if (!created) {

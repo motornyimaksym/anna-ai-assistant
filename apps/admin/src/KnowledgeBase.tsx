@@ -2,6 +2,7 @@ import { Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogConten
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import type { KnowledgeBaseResponse, ServiceDto } from '@booking/contracts';
+import { KNOWLEDGE_BASE_MAX_BYTES } from '@booking/contracts';
 import { adminApi } from './api.js';
 import { KnowledgeBaseServiceEditor } from './KnowledgeBaseServiceEditor.js';
 import { useI18n } from "./i18n.js";
@@ -71,14 +72,15 @@ export const KnowledgeBase = () => {
   if (query.isError) return <Alert severity="error">{t("Could not load the knowledge base.")}{t(" ")}{errorText(query.error)}</Alert>;
 
   const dirty = content !== query.data.content;
-  const canSave = dirty && content.trim().length > 0 && content.length <= 12_000 && !save.isPending && !reset.isPending;
+  const contentBytes = new TextEncoder().encode(content).byteLength;
+  const canSave = dirty && content.trim().length > 0 && contentBytes <= KNOWLEDGE_BASE_MAX_BYTES && !save.isPending && !reset.isPending;
 
   return <Stack spacing={2}>
     <Stack direction="row" alignItems="center" spacing={1}>
       <Chip size="small" color={query.data.isCustom ? 'primary' : 'default'} label={query.data.isCustom ? t("Custom knowledge base") : t("Default knowledge base")} />
       <Typography variant="body2" color="text.secondary">{t("Changes apply to the next assistant request.")}</Typography>
     </Stack>
-    <Typography color="text.secondary">{t("Add business facts and guidance here. Keep response rules in Assistant prompt. Current enabled services, descriptions, durations, and prices are appended automatically from the booking catalog; edit them below.")}</Typography>
+    <Typography color="text.secondary">{t("Store business facts, policies, service boundaries, and brand voice here. The assistant searches this text when needed. Enabled catalog services are supplied separately and take priority for service details; edit them below.")}</Typography>
     <TextField
       label={t("Additional business knowledge")}
       value={content}
@@ -86,8 +88,8 @@ export const KnowledgeBase = () => {
       multiline
       minRows={18}
       fullWidth
-      inputProps={{ maxLength: 12_000, 'aria-label': 'Additional business knowledge' }}
-      helperText={`${content.length.toLocaleString(language === "uk" ? "uk-UA" : "en-US")} / 12,000 ${t("characters")}`}
+      inputProps={{ maxLength: KNOWLEDGE_BASE_MAX_BYTES, 'aria-label': 'Additional business knowledge' }}
+      helperText={`${contentBytes.toLocaleString(language === "uk" ? "uk-UA" : "en-US")} / ${KNOWLEDGE_BASE_MAX_BYTES.toLocaleString(language === "uk" ? "uk-UA" : "en-US")} ${t("UTF-8 bytes")}`}
       disabled={save.isPending || reset.isPending}
     />
     <>
@@ -117,8 +119,8 @@ export const KnowledgeBase = () => {
     {save.isError && <Alert severity="error">{t("Could not save the knowledge base.")}{t(" ")}{t(errorText(save.error))}</Alert>}
     {reset.isError && <Alert severity="error">{t("Could not reset the knowledge base.")}{t(" ")}{t(errorText(reset.error))}</Alert>}
     <Box display="flex" gap={1}>
-      <Button variant="contained" onClick={() => { setMessage(''); save.mutate(); }} disabled={!canSave}>{t("Save")}</Button>
-      <Button variant="outlined" color="inherit" onClick={() => { setMessage(''); reset.mutate(); }} disabled={!query.data.isCustom || save.isPending || reset.isPending}>{t("RESET")}</Button>
+      <Button variant="contained" onClick={() => { setMessage(''); save.mutate(); }} disabled={!canSave}>{save.isPending ? t("Indexing…") : t("Save")}</Button>
+      <Button variant="outlined" color="inherit" onClick={() => { setMessage(''); reset.mutate(); }} disabled={!query.data.isCustom || save.isPending || reset.isPending}>{reset.isPending ? t("Indexing…") : t("RESET")}</Button>
     </Box>
     <Dialog open={Boolean(deleteTarget)} onClose={() => { if (!removeService.isPending) setDeleteTarget(null); }}>
       <DialogTitle>{t("Delete")}{t(" ")}{deleteTarget?.name}?</DialogTitle>

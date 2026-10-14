@@ -16,10 +16,10 @@ describe('assistant tools', () => {
     expect(await tools.execute({ name: 'get_booking_context', arguments: {} }, context)).toEqual(await bookingContext.read());
   });
   it('requires a client message and no arguments, without classifying message words', async () => {
-    await expect(tools.execute({ name: 'request_human_assistance', arguments: { detail: 'invented' } }, { ...context, currentMessage: 'Custom hot stone massage?' })).rejects.toThrow();
-    await expect(tools.execute({ name: 'request_human_assistance', arguments: {} }, { ...context, currentMessage: '  ' })).rejects.toThrow('Client request required');
-    expect(await tools.execute({ name: 'request_human_assistance', arguments: {} }, { ...context, currentMessage: 'Custom hot stone massage?' })).toEqual({ status: 'human_requested' });
-    expect(await tools.execute({ name: 'request_human_assistance', arguments: {} }, { ...context, currentMessage: 'Is lingam massage customized for me?' })).toEqual({ status: 'human_requested' });
+    await expect(tools.execute({ name: 'request_human_assistance', arguments: { reason: 'custom_service', detail: 'invented' } }, { ...context, currentMessage: 'Custom hot stone massage?' })).rejects.toThrow();
+    await expect(tools.execute({ name: 'request_human_assistance', arguments: { reason: 'knowledge_rule' } }, { ...context, currentMessage: '  ' })).rejects.toThrow('Client request required');
+    expect(await tools.execute({ name: 'request_human_assistance', arguments: { reason: 'custom_service' } }, { ...context, currentMessage: 'Custom hot stone massage?' })).toEqual({ status: 'human_requested', reason: 'custom_service' });
+    expect(await tools.execute({ name: 'request_human_assistance', arguments: { reason: 'knowledge_rule' } }, { ...context, currentMessage: 'Is lingam massage customized for me?' })).toEqual({ status: 'human_requested', reason: 'knowledge_rule' });
   });
   it('creates only the delivered, fact-checked proposal selected by the assistant', async () => {
     const utcStart = new Date(Math.ceil((Date.now() + 24 * 60 * 60_000) / 1000) * 1000);

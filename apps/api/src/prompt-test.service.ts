@@ -8,11 +8,13 @@ import { BookingRepository } from './repository.js';
 import { SystemOneSelector, systemOneProbabilitySchema } from './system-one.js';
 import { systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from './system-two-instructions.js';
 import { TextUtils } from './text-utils.js';
+import { KnowledgeBaseService } from './knowledge-base.service.js';
 
 const responseSchema = z.object({
   status: z.literal('completed'),
   output: z.array(z.object({
     type: z.string(), name: z.string().optional(), arguments: z.string().optional(),
+    status: z.string().optional(), results: z.array(z.unknown()).nullish(), search_results: z.array(z.unknown()).nullish(),
     content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()).optional(),
   }).passthrough()),
 });
@@ -25,7 +27,7 @@ const outputText = (response: z.infer<typeof responseSchema>): string => respons
   .join('\n').trim();
 @Injectable()
 export class PromptTestService {
-  constructor(private readonly repository: BookingRepository, private readonly selector: SystemOneSelector) {}
+  constructor(private readonly repository: BookingRepository, private readonly selector: SystemOneSelector, private readonly knowledgeBase: KnowledgeBaseService) {}
 
   async run(raw: unknown): Promise<PromptTestResponse> {
     const parsed = promptTestRequestSchema.safeParse(raw);
@@ -50,18 +52,23 @@ export class PromptTestService {
   }
 
   private async systemTwo(request: Extract<PromptTestRequest, { system: 'two' }>): Promise<PromptTestResponse> {
-    const [override, knowledge, services] = await Promise.all([
+    const [override, knowledgeIndex, services, botSettings] = await Promise.all([
       this.repository.getPromptOverride('assistant'),
-      this.repository.getKnowledgeBaseOverride(), this.repository.listServices(),
+      this.knowledgeBase.activeIndex(), this.repository.listServices(), this.repository.getBotSettingsOverride(),
     ]);
-    const instructions = systemTwoInstructions({ promptOverride: override?.prompt });
-    const rag = systemTwoRag({ message: request.text, knowledgeBaseOverride: knowledge?.content, configuredServices: services });
+    const instructions = systemTwoInstructions({ promptOverride: override?.prompt, discloseAiIdentity: botSettings?.discloseAiIdentity ?? true });
+    const rag = systemTwoRag({ message: request.text, configuredServices: services });
     const model = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
     const requestContext = systemTwoRequestContext({ instructions, rag, history: [], message: request.text, model });
-    const selectedTools = assistantToolDefinitions;
-    const response = responseSchema.parse(await requestOpenAiResponse({ store: false, model, ...requestContext, tools: selectedTools, parallel_tool_calls: false, max_output_tokens: 800 }, AbortSignal.timeout(30_000)));
+    const selectedTools = [{ type: 'file_search', vector_store_ids: [knowledgeIndex.vectorStoreId], max_num_results: 5 }, ...assistantToolDefinitions];
+    const response = responseSchema.parse(await requestOpenAiResponse({ store: false, model, ...requestContext, tools: selectedTools, include: ['file_search_call.results'], parallel_tool_calls: false, max_output_tokens: 800 }, AbortSignal.timeout(30_000)));
+    const searchCalls = response.output.filter((item) => item.type === 'file_search_call');
+    if (searchCalls.some((item) => item.status !== 'completed')) throw new Error('File Search failed');
+    const searchResults = searchCalls.map((item) => item.results ?? item.search_results);
+    if (searchCalls.length && searchResults.some((results) => !Array.isArray(results))) throw new Error('File Search results unavailable');
+    if (searchCalls.length && searchResults.every((results) => (results as unknown[]).length === 0)) return { kind: 'tool_calls', output: JSON.stringify([{ name: 'request_human_assistance', arguments: { reason: 'knowledge_not_found' } }], null, 2), sampleContext: false };
     const calls = response.output.filter((item) => item.type === 'function_call');
-    if (calls.some(({ name }) => !selectedTools.some((tool) => tool.name === name))) throw new Error('Unsupported tool');
+    if (calls.some(({ name }) => !selectedTools.some((tool) => 'name' in tool && tool.name === name))) throw new Error('Unsupported tool');
     if (calls.length) return { kind: 'tool_calls', output: TextUtils.replaceLongDashes(JSON.stringify(calls.map(({ name, arguments: args }) => ({ name, arguments: args ? JSON.parse(args) : {} })), null, 2)), sampleContext: false };
     const text = outputText(response);
     if (!text) throw new Error('Empty model reply');

@@ -23,7 +23,7 @@ export const assistantToolSchema = z.discriminatedUnion('name', [
   z.object({ name: z.literal('get_bookings'), arguments: z.object({}) }),
   z.object({ name: z.literal('prepare_booking'), arguments: bookingArguments }),
   z.object({ name: z.literal('create_booking'), arguments: z.object({}).strict() }),
-  z.object({ name: z.literal('request_human_assistance'), arguments: z.object({}).strict() }),
+  z.object({ name: z.literal('request_human_assistance'), arguments: z.object({ reason: z.enum(['custom_service', 'knowledge_rule', 'knowledge_not_found', 'knowledge_ambiguous']) }).strict() }),
 ]);
 @Injectable()
 export class AssistantToolsService {
@@ -45,7 +45,7 @@ export class AssistantToolsService {
     switch (tool.name) {
       case 'request_human_assistance': {
         if (!context.currentMessage?.trim()) throw new Error('Client request required for human assistance');
-        return { status: 'human_requested' };
+        return { status: 'human_requested', reason: tool.arguments.reason };
       }
       case 'get_media': return this.media.available(context.telegramChatId);
       case 'send_media': return this.media.send(tool.arguments.mediaId, context.telegramChatId, context.businessConnectionId);

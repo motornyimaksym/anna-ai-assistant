@@ -1,14 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OpenAiService, assistantToolDefinitions } from '../src/openai.service.js';
-import { TELEGRAM_FORMAT_GUIDANCE, THERAPIST_FIRST_PERSON_GUIDANCE } from '../src/assistant-prompt.js';
+import { TELEGRAM_FORMAT_GUIDANCE } from '../src/assistant-prompt.js';
 const conversation = { telegramChatId: 'chat', clientId: 'alice', openaiConversationId: 'conv-existing', assistantEnabled: true, state: 'active', summary: '', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
 const context = { clientId: 'alice', telegramChatId: 'chat' };
 const setup = () => {
   vi.stubEnv('OPENAI_API_KEY', 'test-key');
-  const repository = { listMessages: vi.fn(async () => []), getPromptOverride: vi.fn(async () => undefined), getKnowledgeBaseOverride: vi.fn(async () => undefined), listServices: vi.fn(async () => [{ id: 'massage', name: 'Massage', enabled: true, publiclyAvailable: true, durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH' }]), detachOpenAiConversation: vi.fn(), replacePendingAction: vi.fn(), replaceOpenAiConversation: vi.fn(), ensureOpenAiConversation: vi.fn(async () => 'conv-created'), appendMessage: vi.fn() };
+  const repository = { listMessages: vi.fn(async () => []), getPromptOverride: vi.fn(async () => undefined), getBotSettingsOverride: vi.fn(async () => undefined), listServices: vi.fn(async () => [{ id: 'massage', name: 'Massage', enabled: true, publiclyAvailable: true, durationMinutes: 60, bufferMinutes: 15, price: 1500, currency: 'UAH' }]), detachOpenAiConversation: vi.fn(), replacePendingAction: vi.fn(), replaceOpenAiConversation: vi.fn(), ensureOpenAiConversation: vi.fn(async () => 'conv-created'), appendMessage: vi.fn() };
   const tools = { execute: vi.fn(async (): Promise<unknown> => []), isReturningClient: vi.fn(async () => false), servicesForClient: vi.fn(async () => repository.listServices()) };
   const debug = { record: vi.fn(async () => {}) };
-  return { repository, tools, debug, service: new OpenAiService(repository as never, tools as never, debug as never) };
+  const knowledgeBase = { activeIndex: vi.fn(async () => ({ vectorStoreId: 'vs-1', fileId: 'file-1', contentHash: 'hash' })) };
+  return { repository, tools, debug, knowledgeBase, service: new OpenAiService(repository as never, tools as never, debug as never, knowledgeBase as never) };
 };
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 const answer = (text: string) => ({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text }] }] }) });
@@ -132,8 +133,9 @@ describe('Unified OpenAI conversation', () => {
     await service.respond(conversation, context, 'Hi');
     const instructions = JSON.parse(fetch.mock.calls[0]![1]!.body as string).input[0].content as string;
     expect(instructions).toContain('TELEGRAM FORMATTING');
-    expect(instructions).toContain(THERAPIST_FIRST_PERSON_GUIDANCE);
     expect(instructions).toContain(TELEGRAM_FORMAT_GUIDANCE);
+    expect(JSON.parse(fetch.mock.calls[0]![1]!.body as string).tools[0]).toEqual({ type: 'file_search', vector_store_ids: ['vs-1'], max_num_results: 5 });
+    expect(instructions).not.toContain('вул. Юнаківа');
   });
 });
 
@@ -187,14 +189,14 @@ it.each(['cancel_booking', 'reschedule_booking', 'plan_booking'])('rejects remov
 
 it('hands an unlisted custom-service request to a person without an automatic reply', async () => {
   const { service, tools } = setup();
-  tools.execute.mockResolvedValue({ status: 'human_requested' });
+  tools.execute.mockResolvedValue({ status: 'human_requested', reason: 'custom_service' });
   const fetcher = vi.fn()
-    .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'request_human_assistance', arguments: '{}', call_id: 'human-1' }] }) })
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'request_human_assistance', arguments: '{"reason":"custom_service"}', call_id: 'human-1' }] }) })
     .mockResolvedValueOnce(answer('This draft must not be delivered'));
   vi.stubGlobal('fetch', fetcher);
   const reply = await service.respond(conversation, context, 'Do you offer custom hot stone massage?');
   expect(reply).toMatchObject({ text: '', needsHuman: true, humanContext: expect.any(String) });
-  expect(tools.execute).toHaveBeenCalledWith({ name: 'request_human_assistance', arguments: {} }, expect.objectContaining({ clientId: 'alice', telegramChatId: 'chat', currentMessage: expect.any(String) }));
+  expect(tools.execute).toHaveBeenCalledWith({ name: 'request_human_assistance', arguments: { reason: 'custom_service' } }, expect.objectContaining({ clientId: 'alice', telegramChatId: 'chat', currentMessage: expect.any(String) }));
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
 
@@ -230,20 +232,46 @@ it.each(['', 'x'.repeat(4001)])('fails closed on empty/oversized output without 
   expect(await service.respond(conversation, context, 'Hi')).toMatchObject({ needsHuman: true, text: '' });
 });
 
-it('uses the unified override for every turn and keeps full knowledge and catalog', async () => {
-  const { service, repository } = setup();
+it('uses File Search instead of embedding the full knowledge base and keeps the live catalog', async () => {
+  const { service, repository, knowledgeBase } = setup();
   repository.getPromptOverride.mockResolvedValue({ prompt: 'Unified custom style' } as never);
-  repository.getKnowledgeBaseOverride.mockResolvedValue({ content: 'Unrelated policy still retained. Eligibility matters.' } as never);
   repository.listServices.mockResolvedValue([{ id: 'massage', name: 'Massage', enabled: true, publiclyAvailable: true, durationMinutes: 60, bufferMinutes: 30, price: 1500, currency: 'UAH' }] as never);
   const fetcher = vi.fn().mockResolvedValue(answer('Вітаю.'));
   vi.stubGlobal('fetch', fetcher);
   await service.respond(conversation, context, 'Hi');
   expect(repository.getPromptOverride).toHaveBeenCalledWith('assistant');
+  expect(knowledgeBase.activeIndex).toHaveBeenCalledOnce();
   const body = JSON.parse(fetcher.mock.calls[0]![1].body);
   expect(JSON.stringify(body.input[0])).toContain('Unified custom style');
   expect(JSON.stringify(body.input[0])).toContain('create_booking');
-  expect(body.input[1].content).toContain('Unrelated policy still retained');
+  expect(JSON.stringify(body.input)).not.toContain('Unrelated policy still retained');
   expect(body.input[1].content).toContain('bufferMinutes');
+  expect(body.tools[0]).toEqual({ type: 'file_search', vector_store_ids: ['vs-1'], max_num_results: 5 });
+});
+
+it('hands an empty File Search result to a person with the no-match reason', async () => {
+  const { service } = setup();
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'file_search_call', status: 'completed', results: [] }] }) }));
+  expect(await service.respond(conversation, context, 'What is the exact address?')).toMatchObject({ needsHuman: true, humanReason: 'knowledge_gap', humanContext: expect.stringContaining('не знайдено') });
+});
+
+it('hands conflicting or ambiguous knowledge passages to a person with an explicit reason', async () => {
+  const { service, tools } = setup();
+  tools.execute.mockResolvedValueOnce({ status: 'human_requested', reason: 'knowledge_ambiguous' });
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'function_call', name: 'request_human_assistance', arguments: '{"reason":"knowledge_ambiguous"}', call_id: 'human-ambiguous' }] }) }));
+  expect(await service.respond(conversation, context, 'When can I visit?')).toMatchObject({ needsHuman: true, humanReason: 'knowledge_gap', humanContext: expect.stringContaining('неповні, суперечливі або неоднозначні') });
+  expect(tools.execute).toHaveBeenCalledWith({ name: 'request_human_assistance', arguments: { reason: 'knowledge_ambiguous' } }, expect.any(Object));
+});
+
+it('honors the Bot Settings identity-disclosure switch in S2 instructions', async () => {
+  const { service, repository } = setup();
+  repository.getBotSettingsOverride.mockResolvedValue({ discloseAiIdentity: false } as never);
+  const fetch = vi.fn().mockResolvedValue(answer('Можу допомогти із записом.'));
+  vi.stubGlobal('fetch', fetch);
+  await service.respond(conversation, context, 'Are you a bot?');
+  const instructions = JSON.parse(fetch.mock.calls[0]![1]!.body).input[0].content as string;
+  expect(instructions).toContain('do not claim to be human');
+  expect(instructions).not.toContain('answer truthfully that you are an AI assistant');
 });
 
 it.each([false, true])('bounds invalid catalog ID correction (repeated=%s)', async (repeated) => {

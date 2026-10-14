@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
-export const knowledgeBaseContentSchema = z.string().min(1).max(12_000).refine((content) => content.trim().length > 0, 'Knowledge base must not be blank');
+export const KNOWLEDGE_BASE_MAX_BYTES = 3_000_000;
+export const knowledgeBaseContentSchema = z.string().min(1)
+  .refine((content) => new TextEncoder().encode(content).byteLength <= KNOWLEDGE_BASE_MAX_BYTES, `Knowledge base must not exceed ${KNOWLEDGE_BASE_MAX_BYTES} UTF-8 bytes`)
+  .refine((content) => content.trim().length > 0, 'Knowledge base must not be blank');
 export const knowledgeBaseServiceSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),

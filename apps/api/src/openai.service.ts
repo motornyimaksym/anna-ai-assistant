@@ -2,13 +2,14 @@ import { BookingNeedsHumanError } from './booking.service.js';
 import { requestOpenAiResponse } from './openai-transport.js';
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
-import { bookingConfirmationFactsSchema, messageStoreEntitiesSchema, type BookingConfirmationFacts, type ConversationDto, type MessageStoreEntityDto, type ServiceDto } from '@booking/contracts';
+import { bookingConfirmationFactsSchema, messageStoreEntitiesSchema, type BookingConfirmationFacts, type ConversationDto, type HumanRequestDto, type MessageStoreEntityDto, type ServiceDto } from '@booking/contracts';
 import { boundedConversationHistory, systemTwoInstructions, systemTwoRag, systemTwoRequestContext } from './system-two-instructions.js';
 import { bookingConfirmationMismatches } from './booking-confirmation.js';
 import { AssistantToolsService, assistantToolSchema, type AssistantContext } from './assistant-tools.service.js';
 import { BookingRepository } from './repository.js';
 import { collectSensitiveStrings, DebugLogService, humanErrorContext, safeErrorCategory, safeErrorDiagnostic } from './debug-log.service.js';
 import { TextUtils } from './text-utils.js';
+import { KnowledgeBaseService } from './knowledge-base.service.js';
 
 const string = { type: 'string' };
 const tool = (name: string, description: string, properties: Record<string, unknown>) => ({ type: 'function', name, description, strict: true, parameters: { type: 'object', properties, required: Object.keys(properties), additionalProperties: false } });
@@ -22,7 +23,7 @@ export const assistantToolDefinitions = [
   tool('get_booking_context', 'Read fresh raw schedule messages and live Calendar busy intervals. Use before offering specific times. Never writes appointments.', {}),
   tool('prepare_booking', 'Stage an exact new-booking proposal after checking service, duration, schedule and Calendar. startAt must be ISO 8601 with Z or an explicit timezone offset. State every returned confirmation fact accurately, but phrase the client-facing sentence naturally.', { serviceId: string, durationMinutes: { type: 'integer' }, startAt: string }),
   tool('create_booking', 'Create the stored Calendar proposal only after the client clearly and unconditionally approves that exact delivered proposal in their current message. Interpret the reply semantically in context; no fixed phrase is required. Do not call for uncertainty, questions, conditional/changed details, or hypothetical/quoted consent. No arguments.', {}),
-  tool('request_human_assistance', 'Request a human for an explicit unlisted nonsexual custom service or a current request covered by an explicit human-assistance marker in business knowledge. No arguments; no automatic client reply.', {}),
+  tool('request_human_assistance', 'Hand off an unlisted nonsexual service or a business question with missing, ambiguous or explicitly human-required knowledge. Choose the exact structured reason. The original client request is used; no automatic reply is sent.', { reason: { type: 'string', enum: ['custom_service', 'knowledge_rule', 'knowledge_not_found', 'knowledge_ambiguous'] } }),
 ];
 const catalogTools = (services: ServiceDto[]) => {
   const ids = services.filter((service) => service.enabled).map((service) => service.id);
@@ -30,15 +31,15 @@ const catalogTools = (services: ServiceDto[]) => {
     ...definition, parameters: { ...definition.parameters, properties: { ...definition.parameters.properties, serviceId: { type: 'string', enum: ids } } },
   }] : []);
 };
-const outputSchema = z.object({ status: z.string().optional(), incomplete_details: z.object({ reason: z.string().optional() }).nullish(), output: z.array(z.object({ type: z.string(), name: z.string().optional(), arguments: z.string().optional(), call_id: z.string().optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()).nullish() }).passthrough()) });
-export type AssistantReply = { text: string; fromOpenAI: boolean; exactStoredMessage?: boolean; storedMessageEntities?: MessageStoreEntityDto[]; needsHuman?: boolean; humanContext?: string; bookingProposalId?: string };
+const outputSchema = z.object({ status: z.string().optional(), incomplete_details: z.object({ reason: z.string().optional() }).nullish(), output: z.array(z.object({ type: z.string(), name: z.string().optional(), arguments: z.string().optional(), call_id: z.string().optional(), status: z.string().optional(), results: z.array(z.unknown()).nullish(), search_results: z.array(z.unknown()).nullish(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()).nullish() }).passthrough()) });
+export type AssistantReply = { text: string; fromOpenAI: boolean; exactStoredMessage?: boolean; storedMessageEntities?: MessageStoreEntityDto[]; needsHuman?: boolean; humanContext?: string; humanReason?: HumanRequestDto['reason']; bookingProposalId?: string };
 const responderErrorContext = (error: unknown, source: string, sensitiveValues: string[] = []) => error instanceof BookingNeedsHumanError
   ? `Запис ${error.bookingId} потребує ручної перевірки в Google Calendar. Перевірте його стан перед повторними діями.`
   : humanErrorContext(error, source, sensitiveValues);
 @Injectable()
 export class OpenAiService {
   private readonly logger = new Logger(OpenAiService.name);
-  constructor(private readonly repository: BookingRepository, private readonly assistantTools: AssistantToolsService, private readonly debug: DebugLogService) {}
+  constructor(private readonly repository: BookingRepository, private readonly assistantTools: AssistantToolsService, private readonly debug: DebugLogService, private readonly knowledgeBase: KnowledgeBaseService) {}
   async respond(conversation: ConversationDto, context: AssistantContext, text: string): Promise<AssistantReply> {
     const sensitiveValues = [text];
     try {
@@ -56,20 +57,22 @@ export class OpenAiService {
     sensitiveValues.push(...history.map(({ content }) => content), conversation.summary);
     const key = process.env.OPENAI_API_KEY;
     if (!key) throw new Error('OpenAI is not configured');
-    const [promptOverride, knowledgeBaseOverride, allServices, isReturningClient] = await Promise.all([
+    const [promptOverride, knowledgeIndex, allServices, isReturningClient, botSettings] = await Promise.all([
       this.repository.getPromptOverride('assistant'),
-      this.repository.getKnowledgeBaseOverride(),
+      this.knowledgeBase.activeIndex(),
       this.repository.listServices(),
       this.assistantTools.isReturningClient(context),
+      this.repository.getBotSettingsOverride(),
     ]);
     const turnContext = { ...context, isReturningClient };
     const configuredServices = allServices.filter((service) => service.enabled && (isReturningClient || service.publiclyAvailable));
-    let selectedTools = catalogTools(configuredServices);
+    const fileSearchTool = { type: 'file_search', vector_store_ids: [knowledgeIndex.vectorStoreId], max_num_results: 5 };
+    let selectedTools: Record<string, unknown>[] = [fileSearchTool, ...catalogTools(configuredServices)];
     let catalogCorrectionUsed = false;
-    const instructions = systemTwoInstructions({ promptOverride: promptOverride?.prompt });
+    const instructions = systemTwoInstructions({ promptOverride: promptOverride?.prompt, discloseAiIdentity: botSettings?.discloseAiIdentity ?? true });
     const bookingProposalState = conversation.pendingAction?.name === 'create_booking' && conversation.pendingAction.expiresAt > new Date().toISOString() ? 'pending' : 'none';
-    const rag = systemTwoRag({ message: text, knowledgeBaseOverride: knowledgeBaseOverride?.content, configuredServices, bookingProposalState });
-    sensitiveValues.push(...collectSensitiveStrings({ instructions, rag, promptOverride, knowledgeBaseOverride, configuredServices }));
+    const rag = systemTwoRag({ message: text, configuredServices, bookingProposalState });
+    sensitiveValues.push(...collectSensitiveStrings({ instructions, rag, promptOverride, configuredServices }));
     const bookingHistory = history.at(-1)?.role === 'user' && history.at(-1)?.content === text ? history.slice(0, -1) : history;
     const model = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
     const recentHistory = boundedConversationHistory(bookingHistory, 19);
@@ -81,9 +84,19 @@ export class OpenAiService {
     let preparedProposalId: string | undefined;
     let terminalReply: AssistantReply | undefined;
     for (let round = 0; round <= 4; round++) {
-      const response = await requestOpenAiResponse({ model, store: false, ...(model === 'gpt-6-luna' ? { reasoning: { effort: 'low' } } : {}), ...requestContext, input, tools: selectedTools, ...(round === 4 ? { tool_choice: 'none' } : {}), parallel_tool_calls: false, max_output_tokens: 4096 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]), 's2_assistant');
+      const response = await requestOpenAiResponse({ model, store: false, ...(model === 'gpt-6-luna' ? { reasoning: { effort: 'low' } } : {}), ...requestContext, input, tools: selectedTools, include: ['file_search_call.results'], ...(round === 4 ? { tool_choice: 'none' } : {}), parallel_tool_calls: false, max_output_tokens: 4096 }, AbortSignal.any([deadline, AbortSignal.timeout(30_000)]), 's2_assistant');
       const { status, incomplete_details, output } = outputSchema.parse(response);
       if (status && status !== 'completed') throw Object.assign(new Error('OpenAI System Two response incomplete'), { code: incomplete_details?.reason === 'max_output_tokens' ? 'OPENAI_S2_TOKEN_LIMIT' : 'OPENAI_S2_INCOMPLETE' });
+      const fileSearchCalls = output.filter((item) => item.type === 'file_search_call');
+      if (fileSearchCalls.some((call) => call.status !== 'completed')) throw new Error('OpenAI File Search failed');
+      if (fileSearchCalls.length) {
+        const reportedResults = fileSearchCalls.map((call) => call.results ?? call.search_results);
+        if (reportedResults.some((results) => !Array.isArray(results))) throw new Error('OpenAI File Search results were unavailable');
+        if (reportedResults.every((results) => (results as unknown[]).length === 0)) return {
+          text: '', fromOpenAI: false, needsHuman: true, humanReason: 'knowledge_gap',
+          humanContext: 'У базі знань не знайдено релевантної підтвердженої інформації.',
+        };
+      }
       input.push(...output);
       const calls = output.filter((item) => item.type === 'function_call');
       if (!calls.length) {
@@ -118,14 +131,24 @@ export class OpenAiService {
               }
             }
           } else result = await this.assistantTools.execute(parsed, { ...turnContext, currentMessage: text });
-          if (parsed.name === 'request_human_assistance' && result && typeof result === 'object' && 'status' in result && result.status === 'human_requested') terminalReply = { text: '', fromOpenAI: false, needsHuman: true, humanContext: 'Потрібна допомога людини. Перегляньте повідомлення клієнта й пов’язані факти про послуги.' };
+          if (parsed.name === 'request_human_assistance' && result && typeof result === 'object' && 'status' in result && result.status === 'human_requested' && 'reason' in result) {
+            const reason = result.reason;
+            const transferReasons = {
+              custom_service: 'Клієнт просить послугу поза активним каталогом; доступність має підтвердити людина.',
+              knowledge_rule: 'База знань позначає цю тему для допомоги людини.',
+              knowledge_not_found: 'У базі знань не знайдено релевантної підтвердженої інформації.',
+              knowledge_ambiguous: 'Релевантні уривки бази знань неповні, суперечливі або неоднозначні.',
+            } as const;
+            if (typeof reason !== 'string' || !(reason in transferReasons)) throw new Error('Invalid human handoff reason');
+            terminalReply = { text: '', fromOpenAI: false, needsHuman: true, humanReason: 'knowledge_gap', humanContext: transferReasons[reason as keyof typeof transferReasons] };
+          }
         } catch (error) {
           let corrected = false;
           if (call.name === 'prepare_booking' && safeErrorDiagnostic(error).code === 'BOOKING_SERVICE_UNAVAILABLE' && !catalogCorrectionUsed && round < 4) {
             catalogCorrectionUsed = true;
             try {
               const services = await this.assistantTools.servicesForClient(turnContext);
-              selectedTools = catalogTools(services);
+              selectedTools = [fileSearchTool, ...catalogTools(services)];
               if (services.length) {
                 corrected = true;
                 result = { status: 'correction_required', code: 'BOOKING_SERVICE_UNAVAILABLE', services: services.map(({ id, name, durationMinutes, durationOptions, price, currency }) => ({ id, name, durationMinutes, durationOptions, price, currency })) };

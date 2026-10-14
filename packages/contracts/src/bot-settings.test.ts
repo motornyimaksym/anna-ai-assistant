@@ -3,8 +3,8 @@ import { botSettingsResponseSchema, botSettingsSchema, updateBotSettingsSchema }
 
 describe('bot settings contract', () => {
   it('accepts inclusive configured limits', () => {
-    expect(botSettingsSchema.parse({ maxReadDelayMs: 3_540_000, typingDelayPerSymbolMs: 800, testerUsernames: [], allUsersEnabled: true })).toEqual({ maxReadDelayMs: 3_540_000, typingDelayPerSymbolMs: 800, testerUsernames: [], allUsersEnabled: true });
-    expect(botSettingsSchema.parse({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0, testerUsernames: [], allUsersEnabled: false })).toEqual({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0, testerUsernames: [], allUsersEnabled: false });
+    expect(botSettingsSchema.parse({ maxReadDelayMs: 3_540_000, typingDelayPerSymbolMs: 800, testerUsernames: [], allUsersEnabled: true })).toEqual({ maxReadDelayMs: 3_540_000, typingDelayPerSymbolMs: 800, testerUsernames: [], allUsersEnabled: true, discloseAiIdentity: true });
+    expect(botSettingsSchema.parse({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0, testerUsernames: [], allUsersEnabled: false, discloseAiIdentity: false })).toEqual({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0, testerUsernames: [], allUsersEnabled: false, discloseAiIdentity: false });
   });
 
   it('rejects fractional and out-of-range settings', () => {
@@ -15,11 +15,11 @@ describe('bot settings contract', () => {
   });
 
   it('allows settings responses with custom status and timestamp', () => {
-    expect(botSettingsResponseSchema.parse({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [], allUsersEnabled: false, isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z' }).isCustom).toBe(true);
+    expect(botSettingsResponseSchema.parse({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [], allUsersEnabled: false, isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z' })).toMatchObject({ isCustom: true, discloseAiIdentity: true });
   });
 
   it('normalizes a bounded unique Telegram tester username list', () => {
-    expect(botSettingsSchema.parse({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [' User61785 ', '@Another_User'], allUsersEnabled: false })).toEqual({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: ['user61785', 'another_user'], allUsersEnabled: false });
+    expect(botSettingsSchema.parse({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [' User61785 ', '@Another_User'], allUsersEnabled: false })).toEqual({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: ['user61785', 'another_user'], allUsersEnabled: false, discloseAiIdentity: true });
     expect(botSettingsSchema.safeParse({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0, testerUsernames: ['user61785', '@USER61785'], allUsersEnabled: false }).success).toBe(false);
     expect(botSettingsSchema.safeParse({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0, testerUsernames: ['bad-name'], allUsersEnabled: false }).success).toBe(false);
     expect(botSettingsSchema.safeParse({ maxReadDelayMs: 0, typingDelayPerSymbolMs: 0, testerUsernames: Array.from({ length: 21 }, (_, i) => `tester_${String(i).padStart(2, '0')}`), allUsersEnabled: false }).success).toBe(false);
@@ -32,4 +32,5 @@ it('requires the all-users flag in responses but preserves it when an older upda
   expect(updateBotSettingsSchema.parse(legacy)).toEqual(legacy);
   expect(updateBotSettingsSchema.parse({ ...legacy, allUsersEnabled: true })).toEqual({ ...legacy, allUsersEnabled: true });
   expect(updateBotSettingsSchema.safeParse({ ...legacy, allUsersEnabled: 'true' }).success).toBe(false);
+  expect(updateBotSettingsSchema.parse({ ...legacy, discloseAiIdentity: false })).toMatchObject({ discloseAiIdentity: false });
 });

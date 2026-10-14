@@ -25,6 +25,6 @@ describe('bot settings persistence', () => {
     const legacyUpdate: UpdateBotSettingsRequest = { maxReadDelayMs: 1_000, typingDelayPerSymbolMs: 300, testerUsernames: ['tester'] };
     await repository.saveBotSettingsOverride(legacyUpdate);
 
-    expect(stored).toEqual({ ...legacyUpdate, allUsersEnabled: true, updatedAt: expect.any(String) });
+    expect(stored).toEqual({ ...legacyUpdate, allUsersEnabled: true, discloseAiIdentity: true, updatedAt: expect.any(String) });
   });
 });

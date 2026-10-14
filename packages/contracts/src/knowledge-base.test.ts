@@ -8,6 +8,8 @@ describe('knowledge base contracts', () => {
   });
   it('rejects blank and oversized custom knowledge', () => {
     expect(updateKnowledgeBaseSchema.safeParse({ content: '  ' }).success).toBe(false);
-    expect(updateKnowledgeBaseSchema.safeParse({ content: 'x'.repeat(12_001) }).success).toBe(false);
+    expect(updateKnowledgeBaseSchema.safeParse({ content: 'x'.repeat(3_000_001) }).success).toBe(false);
+    expect(updateKnowledgeBaseSchema.safeParse({ content: 'é'.repeat(1_500_001) }).success).toBe(false);
+    expect(updateKnowledgeBaseSchema.safeParse({ content: 'x'.repeat(3_000_000) }).success).toBe(true);
   });
 });

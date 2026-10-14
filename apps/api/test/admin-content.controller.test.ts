@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AdminController } from '../src/controllers.js';
 import { ASSISTANT_SYSTEM_PROMPT } from '../src/assistant-prompt.js';
-import { DEFAULT_KNOWLEDGE_BASE } from '../src/default-knowledge-base.js';
 import type { AvailabilityService } from '../src/availability.service.js';
 import type { BookingService } from '../src/booking.service.js';
 import type { BookingRepository } from '../src/repository.js';
@@ -17,20 +16,18 @@ const setup = () => {
     getAdminAccessOverride: vi.fn(async () => ({ emails: ['partner@example.com'], updatedAt: '2026-09-24T10:00:00.000Z' })),
     saveAdminAccessOverride: vi.fn(async (emails: string[]) => ({ emails, updatedAt: '2026-09-24T10:00:00.000Z' })),
     getBotSettingsOverride: vi.fn(async () => undefined),
-    saveBotSettingsOverride: vi.fn(async (settings: { maxReadDelayMs: number; typingDelayPerSymbolMs: number; testerUsernames: string[]; allUsersEnabled?: boolean }) => ({ ...settings, allUsersEnabled: settings.allUsersEnabled ?? false, updatedAt: '2026-09-24T10:00:00.000Z' })),
+    saveBotSettingsOverride: vi.fn(async (settings: { maxReadDelayMs: number; typingDelayPerSymbolMs: number; testerUsernames: string[]; allUsersEnabled?: boolean; discloseAiIdentity?: boolean }) => ({ ...settings, allUsersEnabled: settings.allUsersEnabled ?? false, discloseAiIdentity: settings.discloseAiIdentity ?? true, updatedAt: '2026-09-24T10:00:00.000Z' })),
     getPromptOverride: vi.fn(async () => undefined as { prompt: string; updatedAt: string } | undefined),
     savePromptOverride: vi.fn(async (_id: string, prompt: string) => ({ prompt, updatedAt: '2026-09-24T10:00:00.000Z' })),
     deletePromptOverride: vi.fn(async () => undefined),
-    getKnowledgeBaseOverride: vi.fn(async () => undefined),
-    saveKnowledgeBaseOverride: vi.fn(async (content: string) => ({ content, updatedAt: '2026-09-24T10:00:00.000Z' })),
-    deleteKnowledgeBaseOverride: vi.fn(async () => undefined),
     listServices: vi.fn(async () => [{ id: 'massage-60', name: 'Relax', description: 'Relaxing massage', durationMinutes: 60, price: 1500, currency: 'UAH', enabled: true, publiclyAvailable: false }]),
     clearConversationContext: vi.fn(async (_chatId: string) => ({ clearedMessages: 3 } as { clearedMessages: number } | undefined)),
   };
   const specService = { getSpec: vi.fn(async () => ({ content: '# Test spec' })) };
   const servicePhotos = { upload: vi.fn(), delete: vi.fn() };
-  const controller = new AdminController(repository as unknown as BookingRepository, {} as BookingService, {} as AvailabilityService, specService as unknown as SpecService, servicePhotos as unknown as ServicePhotoService);
-  return { controller, repository, specService };
+  const knowledgeBase = { activeIndex: vi.fn(async () => ({ vectorStoreId: 'vs-1', fileId: 'file-1', contentHash: 'hash' })), adminView: vi.fn(async () => ({ content: 'Parking is available.', isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z' })), save: vi.fn(async () => undefined), reset: vi.fn(async () => undefined) };
+  const controller = new AdminController(repository as unknown as BookingRepository, {} as BookingService, {} as AvailabilityService, specService as unknown as SpecService, servicePhotos as unknown as ServicePhotoService, {} as never, {} as never, knowledgeBase as never);
+  return { controller, repository, specService, knowledgeBase };
 };
 
 describe('admin content endpoints', () => {
@@ -70,29 +67,32 @@ describe('admin content endpoints', () => {
   });
 
   it('serves an editable knowledge base with live service facts and resets it independently', async () => {
-    const { controller, repository } = setup();
+    const { controller, knowledgeBase } = setup();
     const service = { id: 'massage-60', name: 'Relax', description: 'Relaxing massage', durationMinutes: 60, price: 1500, currency: 'UAH', publiclyAvailable: false };
-    expect(await controller.knowledgeBase()).toEqual({ content: DEFAULT_KNOWLEDGE_BASE, isCustom: false, services: [service] });
-    expect(await controller.updateKnowledgeBase({ content: 'Parking is available.' })).toEqual({ content: 'Parking is available.', isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z', services: [service] });
-    expect(repository.saveKnowledgeBaseOverride).toHaveBeenCalledWith('Parking is available.');
-    expect(await controller.resetKnowledgeBase()).toEqual({ content: DEFAULT_KNOWLEDGE_BASE, isCustom: false, services: [service] });
-    expect(repository.deleteKnowledgeBaseOverride).toHaveBeenCalledOnce();
+    expect(await controller.knowledgeBaseView()).toEqual({ content: 'Parking is available.', isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z', services: [service] });
+    await controller.updateKnowledgeBase({ content: 'New knowledge.' });
+    expect(knowledgeBase.save).toHaveBeenCalledWith('New knowledge.');
+    await controller.resetKnowledgeBase();
+    expect(knowledgeBase.reset).toHaveBeenCalledOnce();
+    expect(knowledgeBase.activeIndex).toHaveBeenCalledTimes(1);
   });
 
   it('rejects blank knowledge base content before persistence', async () => {
-    const { controller, repository } = setup();
+    const { controller, knowledgeBase } = setup();
     await expect(controller.updateKnowledgeBase({ content: '  ' })).rejects.toThrow();
-    expect(repository.saveKnowledgeBaseOverride).not.toHaveBeenCalled();
+    expect(knowledgeBase.save).not.toHaveBeenCalled();
   });
 
   it('returns default bot settings and saves valid overrides', async () => {
     vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', undefined);
     const { controller, repository } = setup();
-    expect(await controller.botSettings()).toMatchObject({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [], allUsersEnabled: false, isCustom: false });
-    expect(await controller.updateBotSettings({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, testerUsernames: [' @Tester1 ', 'Tester_2'] })).toEqual({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, testerUsernames: ['tester1', 'tester_2'], allUsersEnabled: false, isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z' });
+    expect(await controller.botSettings()).toMatchObject({ maxReadDelayMs: 2000, typingDelayPerSymbolMs: 600, testerUsernames: [], allUsersEnabled: false, discloseAiIdentity: true, isCustom: false });
+    expect(await controller.updateBotSettings({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, testerUsernames: [' @Tester1 ', 'Tester_2'] })).toEqual({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, testerUsernames: ['tester1', 'tester_2'], allUsersEnabled: false, discloseAiIdentity: true, isCustom: true, updatedAt: '2026-09-24T10:00:00.000Z' });
     expect(repository.saveBotSettingsOverride).toHaveBeenCalledWith({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, testerUsernames: ['tester1', 'tester_2'] });
     await controller.updateBotSettings({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, testerUsernames: ['tester1'], allUsersEnabled: true });
     expect(repository.saveBotSettingsOverride).toHaveBeenLastCalledWith({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, testerUsernames: ['tester1'], allUsersEnabled: true });
+    await controller.updateBotSettings({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, testerUsernames: [], discloseAiIdentity: false });
+    expect(repository.saveBotSettingsOverride).toHaveBeenLastCalledWith({ maxReadDelayMs: 750, typingDelayPerSymbolMs: 400, testerUsernames: [], discloseAiIdentity: false });
     await controller.updateBotSettings({ maxReadDelayMs: 3_540_000, typingDelayPerSymbolMs: 400, testerUsernames: [] });
     expect(repository.saveBotSettingsOverride).toHaveBeenLastCalledWith({ maxReadDelayMs: 3_540_000, typingDelayPerSymbolMs: 400, testerUsernames: [] });
   });

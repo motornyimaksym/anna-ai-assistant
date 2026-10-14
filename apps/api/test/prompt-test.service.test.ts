@@ -9,11 +9,12 @@ afterEach(() => { vi.clearAllMocks(); });
 const setup = () => {
   const repository = {
     getPromptOverride: vi.fn(async () => ({ prompt: 'CUSTOM GENERAL', updatedAt: new Date().toISOString() })),
-    getKnowledgeBaseOverride: vi.fn(async () => undefined), listServices: vi.fn(async () => []),
+    listServices: vi.fn(async () => []), getBotSettingsOverride: vi.fn(async () => undefined),
     saveConversation: vi.fn(), replacePendingAction: vi.fn(), appendDebugEvent: vi.fn(),
   };
   const selector = { estimateProbability: vi.fn(async () => 0.75) };
-  return { repository, selector, service: new PromptTestService(repository as never, selector as never) };
+  const knowledgeBase = { activeIndex: vi.fn(async () => ({ vectorStoreId: 'vs-1', fileId: 'file-1', contentHash: 'hash' })) };
+  return { repository, selector, knowledgeBase, service: new PromptTestService(repository as never, selector as never, knowledgeBase as never) };
 };
 
 describe('isolated prompt tester', () => {
@@ -32,6 +33,7 @@ describe('isolated prompt tester', () => {
     const body = vi.mocked(requestOpenAiResponse).mock.calls[0]?.[0];
     expect((body?.input as { content: string }[])[0]?.content).toContain('CUSTOM GENERAL');
     expect(body?.store).toBe(false);
+    expect(body?.tools).toContainEqual({ type: 'file_search', vector_store_ids: ['vs-1'], max_num_results: 5 });
     expect(repository.saveConversation).not.toHaveBeenCalled();
   });
   it('reports Booking tool requests without executing or persisting them', async () => {
@@ -52,5 +54,11 @@ describe('isolated prompt tester', () => {
     expect(requestOpenAiResponse).not.toHaveBeenCalled();
     vi.mocked(requestOpenAiResponse).mockRejectedValue(new Error('secret provider payload'));
     await expect(service.run({ system: 'two', promptId: 'assistant', text: 'Hello' })).rejects.toThrow('Prompt test failed (other error).');
+  });
+
+  it('reports an empty knowledge search as a human handoff with a reason', async () => {
+    const { service } = setup();
+    vi.mocked(requestOpenAiResponse).mockResolvedValue({ status: 'completed', output: [{ type: 'file_search_call', status: 'completed', results: [] }] });
+    await expect(service.run({ system: 'two', promptId: 'assistant', text: 'What is the address?' })).resolves.toMatchObject({ kind: 'tool_calls', output: expect.stringContaining('knowledge_not_found') });
   });
 });

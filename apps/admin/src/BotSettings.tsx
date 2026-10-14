@@ -24,6 +24,7 @@ export const BotSettings = () => {
   const [draft, setDraft] = useState<Draft>({ maxReadDelaySeconds: '', typingDelayPerSymbolMs: '' });
   const [testerUsernames, setTesterUsernames] = useState<string[]>([]);
   const [allUsersEnabled, setAllUsersEnabled] = useState(false);
+  const [discloseAiIdentity, setDiscloseAiIdentity] = useState(true);
   const [newTester, setNewTester] = useState('');
   const [testerError, setTesterError] = useState('');
   const [emails, setEmails] = useState<string[]>([]);
@@ -31,7 +32,7 @@ export const BotSettings = () => {
   const [message, setMessage] = useState('');
   const [accessMessage, setAccessMessage] = useState('');
   const [accessError, setAccessError] = useState('');
-  useEffect(() => { if (query.data) { setDraft(toDraft(query.data)); setTesterUsernames(query.data.testerUsernames); setAllUsersEnabled(query.data.allUsersEnabled); } }, [query.data]);
+  useEffect(() => { if (query.data) { setDraft(toDraft(query.data)); setTesterUsernames(query.data.testerUsernames); setAllUsersEnabled(query.data.allUsersEnabled); setDiscloseAiIdentity(query.data.discloseAiIdentity); } }, [query.data]);
   useEffect(() => { if (accessQuery.data) setEmails(accessQuery.data.emails); }, [accessQuery.data]);
 
   const readDelaySeconds = draft.maxReadDelaySeconds.trim() === '' ? Number.NaN : Number(draft.maxReadDelaySeconds);
@@ -42,6 +43,7 @@ export const BotSettings = () => {
     typingDelayPerSymbolMs: draft.typingDelayPerSymbolMs.trim() === '' ? Number.NaN : Number(draft.typingDelayPerSymbolMs),
     testerUsernames,
     allUsersEnabled,
+    discloseAiIdentity,
   });
   const save = useMutation({
     mutationFn: (settings: BotSettingsDto) => adminApi.saveBotSettings(settings),
@@ -50,6 +52,7 @@ export const BotSettings = () => {
       setDraft(toDraft(value));
       setTesterUsernames(value.testerUsernames);
       setAllUsersEnabled(value.allUsersEnabled);
+      setDiscloseAiIdentity(value.discloseAiIdentity);
       setMessage('Saved. Changes apply to the next incoming message.');
     },
   });
@@ -66,7 +69,7 @@ export const BotSettings = () => {
   if (query.isPending) return <Typography>{t("Loading bot settings…")}</Typography>;
   if (query.isError) return <Alert severity="error">{t("Could not load bot settings.")}{t(" ")}{t(errorText(query.error))}</Alert>;
 
-  const dirty = draft.maxReadDelaySeconds !== millisecondsToSeconds(query.data.maxReadDelayMs) || draft.typingDelayPerSymbolMs !== String(query.data.typingDelayPerSymbolMs) || JSON.stringify(testerUsernames) !== JSON.stringify(query.data.testerUsernames) || allUsersEnabled !== query.data.allUsersEnabled;
+  const dirty = draft.maxReadDelaySeconds !== millisecondsToSeconds(query.data.maxReadDelayMs) || draft.typingDelayPerSymbolMs !== String(query.data.typingDelayPerSymbolMs) || JSON.stringify(testerUsernames) !== JSON.stringify(query.data.testerUsernames) || allUsersEnabled !== query.data.allUsersEnabled || discloseAiIdentity !== query.data.discloseAiIdentity;
   const canSave = dirty && parsed.success && !save.isPending;
   const saveDraft = () => { if (parsed.success) { setMessage(''); save.mutate(parsed.data); } };
   const addTester = () => {
@@ -120,6 +123,14 @@ export const BotSettings = () => {
       error={draft.typingDelayPerSymbolMs !== '' && !botSettingsSchema.shape.typingDelayPerSymbolMs.safeParse(Number(draft.typingDelayPerSymbolMs)).success}
       disabled={save.isPending}
     />
+    <Divider />
+    <Stack spacing={0.5}>
+      <FormControlLabel
+        control={<Switch checked={discloseAiIdentity} onChange={(_event, checked) => { setDiscloseAiIdentity(checked); setMessage(''); }} disabled={save.isPending} />}
+        label={t("Disclose AI identity when asked directly")}
+      />
+      <Typography variant="body2" color="text.secondary">{t("When enabled, the assistant truthfully says it is AI. When disabled, it may pivot but never claim to be human.")}</Typography>
+    </Stack>
     <Divider />
     <Stack spacing={0.5}>
       <FormControlLabel

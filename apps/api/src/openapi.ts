@@ -5,8 +5,8 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
 import * as C from '@booking/contracts';
 import { AdminAuthService } from './auth.js';
 
-type RouteDoc = { summary: string; request?: ZodTypeAny; response?: ZodTypeAny; note?: string; requestRequired?: boolean };
-const route = (summary: string, response?: ZodTypeAny, request?: ZodTypeAny, note?: string, requestRequired = true): RouteDoc => ({ summary, response, request, note, requestRequired });
+type RouteDoc = { summary: string; request?: ZodTypeAny; response?: ZodTypeAny; note?: string; requestRequired?: boolean; responseContentType?: string };
+const route = (summary: string, response?: ZodTypeAny, request?: ZodTypeAny, note?: string, requestRequired = true, responseContentType = 'application/json'): RouteDoc => ({ summary, response, request, note, requestRequired, responseContentType });
 const ok = z.object({ ok: z.literal(true) });
 const empty = z.object({}).strict();
 const webhook = z.object({ update_id: z.number().int() }).passthrough();
@@ -33,6 +33,7 @@ const routes: Record<string, RouteDoc> = {
   'GET /admin/knowledge-base': route('Read the effective knowledge base', C.knowledgeBaseResponseSchema),
   'PUT /admin/knowledge-base': route('Save the knowledge base', C.knowledgeBaseResponseSchema, C.updateKnowledgeBaseSchema),
   'DELETE /admin/knowledge-base': route('Reset the knowledge base', C.knowledgeBaseResponseSchema),
+  'GET /knowledge-base/file/{hash}': route('Read a versioned knowledge file', z.string(), undefined, 'No Firebase admin auth. Requires the rotating backend knowledge token in the token query parameter; response is private text/plain.', false, 'text/plain'),
   'GET /admin/system-one-settings': route('Read System One provider settings', C.systemOneSettingsSchema),
   'PUT /admin/system-one-settings': route('Select the System One provider', C.systemOneSettingsSchema, C.systemOneSettingsSchema),
   'GET /admin/bot-settings': route('Read bot settings', C.botSettingsResponseSchema),
@@ -128,7 +129,7 @@ const tagFor = (path: string): string => {
   if (path === '/public/services' || path.startsWith('/admin/services')) return 'Services';
   if (path.startsWith('/admin/schedule')) return 'Schedule';
   if (path.startsWith('/admin/conversations') || path.startsWith('/admin/human-')) return 'Conversations';
-  if (path.startsWith('/admin/prompts') || path.startsWith('/admin/prompt-') || path.startsWith('/admin/knowledge-base')) return 'Assistant content';
+  if (path.startsWith('/admin/prompts') || path.startsWith('/admin/prompt-') || path.startsWith('/admin/knowledge-base') || path.startsWith('/knowledge-base/')) return 'Assistant content';
   return 'Administration';
 };
 
@@ -139,6 +140,7 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
     .setVersion('1.0.0')
     .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'Firebase ID token' }, 'firebaseBearer')
     .addApiKey({ type: 'apiKey', in: 'header', name: 'X-Telegram-Bot-Api-Secret-Token' }, 'telegramWebhookSecret')
+    .addApiKey({ type: 'apiKey', in: 'query', name: 'token' }, 'knowledgeBaseToken')
     .build();
   const document = SwaggerModule.createDocument(app, config);
   document.servers = [{ url: '/', description: 'Direct function or local API' }, { url: '/api', description: 'Firebase Hosting' }];
@@ -154,7 +156,7 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
       operation.summary = details.summary;
       operation.tags = [tagFor(path)];
       operation.description = [details.note, ownerOnly(key) ? 'Owner access required.' : undefined, debugOnly(key) ? 'Designated debug owner access required.' : undefined].filter(Boolean).join(' ');
-      operation.security = path.startsWith('/admin/') ? [{ firebaseBearer: [] }] : path === '/telegram/webhook' ? [{ telegramWebhookSecret: [] }] : [];
+      operation.security = path.startsWith('/admin/') ? [{ firebaseBearer: [] }] : path === '/telegram/webhook' ? [{ telegramWebhookSecret: [] }] : key === 'GET /knowledge-base/file/{hash}' ? [{ knowledgeBaseToken: [] }] : [];
       const parameters = (operation.parameters ?? []).filter((parameter): parameter is ParameterObject => !('$ref' in parameter));
       for (const name of [...path.matchAll(/\{([^}]+)\}/g)].map((match) => match[1]!)) {
         if (!parameters.some((parameter) => parameter.in === 'path' && parameter.name === name)) parameters.push({ in: 'path', name, required: true, schema: { type: 'string' } });
@@ -164,12 +166,13 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
         parameters.push({ in: 'query', name: 'q', required: false, schema: { type: 'string', maxLength: 128 }, description: 'Optional topic search text.' });
       }
       if (key === 'GET /public/booking/reservations/{id}') parameters.push({ in: 'header', name: 'X-Reservation-Token', required: true, schema: { type: 'string', minLength: 32 }, description: 'One-time reservation status token.' });
+      if (key === 'GET /knowledge-base/file/{hash}') parameters.push({ in: 'query', name: 'token', required: true, schema: { type: 'string', minLength: 32 }, description: 'Rotating knowledge file access token. Do not log or share.' });
       if (key === 'POST /public/booking/monobank-webhook') parameters.push({ in: 'header', name: 'X-Sign', required: true, schema: { type: 'string' }, description: 'Monobank ECDSA signature of the original JSON body.' });
       operation.parameters = parameters;
       if (details.request) operation.requestBody = { required: details.requestRequired, content: { 'application/json': { schema: schemaOf(details.request) } } };
       else delete operation.requestBody;
       const status = method === 'post' && !['/telegram/webhook', '/public/booking/slots', '/public/booking/monobank-webhook'].includes(path) ? '201' : '200';
-      operation.responses = { [status]: { description: details.response ? 'Successful response.' : details.note ?? 'Successful response.', ...(details.response ? { content: { 'application/json': { schema: schemaOf(details.response) } } } : {}) }, ...(path.startsWith('/admin/') ? { '401': { description: 'Missing or invalid Firebase ID token.' }, '403': { description: 'Insufficient administrator privileges.' } } : {}) };
+      operation.responses = { [status]: { description: details.response ? 'Successful response.' : details.note ?? 'Successful response.', ...(details.response ? { content: { [details.responseContentType ?? 'application/json']: { schema: schemaOf(details.response) } } } : {}) }, ...(path.startsWith('/admin/') ? { '401': { description: 'Missing or invalid Firebase ID token.' }, '403': { description: 'Insufficient administrator privileges.' } } : {}) };
     }
   }
   const stale = Object.keys(routes).filter((key) => !seen.has(key));

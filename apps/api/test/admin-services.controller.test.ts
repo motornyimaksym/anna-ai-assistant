@@ -18,7 +18,7 @@ const setup = () => {
     upload: vi.fn(async () => 'https://firebasestorage.googleapis.com/v0/b/demo/o/service-photos%2Fnew.jpg?alt=media&token=new'),
     delete: vi.fn(async () => undefined),
   };
-  const controller = new AdminController(repository as unknown as BookingRepository, {} as BookingService, {} as AvailabilityService, {} as SpecService, photos as unknown as ServicePhotoService);
+  const controller = new AdminController(repository as unknown as BookingRepository, {} as BookingService, {} as AvailabilityService, {} as SpecService, photos as unknown as ServicePhotoService, {} as never, {} as never, {} as never);
   return { controller, repository, photos, oldPhoto };
 };
 

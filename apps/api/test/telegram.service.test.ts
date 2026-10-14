@@ -29,7 +29,7 @@ const setup = (settings: { maxReadDelayMs: number; typingDelayPerSymbolMs: numbe
   const send = vi.fn(async (url: string, _init?: RequestInit) => { order.push(url.split('/').at(-1)!); return { ok: true, json: async () => ({ ok: true }) }; });
   vi.stubGlobal('fetch', send);
   const assistant = { respond: vi.fn(async (): Promise<AssistantReply> => { order.push('assistant'); return { text: 'OK', fromOpenAI: true }; }) };
-  const human = { approveOutgoing: vi.fn(async () => true), isConfiguredUsername: vi.fn(async () => false), authorizedResponder: vi.fn(async () => undefined), enroll: vi.fn(async () => true), send: vi.fn(), reply: vi.fn(), release: vi.fn(async () => ({ ok: true as const })), queueExisting: vi.fn(), escalate: vi.fn(), escalateError: vi.fn() };
+  const human = { approveOutgoing: vi.fn(async () => true), isConfiguredUsername: vi.fn(async () => false), authorizedResponder: vi.fn(async () => undefined), enroll: vi.fn(async () => true), send: vi.fn(), reply: vi.fn(), release: vi.fn(async () => ({ ok: true as const })), queueExisting: vi.fn(), escalate: vi.fn(), escalateError: vi.fn(), escalateKnowledgeGap: vi.fn() };
   const scheduleImport = { syncIfDue: vi.fn(async () => undefined) };
   return { service: new TelegramService(repository as unknown as BookingRepository, assistant as unknown as OpenAiService, human as unknown as HumanAssistanceService, scheduleImport as never, { record: vi.fn(async () => {}) } as never), repository, send, assistant, human, scheduleImport, order };
 };
@@ -452,6 +452,16 @@ it('routes assistant errors directly to configured responders without sending fa
   assistant.respond.mockResolvedValueOnce({ text: 'not sent', fromOpenAI: false, needsHuman: true, humanContext: 'Booking safe-id requires human review.' });
   await service.handle('webhook-secret', update('user61785'));
   expect(human.escalateError).toHaveBeenCalledWith('123', 'connection-1', 101, 'Hello', 'Booking safe-id requires human review.');
+  expect(send.mock.calls.some(([url]) => url.endsWith('/sendMessage'))).toBe(false);
+});
+
+it('routes missing knowledge directly to a person with its reason and no client reply', async () => {
+  vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'webhook-secret'); vi.stubEnv('TELEGRAM_ALLOWED_USERNAME', 'user61785');
+  const { service, assistant, human, send } = setup();
+  assistant.respond.mockResolvedValueOnce({ text: '', fromOpenAI: false, needsHuman: true, humanReason: 'knowledge_gap', humanContext: 'У базі знань неоднозначні уривки.' });
+  await service.handle('webhook-secret', update('user61785'));
+  expect(human.escalateKnowledgeGap).toHaveBeenCalledWith('123', 'connection-1', 101, 'Hello', 'У базі знань неоднозначні уривки.');
+  expect(human.escalateError).not.toHaveBeenCalled();
   expect(send.mock.calls.some(([url]) => url.endsWith('/sendMessage'))).toBe(false);
 });
 
