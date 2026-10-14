@@ -82,7 +82,20 @@ const uk: Record<string, string> = {
   "Add saved reply": "Додати збережену відповідь",
   "Delete saved reply?": "Видалити збережену відповідь?",
   "This removes the reply from Message Store. Messages already sent remain in client chats.": "Відповідь буде видалено зі сховища. Уже надіслані повідомлення залишаться в чатах клієнтів.",
-  "Could not delete the reply.": "Не вдалося видалити відповідь."
+  "Could not delete the reply.": "Не вдалося видалити відповідь.",
+  "Manage assistant behavior, Telegram access, connections, and team permissions.": "Налаштовуйте поведінку асистента, доступ у Telegram, підключення та права команди.",
+  "Bot settings sections": "Розділи налаштувань бота",
+  "Telegram access": "Доступ у Telegram",
+  "Connections": "Підключення",
+  "Team access": "Доступ команди",
+  "Assistant behavior": "Поведінка асистента",
+  "Choose how the assistant responds and when it asks a person to help.": "Налаштуйте відповіді асистента та випадки, коли він передає розмову людині.",
+  "Response timing and identity": "Затримки відповіді та ідентичність",
+  "Set message timing and what the assistant says when asked whether it is AI.": "Налаштуйте затримки та відповідь на запитання, чи є асистент ШІ.",
+  "Choose who can use the assistant in eligible Telegram conversations.": "Виберіть, хто може користуватися асистентом у відповідних чатах Telegram.",
+  "Connect the services used for scheduling and availability.": "Підключіть сервіси для розкладу та перевірки доступності.",
+  "Changes from Assistant and Telegram access tabs are saved together.": "Зміни на вкладках «Асистент» і «Доступ у Telegram» зберігаються разом.",
+  "Save bot settings": "Зберегти налаштування бота"
 };
 
 type LocaleContextValue = { language: AdminLanguage; setLanguage: (language: AdminLanguage) => void; t: (key: string, values?: Record<string, string | number>) => string };
