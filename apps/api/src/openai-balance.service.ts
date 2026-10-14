@@ -19,6 +19,7 @@ const unavailable = () => new ServiceUnavailableException('OpenAI balance is una
 const openAiApiStartTime = 1_591_833_600; // June 11, 2020: public OpenAI API launch.
 const costBucketPageSize = 180;
 const secondsPerDay = 86_400;
+const costReportingLookbackDays = 364;
 
 @Injectable()
 export class OpenAiBalanceService {
@@ -57,8 +58,11 @@ export class OpenAiBalanceService {
     const adminKey = process.env.OPENAI_ADMIN_KEY?.trim();
     if (!adminKey) throw unavailable();
     const endTime = Math.floor(Date.now() / 1000);
+    const earliestSupportedStartTime = endTime - costReportingLookbackDays * secondsPerDay;
+    const reportingWindowClamped = startTime < earliestSupportedStartTime;
+    const queryStartTime = Math.max(startTime, earliestSupportedStartTime);
     const deadline = AbortSignal.timeout(60_000);
-    const maxPages = Math.ceil((endTime - startTime) / (costBucketPageSize * secondsPerDay)) + 1;
+    const maxPages = Math.ceil((endTime - queryStartTime) / (costBucketPageSize * secondsPerDay)) + 1;
     const cursors = new Set<string>();
     let cursor: string | undefined;
     let used = 0;
@@ -66,7 +70,7 @@ export class OpenAiBalanceService {
 
     for (let pageNumber = 0; pageNumber < maxPages; pageNumber++) {
       const url = new URL('https://api.openai.com/v1/organization/costs');
-      url.searchParams.set('start_time', String(startTime));
+      url.searchParams.set('start_time', String(queryStartTime));
       url.searchParams.set('end_time', String(endTime));
       url.searchParams.set('bucket_width', '1d');
       url.searchParams.set('limit', String(costBucketPageSize));
@@ -110,7 +114,7 @@ export class OpenAiBalanceService {
     const value = openAiBalanceResponseSchema.parse({
       totalCredits,
       used: Math.round(used * 1e8) / 1e8,
-      estimatedRemaining: totalCredits === null ? null : Math.round((totalCredits - used) * 1e8) / 1e8,
+      estimatedRemaining: totalCredits === null || reportingWindowClamped ? null : Math.round((totalCredits - used) * 1e8) / 1e8,
       currency: 'usd',
       updatedAt: new Date().toISOString(),
     });

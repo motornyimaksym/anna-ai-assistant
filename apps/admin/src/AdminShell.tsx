@@ -476,9 +476,7 @@ function OpenAiBalanceCard() {
     },
   });
   const openEditor = () => {
-    setBalanceDraft(query.data?.estimatedRemaining === null || query.data?.estimatedRemaining === undefined
-      ? query.data?.totalCredits?.toFixed(2) ?? ""
-      : query.data.estimatedRemaining.toFixed(2));
+    setBalanceDraft(query.data?.estimatedRemaining?.toFixed(2) ?? "");
     saveBalance.reset();
     setEditing(true);
   };
@@ -517,6 +515,7 @@ function OpenAiBalanceCard() {
               {formatUsd(query.data.estimatedRemaining)}
             </Typography>
             {query.data.totalCredits === null && <Typography variant="body2" color="text.secondary">{t("Save a current balance to start the estimate.")}</Typography>}
+            {query.data.totalCredits !== null && query.data.estimatedRemaining === null && <Typography variant="body2" color="text.secondary">{t("Balance baseline is older than available cost history. Save a current balance to resume estimates.")}</Typography>}
           </Box>
           <Box sx={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(130px, 1fr))", gap: { xs: 2, md: 4 }, width: { xs: "100%", md: "auto" } }}>
             <Box>
@@ -524,7 +523,7 @@ function OpenAiBalanceCard() {
               <Typography variant="h6" fontWeight={700}>{formatUsd(query.data.totalCredits)}</Typography>
             </Box>
             <Box>
-              <Typography variant="caption" color="text.secondary">{t("Used")}</Typography>
+              <Typography variant="caption" color="text.secondary">{t("Used in available reporting period")}</Typography>
               <Typography variant="h6" fontWeight={700}>{formatUsd(query.data.used)}</Typography>
             </Box>
           </Box>

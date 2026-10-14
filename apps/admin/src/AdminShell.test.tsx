@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
   fireEvent,
@@ -9,13 +9,29 @@ import {
   within,
 } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AdminShell, Dashboard, Login } from "./AdminShell.js";
 vi.mock("./DebugLogs.js", () => ({ DebugLink: () => null }));
 vi.mock("./auth.js", () => ({ signIn: vi.fn() }));
+vi.mock("./api.js", () => ({ adminApi: { openAiBalance: vi.fn(), updateOpenAiBalance: vi.fn() } }));
 import { signIn } from "./auth.js";
+import { adminApi } from "./api.js";
+const renderDashboard = () => render(
+  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <MemoryRouter>
+      <Dashboard />
+    </MemoryRouter>
+  </QueryClientProvider>,
+);
+const currentBalance = { totalCredits: 100, used: 12.5, estimatedRemaining: 87.5, currency: "usd" as const, updatedAt: "2026-10-14T14:00:00.000Z" };
+beforeEach(() => {
+  vi.mocked(adminApi.openAiBalance).mockResolvedValue(currentBalance);
+});
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.mocked(adminApi.openAiBalance).mockReset();
+  vi.mocked(adminApi.updateOpenAiBalance).mockReset();
   localStorage.clear();
 });
 describe("admin experience", () => {
@@ -59,17 +75,21 @@ describe("admin experience", () => {
     expect(screen.getByText("Schedule destination")).toBeTruthy();
   });
   it("provides real dashboard destinations without invented metrics", () => {
-    render(
-      <MemoryRouter>
-        <Dashboard />
-      </MemoryRouter>,
-    );
+    renderDashboard();
     expect(
       screen.getByRole("link", { name: /Calendar settings/ }).getAttribute("href"),
     ).toBe("/bot-settings");
     expect(
       screen.getByRole("link", { name: /Knowledge Base/ }).getAttribute("href"),
     ).toBe("/knowledge-base");
+  });
+  it("explains when an old baseline prevents a remaining-balance estimate", async () => {
+    vi.mocked(adminApi.openAiBalance).mockResolvedValueOnce({ ...currentBalance, estimatedRemaining: null });
+    renderDashboard();
+
+    expect(await screen.findByText("Balance baseline is older than available cost history. Save a current balance to resume estimates.")).toBeTruthy();
+    expect(screen.getByText("Used in available reporting period")).toBeTruthy();
+    expect(screen.getByText("$12.50")).toBeTruthy();
   });
   it("reports login failure and allows retry", async () => {
     vi.mocked(signIn).mockRejectedValue(new Error("Popup blocked"));

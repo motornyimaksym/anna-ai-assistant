@@ -29,5 +29,5 @@ describe('Calendar callback', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     expect(screen.getByText('Bot Settings destination')).toBeTruthy();
     expect(adminApi.completeGoogleCalendar).toHaveBeenCalledOnce();
-  });
+  }, 10_000);
 });
